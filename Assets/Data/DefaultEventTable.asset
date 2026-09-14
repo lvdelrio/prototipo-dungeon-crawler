@@ -1,0 +1,47 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 147d4239d8ac7dc45ad71ee018ff6cec, type: 3}
+  m_Name: DefaultEventTable
+  m_EditorClassIdentifier: 
+  entries:
+  - Name: Fuente curativa
+    IsLucky: 1
+    Weight: 10
+    Description: Recuperas HP/TP.
+  - Name: Cofre de monedas
+    IsLucky: 1
+    Weight: 10
+    Description: Ganas oro.
+  - Name: Objeto raro
+    IsLucky: 1
+    Weight: 5
+    Description: Encuentras un objeto valioso.
+  - Name: Bendicion temporal
+    IsLucky: 1
+    Weight: 6
+    Description: Buff temporal de stats.
+  - Name: Trampa de pinchos
+    IsLucky: 0
+    Weight: 10
+    Description: Pierdes HP.
+  - Name: Emboscada
+    IsLucky: 0
+    Weight: 8
+    Description: Combate forzoso contra un enemigo.
+  - Name: Robo
+    IsLucky: 0
+    Weight: 6
+    Description: Pierdes oro.
+  - Name: Maldicion temporal
+    IsLucky: 0
+    Weight: 5
+    Description: Debuff temporal de stats.
