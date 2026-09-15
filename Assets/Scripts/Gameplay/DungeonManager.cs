@@ -24,6 +24,7 @@ namespace Gameplay
         public int CurrentFloorIndex => _currentFloorIndex;
         public List<DungeonFloor> Floors => _floors;
         public bool IsCombatActive => combat != null && combat.IsActive;
+        public float CurrentEncounterChancePercent => _currentEncounterChance;
 
         void Awake()
         {

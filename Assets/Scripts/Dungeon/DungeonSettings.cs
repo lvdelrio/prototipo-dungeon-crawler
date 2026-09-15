@@ -40,12 +40,15 @@ namespace DungeonGen
         [Tooltip("Cada cuantos pisos se repite la sala de jefe despues del primero. 0 = desactivar salas de jefe.")]
         public int bossFloorInterval = 2;
 
-        [Header("Encuentros aleatorios")]
+        [Header("Encuentros aleatorios (tuneable - se siente muy alto? bajalo aca)")]
         [Tooltip("Chance inicial (0-100) de encontrar enemigos al entrar a una celda normal/evento.")]
-        public float encounterBaseChance = 8f;
+        [Range(0f, 30f)]
+        public float encounterBaseChance = 3f;
         [Tooltip("Cuanto sube la chance (0-100) por cada paso sin encuentro.")]
-        public float encounterIncrement = 5f;
+        [Range(0f, 15f)]
+        public float encounterIncrement = 1.5f;
         [Tooltip("Tope maximo (0-100) de la chance de encuentro.")]
-        public float encounterCap = 55f;
+        [Range(5f, 100f)]
+        public float encounterCap = 30f;
     }
 }

@@ -30,11 +30,11 @@ namespace Combat
         public bool AllEnemiesDefeated() => Enemies.All(e => !e.IsAlive);
         public bool AllPartyDefeated() => Party.All(p => !p.IsAlive);
 
-        // Resuelve una ronda completa: recibe una accion por cada personaje vivo (las que no
-        // manden accion se consideran "sin actuar" esa ronda). Devuelve el log de lo que paso.
-        public List<string> ResolveRound(Dictionary<CharacterStats, PartyAction> actions)
+        // Arma el orden de turnos de la ronda (por Velocidad descendente) y resetea la guardia de
+        // todos antes de empezar. Se expone por separado de la ejecucion para poder resolver la
+        // ronda de a un turno a la vez (con pausas/UI entre turno y turno) en vez de todo junto.
+        public List<(bool isParty, int idx)> BuildTurnOrder(Dictionary<CharacterStats, PartyAction> actions)
         {
-            var log = new List<string>();
             foreach (var p in Party) p.IsGuarding = false;
 
             var order = new List<(bool isParty, int idx, int speed)>();
@@ -45,29 +45,37 @@ namespace Combat
                 if (Enemies[i].IsAlive)
                     order.Add((false, i, Enemies[i].Speed));
 
-            order = order.OrderByDescending(o => o.speed).ToList();
+            return order.OrderByDescending(o => o.speed).Select(o => (o.isParty, o.idx)).ToList();
+        }
 
-            // Nota: no se corta la ronda apenas se cumple victoria/derrota - se deja que terminen de
-            // actuar todos los que ya tenian su turno en cola (p.ej. un heal que cae justo cuando el
-            // ultimo enemigo muere). Ademas, cortar aca era un bug: con la lista de enemigos vacia o
-            // ya toda derrotada ANTES de empezar, AllEnemiesDefeated() da verdadero por vacuidad y
-            // cancelaba la ronda completa, incluidas las acciones de la party que no dependen de eso.
-            foreach (var entry in order)
+        // Ejecuta el turno de UN combatiente (que ya deberia venir de BuildTurnOrder) y devuelve el
+        // log de lo que paso en ese turno especifico (vacio si ya estaba caido para entonces).
+        public List<string> ExecuteTurn(bool isParty, int idx, Dictionary<CharacterStats, PartyAction> actions)
+        {
+            var log = new List<string>();
+            if (isParty)
             {
-                if (entry.isParty)
-                {
-                    var actor = Party[entry.idx];
-                    if (!actor.IsAlive) continue;
-                    ExecutePartyAction(actor, actions[actor], log);
-                }
-                else
-                {
-                    var enemy = Enemies[entry.idx];
-                    if (!enemy.IsAlive) continue;
-                    ExecuteEnemyAction(enemy, log);
-                }
+                var actor = Party[idx];
+                if (actor.IsAlive && actions.TryGetValue(actor, out var action))
+                    ExecutePartyAction(actor, action, log);
             }
+            else
+            {
+                var enemy = Enemies[idx];
+                if (enemy.IsAlive)
+                    ExecuteEnemyAction(enemy, log);
+            }
+            return log;
+        }
 
+        // Resuelve una ronda completa de una sola vez (usado por tests/simulaciones donde no hace
+        // falta pausar turno a turno). Recibe una accion por cada personaje vivo.
+        public List<string> ResolveRound(Dictionary<CharacterStats, PartyAction> actions)
+        {
+            var order = BuildTurnOrder(actions);
+            var log = new List<string>();
+            foreach (var (isParty, idx) in order)
+                log.AddRange(ExecuteTurn(isParty, idx, actions));
             return log;
         }
 

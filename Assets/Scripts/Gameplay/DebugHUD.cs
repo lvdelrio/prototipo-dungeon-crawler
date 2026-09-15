@@ -16,13 +16,14 @@ namespace Gameplay
         {
             if (dungeonManager == null || player == null) return;
 
-            GUI.Box(new Rect(10, 10, 460, 150), "");
+            GUI.Box(new Rect(10, 10, 460, 170), "");
             GUI.Label(new Rect(20, 15, 440, 20),
                 $"Piso: {dungeonManager.CurrentFloorIndex} | Celda: ({player.CellX},{player.CellY}) | Mirando: {player.Facing}");
             GUI.Label(new Rect(20, 35, 440, 20), "WASD: mover/strafe | flechas izq/der: girar | Espacio: interactuar | Tab: modo mapa");
             GUI.Label(new Rect(20, 55, 440, 40), $"Ultimo evento: {_lastMessage}");
+            GUI.Label(new Rect(20, 95, 440, 20), $"Chance de encuentro actual: {dungeonManager.CurrentEncounterChancePercent:F1}% (tuneable en DungeonSettings)");
 
-            if (GUI.Button(new Rect(20, 100, 160, 25), "Validar Dungeon"))
+            if (GUI.Button(new Rect(20, 118, 160, 25), "Validar Dungeon"))
             {
                 var (ok, issues) = dungeonManager.ValidateCurrentDungeon();
                 _validationResult = ok
@@ -30,7 +31,7 @@ namespace Gameplay
                     : "FALLOS:\n" + string.Join("\n", issues);
             }
 
-            GUI.Label(new Rect(20, 130, 900, 300), _validationResult);
+            GUI.Label(new Rect(20, 148, 900, 300), _validationResult);
         }
     }
 }
