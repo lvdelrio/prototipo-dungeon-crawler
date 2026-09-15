@@ -49,6 +49,7 @@ namespace Gameplay
         void Update()
         {
             if (_busy || dungeonManager == null) return;
+            if (dungeonManager.IsCombatActive) return; // congelado mientras dura el combate
 
             if (Input.GetKeyDown(KeyCode.LeftArrow)) { StartCoroutine(Turn(-1)); return; }
             if (Input.GetKeyDown(KeyCode.RightArrow)) { StartCoroutine(Turn(1)); return; }

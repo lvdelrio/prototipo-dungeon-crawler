@@ -46,17 +46,24 @@ public static class DungeonSceneBuilder
         var minimapGo = new GameObject("MinimapUI");
         var minimap = minimapGo.AddComponent<MinimapUI>();
 
+        var combatGo = new GameObject("CombatManager");
+        var combatManager = combatGo.AddComponent<CombatManager>();
+        var combatHudGo = new GameObject("CombatHUD");
+        var combatHud = combatHudGo.AddComponent<CombatHUD>();
+
         manager.settings = settings;
         manager.eventTable = eventTable;
         manager.player = playerController;
         manager.levelBuilder = builder;
         manager.hud = hud;
+        manager.combat = combatManager;
         playerController.dungeonManager = manager;
         playerController.cameraBobTarget = cameraGo.transform;
         hud.dungeonManager = manager;
         hud.player = playerController;
         minimap.dungeonManager = manager;
         minimap.player = playerController;
+        combatHud.combatManager = combatManager;
 
         if (!AssetDatabase.IsValidFolder("Assets/Scenes"))
             AssetDatabase.CreateFolder("Assets", "Scenes");

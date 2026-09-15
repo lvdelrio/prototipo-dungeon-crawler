@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using DungeonGen;
+using Combat;
 
 namespace Gameplay
 {
@@ -11,14 +12,18 @@ namespace Gameplay
         public GridPlayerController player;
         public DungeonLevelBuilder levelBuilder;
         public DebugHUD hud;
+        public CombatManager combat;
 
         private readonly DungeonGenerator _generator = new DungeonGenerator();
         private List<DungeonFloor> _floors;
         private int _currentFloorIndex;
+        private float _currentEncounterChance;
+        private readonly HashSet<int> _bossDefeatedFloors = new HashSet<int>();
 
         public DungeonFloor CurrentFloor => _floors[_currentFloorIndex];
         public int CurrentFloorIndex => _currentFloorIndex;
         public List<DungeonFloor> Floors => _floors;
+        public bool IsCombatActive => combat != null && combat.IsActive;
 
         void Awake()
         {
@@ -34,6 +39,9 @@ namespace Gameplay
                 settings.voidFraction);
 
             foreach (var line in log) Debug.Log(line);
+
+            _currentEncounterChance = settings.encounterBaseChance;
+            if (combat != null) combat.OnCombatFinished += HandleCombatFinished;
 
             _currentFloorIndex = 0;
             BuildActiveFloor();
@@ -65,6 +73,10 @@ namespace Gameplay
         {
             var cell = CurrentFloor.Cells[x, y];
             cell.Discovered = true;
+
+            if ((cell.Type == CellType.Normal || cell.Type == CellType.Event) && !IsCombatActive)
+                TryRollEncounter();
+
             string message = null;
             switch (cell.Type)
             {
@@ -91,7 +103,9 @@ namespace Gameplay
                         : "Un punto extrano al borde de un vacio. Quiza haya algo del otro lado.";
                     break;
                 case CellType.Boss:
-                    message = "Sala del jefe. La escalera para avanzar esta en esta sala.";
+                    message = _bossDefeatedFloors.Contains(_currentFloorIndex)
+                        ? "El jefe de este piso ya fue derrotado. La escalera para avanzar esta en esta sala."
+                        : "Sala del jefe. Presiona Espacio para enfrentarlo.";
                     break;
                 case CellType.Event:
                     if (!cell.EventConsumed)
@@ -109,6 +123,37 @@ namespace Gameplay
 
         private bool IsGateOpen(DungeonCell cell) =>
             cell.ControlledGateIndex >= 0 && CurrentFloor.Gates[cell.ControlledGateIndex].IsOpen;
+
+        private void TryRollEncounter()
+        {
+            if (combat == null) return;
+            if (Random.value < _currentEncounterChance / 100f)
+            {
+                _currentEncounterChance = settings.encounterBaseChance;
+                combat.StartEncounter(isBoss: false);
+            }
+            else
+            {
+                _currentEncounterChance = Mathf.Min(settings.encounterCap, _currentEncounterChance + settings.encounterIncrement);
+            }
+        }
+
+        private void HandleCombatFinished(bool victory, bool wasBoss)
+        {
+            _currentEncounterChance = settings.encounterBaseChance;
+
+            if (wasBoss && victory)
+                _bossDefeatedFloors.Add(_currentFloorIndex);
+
+            if (!victory)
+            {
+                // Derrota: la party despierta malherida de vuelta en el Start de este piso.
+                var start = CurrentFloor.StartPos;
+                player.Warp(start.x, start.y, Direction.North);
+                CurrentFloor.Cells[start.x, start.y].Discovered = true;
+                if (hud != null) hud.SetLastMessage("Despiertan de vuelta cerca del inicio del piso...");
+            }
+        }
 
         public void TryInteract(int x, int y)
         {
@@ -142,6 +187,17 @@ namespace Gameplay
             else if (cell.Type == CellType.StairsUp || cell.Type == CellType.StairsDown)
             {
                 ChangeFloor(cell.StairTargetFloor, cell.StairTargetX, cell.StairTargetY);
+            }
+            else if (cell.Type == CellType.Boss)
+            {
+                if (_bossDefeatedFloors.Contains(_currentFloorIndex))
+                {
+                    if (hud != null) hud.SetLastMessage("El jefe de este piso ya fue derrotado.");
+                }
+                else if (combat != null && !combat.IsActive)
+                {
+                    combat.StartEncounter(isBoss: true);
+                }
             }
         }
 
