@@ -31,50 +31,50 @@ namespace Gameplay
             _gateWallObjects.Clear();
         }
 
-        public void Build(DungeonFloor floor, float cellSize, float wallHeight, float wallThickness, float corridorWidthFraction = 0.6f, float corridorGapMultiplier = 1f)
+        // Cada celda logica ocupa exactamente "cellSize" de distancia con su vecina (1 celda = 1 paso
+        // del jugador, igual que siempre). El "espacio vacio" entre pasillos paralelos es solo el
+        // margen entre el piso angosto (corridorWidth) y la pared completa que cierra cada celda -
+        // no altera la distancia de movimiento ni deja huecos en las paredes.
+        public void Build(DungeonFloor floor, float cellSize, float wallHeight, float wallThickness, float corridorWidthFraction = 0.5f)
         {
             Clear();
             _root = new GameObject($"Floor_{floor.Index}");
             _root.transform.SetParent(transform, false);
 
-            float corridorWidth = Mathf.Clamp(cellSize * corridorWidthFraction, 0.3f, cellSize);
-            float gapSize = cellSize * Mathf.Max(0.05f, corridorGapMultiplier);
-            float spacing = cellSize + gapSize;
+            float corridorWidth = Mathf.Clamp(cellSize * corridorWidthFraction, 0.5f, cellSize);
 
             if (floor.HasBossRoom)
-                BuildBossRoomSlab(floor, cellSize, spacing, wallHeight);
+                BuildBossRoomSlab(floor, cellSize, wallHeight);
 
             for (int x = 0; x < floor.Width; x++)
             {
                 for (int y = 0; y < floor.Height; y++)
                 {
                     var cell = floor.Cells[x, y];
-                    Vector3 center = CellCenter(x, y, spacing);
+                    Vector3 center = CellCenter(x, y, cellSize);
 
-                    // Las celdas dentro de una sala de jefe ya quedan cubiertas por el slab grande
-                    // construido arriba: no se les agrega su propio piso/techo individual.
                     if (!cell.IsBossRoom)
                     {
                         BuildFloorPad(center, corridorWidth);
                         BuildCeilingPad(center, corridorWidth, wallHeight);
                     }
 
-                    // Cada celda sella sus propios lados con pared: como ahora hay un hueco real
-                    // (spacing > cellSize) entre celdas vecinas, ya no hace falta deduplicar - cada
-                    // pared es un objeto fisicamente separado en el borde de su propia celda.
-                    foreach (var dir in DirectionExtensions.All)
-                    {
-                        if (cell.HasWall(dir))
-                            BuildWall(floor, x, y, dir, center, cellSize, wallHeight, wallThickness);
-                    }
-
-                    // Puentes: solo se procesan desde Norte/Este para no duplicar el mismo puente
-                    // por cada par de celdas, y se saltan cuando ambos lados pertenecen a la misma
-                    // sala de jefe (ya cubierta por el slab grande).
                     if (!cell.HasWall(Direction.North) && !BothInsideSameBossRoom(floor, x, y, x, y + 1))
-                        BuildBridge(center, Direction.North, spacing, cellSize, corridorWidth, wallHeight);
+                        BuildBridge(center, Direction.North, cellSize, corridorWidth, wallHeight);
                     if (!cell.HasWall(Direction.East) && !BothInsideSameBossRoom(floor, x, y, x + 1, y))
-                        BuildBridge(center, Direction.East, spacing, cellSize, corridorWidth, wallHeight);
+                        BuildBridge(center, Direction.East, cellSize, corridorWidth, wallHeight);
+
+                    // Las paredes se construyen una sola vez por borde compartido (Norte/Este de cada
+                    // celda, mas Sur/Oeste solo en el borde del mapa) para que queden a todo lo ancho
+                    // de la celda y sin huecos en las esquinas.
+                    if (cell.HasWall(Direction.North))
+                        BuildWall(floor, x, y, Direction.North, center, cellSize, wallHeight, wallThickness);
+                    if (cell.HasWall(Direction.East))
+                        BuildWall(floor, x, y, Direction.East, center, cellSize, wallHeight, wallThickness);
+                    if (y == 0 && cell.HasWall(Direction.South))
+                        BuildWall(floor, x, y, Direction.South, center, cellSize, wallHeight, wallThickness);
+                    if (x == 0 && cell.HasWall(Direction.West))
+                        BuildWall(floor, x, y, Direction.West, center, cellSize, wallHeight, wallThickness);
 
                     BuildMarker(cell, center, cellSize);
                 }
@@ -84,12 +84,10 @@ namespace Gameplay
         private bool BothInsideSameBossRoom(DungeonFloor floor, int ax, int ay, int bx, int by)
         {
             if (!floor.InBounds(bx, by)) return false;
-            var a = floor.Cells[ax, ay];
-            var b = floor.Cells[bx, by];
-            return a.IsBossRoom && b.IsBossRoom;
+            return floor.Cells[ax, ay].IsBossRoom && floor.Cells[bx, by].IsBossRoom;
         }
 
-        public Vector3 CellCenter(int x, int y, float spacing) => new Vector3(x * spacing, 0f, y * spacing);
+        public Vector3 CellCenter(int x, int y, float cellSize) => new Vector3(x * cellSize, 0f, y * cellSize);
 
         private void BuildFloorPad(Vector3 center, float corridorWidth)
         {
@@ -111,13 +109,12 @@ namespace Gameplay
             ApplyMaterial(go, ceilingMaterial, new Color(0.15f, 0.15f, 0.17f));
         }
 
-        // Un unico piso/techo grande que cubre todo el rectangulo de la sala de jefe (incluyendo
-        // los huecos internos entre sus celdas), para que se vea como una sala espaciosa continua
-        // en vez de varias celdas conectadas por puentes angostos.
-        private void BuildBossRoomSlab(DungeonFloor floor, float cellSize, float spacing, float wallHeight)
+        // Un unico piso/techo grande que cubre todo el rectangulo de la sala de jefe, para que se
+        // vea como una sala espaciosa continua en vez de celdas conectadas por puentes angostos.
+        private void BuildBossRoomSlab(DungeonFloor floor, float cellSize, float wallHeight)
         {
-            Vector3 minCenter = CellCenter(floor.BossRoomMinX, floor.BossRoomMinY, spacing);
-            Vector3 maxCenter = CellCenter(floor.BossRoomMaxX, floor.BossRoomMaxY, spacing);
+            Vector3 minCenter = CellCenter(floor.BossRoomMinX, floor.BossRoomMinY, cellSize);
+            Vector3 maxCenter = CellCenter(floor.BossRoomMaxX, floor.BossRoomMaxY, cellSize);
             float sizeX = (maxCenter.x - minCenter.x) + cellSize;
             float sizeZ = (maxCenter.z - minCenter.z) + cellSize;
             Vector3 roomCenter = new Vector3((minCenter.x + maxCenter.x) / 2f, 0f, (minCenter.z + maxCenter.z) / 2f);
@@ -137,16 +134,17 @@ namespace Gameplay
             ApplyMaterial(ceilGo, bossRoomCeilingMaterial, new Color(0.2f, 0.08f, 0.08f));
         }
 
-        // Rellena, solo cuando hay paso abierto, el hueco entre el "pad" caminable de esta celda
-        // y el de la celda vecina. Cuando no hay paso (pared), ese hueco queda vacio a proposito:
-        // eso es lo que separa dos pasillos paralelos con un espacio real en vez de solo una pared delgada.
-        private void BuildBridge(Vector3 center, Direction dir, float spacing, float cellSize, float corridorWidth, float wallHeight)
+        // Rellena, solo cuando hay paso abierto, el margen entre el "pad" caminable de esta celda y
+        // el de la celda vecina (ambos dentro de la MISMA distancia cellSize - no se alarga el paso).
+        // Cuando no hay paso, ese margen queda vacio a proposito: es el espacio real entre dos
+        // pasillos paralelos sin conexion, sin tocar la distancia de movimiento del jugador.
+        private void BuildBridge(Vector3 center, Direction dir, float cellSize, float corridorWidth, float wallHeight)
         {
-            float gapLength = spacing - cellSize;
+            float gapLength = cellSize - corridorWidth;
             if (gapLength <= 0.001f) return;
 
             var (ox, oy) = dir.Offset();
-            Vector3 bridgeCenter = center + new Vector3(ox, 0, oy) * (spacing / 2f);
+            Vector3 bridgeCenter = center + new Vector3(ox, 0, oy) * (cellSize / 2f);
             bool northSouth = (dir == Direction.North || dir == Direction.South);
             Vector3 scaleXZ = northSouth
                 ? new Vector3(corridorWidth, 0.2f, gapLength)
@@ -167,6 +165,8 @@ namespace Gameplay
             ApplyMaterial(ceilGo, ceilingMaterial, new Color(0.15f, 0.15f, 0.17f));
         }
 
+        // Pared a todo lo ancho de la celda (cellSize), construida una sola vez por borde compartido:
+        // asi queda flush con las paredes vecinas y no deja huecos diagonales en las esquinas.
         private void BuildWall(DungeonFloor floor, int x, int y, Direction dir, Vector3 cellCenter, float cellSize, float wallHeight, float wallThickness)
         {
             var (ox, oy) = dir.Offset();

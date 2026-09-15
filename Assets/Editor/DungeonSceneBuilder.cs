@@ -52,6 +52,7 @@ public static class DungeonSceneBuilder
         manager.levelBuilder = builder;
         manager.hud = hud;
         playerController.dungeonManager = manager;
+        playerController.cameraBobTarget = cameraGo.transform;
         hud.dungeonManager = manager;
         hud.player = playerController;
         minimap.dungeonManager = manager;

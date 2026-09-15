@@ -42,15 +42,13 @@ namespace Gameplay
             OnPlayerEnterCell(start.x, start.y);
         }
 
-        private float Spacing => settings.cellSize * (1f + Mathf.Max(0.05f, settings.corridorGapMultiplier));
-
         private void BuildActiveFloor()
         {
             levelBuilder.Build(CurrentFloor, settings.cellSize, settings.wallHeight, settings.wallThickness,
-                settings.corridorWidthFraction, settings.corridorGapMultiplier);
+                settings.corridorWidthFraction);
         }
 
-        public Vector3 CellToWorld(int x, int y) => levelBuilder.CellCenter(x, y, Spacing);
+        public Vector3 CellToWorld(int x, int y) => levelBuilder.CellCenter(x, y, settings.cellSize);
 
         public bool CanMove(int x, int y, Direction dir)
         {

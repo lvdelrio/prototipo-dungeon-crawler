@@ -30,13 +30,9 @@ namespace DungeonGen
         public float wallThickness = 0.2f;
 
         [Header("Separacion entre pasillos paralelos")]
-        [Tooltip("Fraccion de cellSize que ocupa el ancho caminable de cada corredor.")]
-        [Range(0.3f, 1f)]
-        public float corridorWidthFraction = 0.6f;
-
-        [Tooltip("Tamano del hueco entre dos celdas logicas vecinas, como multiplo de cellSize. 1 = un cuadrante completo de distancia entre dos pasillos que no estan conectados entre si (solo se rellena con un puente caminable cuando SI hay paso).")]
-        [Range(0.1f, 2f)]
-        public float corridorGapMultiplier = 1f;
+        [Tooltip("Fraccion de cellSize que ocupa el ancho caminable de cada corredor. El resto queda como espacio vacio real entre pasillos no conectados, dentro de la misma distancia de un paso (no alarga el movimiento).")]
+        [Range(0.35f, 0.9f)]
+        public float corridorWidthFraction = 0.5f;
 
         [Header("Piso de jefe (sala grande obligatoria con jefe + escalera)")]
         [Tooltip("Primer piso (indice, empezando en 0) que tiene sala de jefe.")]

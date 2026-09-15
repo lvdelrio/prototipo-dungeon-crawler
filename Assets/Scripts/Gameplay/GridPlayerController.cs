@@ -10,9 +10,17 @@ namespace Gameplay
         public float moveDuration = 0.18f;
         public float turnDuration = 0.12f;
 
+        [Header("Feedback de caminata (bob de camara, muy sutil)")]
+        [Tooltip("Transform de la camara (hijo del jugador). Si se deja vacio, se usa Camera.main.")]
+        public Transform cameraBobTarget;
+        public float bobHeight = 0.05f;
+        public int bobCyclesPerStep = 1;
+
         private int _x, _y;
         private Direction _facing = Direction.North;
         private bool _busy;
+        private float _cameraBaseY;
+        private bool _cameraBaseCaptured;
 
         public int CellX => _x;
         public int CellY => _y;
@@ -25,6 +33,17 @@ namespace Gameplay
             _facing = facing;
             transform.position = dungeonManager.CellToWorld(_x, _y);
             transform.rotation = FacingRotation(facing);
+        }
+
+        private void CaptureCameraBaseIfNeeded()
+        {
+            if (_cameraBaseCaptured) return;
+            if (cameraBobTarget == null && Camera.main != null) cameraBobTarget = Camera.main.transform;
+            if (cameraBobTarget != null)
+            {
+                _cameraBaseY = cameraBobTarget.localPosition.y;
+                _cameraBaseCaptured = true;
+            }
         }
 
         void Update()
@@ -60,6 +79,8 @@ namespace Gameplay
         {
             if (!dungeonManager.CanMove(_x, _y, dir)) yield break;
 
+            CaptureCameraBaseIfNeeded();
+
             _busy = true;
             var (ox, oy) = dir.Offset();
             int nx = _x + ox, ny = _y + oy;
@@ -70,15 +91,29 @@ namespace Gameplay
             while (t < moveDuration)
             {
                 t += Time.deltaTime;
-                transform.position = Vector3.Lerp(from, to, t / moveDuration);
+                float p = Mathf.Clamp01(t / moveDuration);
+                transform.position = Vector3.Lerp(from, to, p);
+                ApplyBob(p);
                 yield return null;
             }
             transform.position = to;
+            ApplyBob(0f);
             _x = nx;
             _y = ny;
 
             dungeonManager.OnPlayerEnterCell(_x, _y);
             _busy = false;
+        }
+
+        // Un pequeno vaiven vertical de la camara durante el paso: sube y baja una vez (o varias,
+        // segun bobCyclesPerStep) para dar sensacion de peso al caminar, sin exagerar.
+        private void ApplyBob(float progress)
+        {
+            if (cameraBobTarget == null) return;
+            float bob = Mathf.Sin(progress * Mathf.PI * bobCyclesPerStep) * bobHeight;
+            var lp = cameraBobTarget.localPosition;
+            lp.y = _cameraBaseY + Mathf.Abs(bob);
+            cameraBobTarget.localPosition = lp;
         }
 
         private IEnumerator Turn(int steps)
