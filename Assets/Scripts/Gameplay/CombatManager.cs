@@ -23,6 +23,9 @@ namespace Gameplay
         [Tooltip("Tiempo (segundos) para completar la secuencia de 3 teclas del QTE.")]
         public float qteTimeLimit = 2.5f;
 
+        [Header("Feedback de impacto (flash + sacudida de camara)")]
+        public CombatFeedback feedback;
+
         public List<CharacterStats> Party { get; private set; }
         public List<EnemyStats> Enemies { get; private set; }
         public List<string> Log { get; } = new List<string>();
@@ -81,6 +84,24 @@ namespace Gameplay
             AdvanceChooser();
         }
 
+        // Boton "Rendirse": termina el combate de inmediato como derrota, sin jugar mas rondas.
+        public void Surrender()
+        {
+            if (!IsActive || IsResolvingRound) return;
+            Log.Add("La party decide rendirse.");
+            EndCombat(victory: false);
+        }
+
+        // Boton de test (para probar el resto del juego rapido): gana el combate actual al
+        // instante, sin jugarlo. Cuenta como victoria normal (suma enemigos/jefes derrotados).
+        public void SkipFightForTesting()
+        {
+            if (!IsActive || IsResolvingRound) return;
+            foreach (var e in Enemies) e.HP = 0;
+            Log.Add("[TEST] Combate saltado: victoria instantanea.");
+            EndCombat(victory: true);
+        }
+
         // Boton "Auto": pone Ataque basico (al primer enemigo vivo) para todos los personajes que
         // todavia no eligieron accion esta ronda, y arranca la resolucion de inmediato.
         public void AutoAttackRemaining()
@@ -117,8 +138,13 @@ namespace Gameplay
                 if (isParty && qteManager != null && Party[idx].IsAlive && _queuedActions.TryGetValue(Party[idx], out var action) && action.Type == ActionType.Skill)
                     yield return RunSkillQte(Party[idx], action);
 
+                int[] partyHpBefore = Party.Select(p => p.HP).ToArray();
+                int[] enemyHpBefore = Enemies.Select(e => e.HP).ToArray();
+
                 var turnLog = _engine.ExecuteTurn(isParty, idx, _queuedActions);
                 Log.AddRange(turnLog);
+
+                ReportHitFeedback(partyHpBefore, enemyHpBefore);
 
                 // En cuanto la pelea queda decidida no se esperan mas turnos ni personajes: se corta
                 // la ronda ahi mismo en vez de seguir resolviendo al resto del orden de turnos.
@@ -159,6 +185,24 @@ namespace Gameplay
             qteManager.Begin(sequence, qteTimeLimit, success => result = success);
             while (result == null) yield return null;
             action.QteSuccess = result.Value;
+        }
+
+        // Compara el HP de todos antes/despues del turno que se acaba de ejecutar y dispara el
+        // flash/sacudida de camara correspondiente si alguien recibio dano de verdad (no cura).
+        private void ReportHitFeedback(int[] partyHpBefore, int[] enemyHpBefore)
+        {
+            if (feedback == null) return;
+
+            for (int i = 0; i < Party.Count; i++)
+            {
+                int dmg = partyHpBefore[i] - Party[i].HP;
+                if (dmg > 0) feedback.OnPartyHit(dmg);
+            }
+            for (int i = 0; i < Enemies.Count; i++)
+            {
+                int dmg = enemyHpBefore[i] - Enemies[i].HP;
+                if (dmg > 0) feedback.OnEnemyHit(dmg);
+            }
         }
 
         private void EndCombat(bool victory)

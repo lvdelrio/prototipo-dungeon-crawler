@@ -20,6 +20,7 @@ public static class DungeonSceneBuilder
         cameraGo.tag = "MainCamera";
         cameraGo.AddComponent<AudioListener>();
         cam.nearClipPlane = 0.05f;
+        var combatFeedback = cameraGo.AddComponent<CombatFeedback>();
 
         var lightGo = new GameObject("Directional Light");
         var light = lightGo.AddComponent<Light>();
@@ -69,6 +70,7 @@ public static class DungeonSceneBuilder
         minimap.player = playerController;
         combatHud.combatManager = combatManager;
         combatManager.qteManager = qteManager;
+        combatManager.feedback = combatFeedback;
         metaShopHud.dungeonManager = manager;
         metaShopHud.combatManager = combatManager;
 

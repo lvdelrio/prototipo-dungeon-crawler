@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using Combat;
@@ -10,6 +11,22 @@ namespace Gameplay
 
         private ActionType? _pendingType;
         private static Texture2D _whiteTex;
+        private bool _wasActive;
+
+        // Numeros de dano/curacion flotantes: se detectan comparando el HP visto en el frame
+        // anterior contra el actual (asi el motor de combate puro no necesita saber nada de UI).
+        private readonly Dictionary<EnemyStats, int> _lastEnemyHp = new Dictionary<EnemyStats, int>();
+        private readonly Dictionary<CharacterStats, int> _lastPartyHp = new Dictionary<CharacterStats, int>();
+        private readonly List<DamagePopup> _popups = new List<DamagePopup>();
+        private const float PopupDuration = 0.9f;
+
+        private struct DamagePopup
+        {
+            public string Text;
+            public Color Color;
+            public float StartTime;
+            public float X, Y;
+        }
 
         private QteManager QteManager => combatManager != null ? combatManager.qteManager : null;
 
@@ -18,12 +35,28 @@ namespace Gameplay
             if (combatManager == null || !combatManager.IsActive)
             {
                 _pendingType = null;
+                _wasActive = false;
                 return;
+            }
+
+            if (!_wasActive)
+            {
+                // Arranca un combate nuevo: se limpia el historial de HP para no generar popups
+                // falsos comparando contra enemigos/estado de una pelea anterior.
+                _lastEnemyHp.Clear();
+                _lastPartyHp.Clear();
+                _popups.Clear();
+                _wasActive = true;
             }
 
             const int panelX = 10, panelY = 180, panelW = 940, panelH = 500;
             GUI.Box(new Rect(panelX, panelY, panelW, panelH), "");
-            GUI.Label(new Rect(panelX + 10, panelY + 5, panelW - 20, 24), combatManager.IsBossFight ? "COMBATE DE JEFE" : "COMBATE");
+            GUI.Label(new Rect(panelX + 10, panelY + 5, panelW - 240, 24), combatManager.IsBossFight ? "COMBATE DE JEFE" : "COMBATE");
+
+            if (GUI.Button(new Rect(panelX + panelW - 220, panelY + 4, 100, 24), "Rendirse"))
+                combatManager.Surrender();
+            if (GUI.Button(new Rect(panelX + panelW - 110, panelY + 4, 100, 24), "[TEST] Saltar"))
+                combatManager.SkipFightForTesting();
 
             float y = panelY + 32;
 
@@ -35,6 +68,7 @@ namespace Gameplay
                 bool isTurn = combatManager.IsResolvingRound && !combatManager.CurrentTurnIsParty && combatManager.CurrentTurnActorName == enemy.Name;
                 string status = enemy.IsAlive ? $"HP {enemy.HP}/{enemy.MaxHP}" : "derrotado";
                 DrawTurnLine(panelX + 20, y, panelW - 40, $"{enemy.Name} - {status}", isTurn, isEnemyTurn: true);
+                TrackHpChange(_lastEnemyHp, enemy, enemy.HP, panelX + panelW - 60, y);
                 y += 20;
             }
 
@@ -48,6 +82,7 @@ namespace Gameplay
                 bool isTurn = combatManager.IsResolvingRound && combatManager.CurrentTurnIsParty && combatManager.CurrentTurnActorName == member.Name;
                 string status = !member.IsAlive ? "caído" : member.IsProtectingAll ? "protegiendo al grupo" : member.IsGuarding ? "en guardia" : "listo";
                 DrawTurnLine(panelX + 20, y, panelW - 40, $"{member.Name} ({member.Class}) - HP {member.HP}/{member.MaxHP}  TP {member.TP}/{member.MaxTP}  [{status}]", isTurn, isEnemyTurn: false);
+                TrackHpChange(_lastPartyHp, member, member.HP, panelX + panelW - 60, y);
                 y += 20;
             }
 
@@ -156,6 +191,38 @@ namespace Gameplay
             {
                 GUI.Label(new Rect(panelX + 18, ly, panelW - 36, 18), line);
                 ly += 18;
+            }
+
+            DrawDamagePopups();
+        }
+
+        // Compara el HP actual contra el ultimo visto para ese combatiente; si bajo o subio,
+        // crea un numero flotante (rojo = dano, verde = curacion) en la posicion de su linea.
+        private void TrackHpChange<T>(Dictionary<T, int> lastHp, T key, int currentHp, float x, float y) where T : class
+        {
+            if (lastHp.TryGetValue(key, out int previous) && previous != currentHp)
+            {
+                int delta = currentHp - previous;
+                var color = delta < 0 ? new Color(1f, 0.3f, 0.3f) : new Color(0.4f, 1f, 0.5f);
+                string text = delta < 0 ? delta.ToString() : $"+{delta}";
+                _popups.Add(new DamagePopup { Text = text, Color = color, StartTime = Time.time, X = x, Y = y });
+            }
+            lastHp[key] = currentHp;
+        }
+
+        private void DrawDamagePopups()
+        {
+            for (int i = _popups.Count - 1; i >= 0; i--)
+            {
+                float age = Time.time - _popups[i].StartTime;
+                if (age >= PopupDuration) { _popups.RemoveAt(i); continue; }
+
+                float frac = age / PopupDuration;
+                var popup = _popups[i];
+                var oldColor = GUI.color;
+                GUI.color = new Color(popup.Color.r, popup.Color.g, popup.Color.b, 1f - frac);
+                GUI.Label(new Rect(popup.X, popup.Y - frac * 24f, 60, 20), popup.Text);
+                GUI.color = oldColor;
             }
         }
 

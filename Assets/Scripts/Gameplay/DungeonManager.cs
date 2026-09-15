@@ -37,6 +37,7 @@ namespace Gameplay
 
         public MetaProgress Meta => _meta;
         public bool IsGameOverShopActive { get; private set; }
+        public bool LastRunWasVictory { get; private set; }
         public int LastRunPointsEarned => _lastRunPointsEarned;
 
         void Awake()
@@ -180,27 +181,34 @@ namespace Gameplay
         {
             RollNewEncounterThreshold();
 
-            if (victory)
+            if (victory && wasBoss)
             {
-                if (wasBoss)
-                {
-                    _bossDefeatedFloors.Add(_currentFloorIndex);
-                    _bossesDefeatedThisRun++;
-                }
-                else
-                {
-                    _enemiesDefeatedThisRun += combat.Enemies.Count;
-                }
+                _bossDefeatedFloors.Add(_currentFloorIndex);
+                _bossesDefeatedThisRun++;
+                EndRun(won: true, "¡Derrotaste al jefe! La run termina con exito.");
                 return;
             }
 
-            // Derrota: la run termina aca. Se banca la recompensa (piso alcanzado + enemigos/jefes)
-            // y se abre la pantalla de tienda/mejoras; la proxima mazmorra (semilla nueva) arranca
-            // recien cuando el jugador la cierra (StartNewRun).
+            if (victory)
+            {
+                _enemiesDefeatedThisRun += combat.Enemies.Count;
+                return;
+            }
+
+            // Derrota o rendicion: la run termina aca.
+            EndRun(won: false, "La party cae derrotada. La run termina aca.");
+        }
+
+        // La run termina (por derrota, rendicion, o por vencer a un jefe): se banca la recompensa
+        // (piso mas profundo alcanzado + enemigos/jefes derrotados) y se abre la pantalla de
+        // tienda/mejoras; la proxima mazmorra (semilla nueva) arranca recien al cerrarla (StartNewRun).
+        private void EndRun(bool won, string message)
+        {
             _lastRunPointsEarned = _meta.AddRunRewards(_deepestFloorReachedThisRun, _enemiesDefeatedThisRun, _bossesDefeatedThisRun);
             MetaSaveService.Save(_meta);
+            LastRunWasVictory = won;
             IsGameOverShopActive = true;
-            if (hud != null) hud.SetLastMessage("La party cae derrotada. La run termina aca.");
+            if (hud != null) hud.SetLastMessage(message);
         }
 
         public void StartNewRun()

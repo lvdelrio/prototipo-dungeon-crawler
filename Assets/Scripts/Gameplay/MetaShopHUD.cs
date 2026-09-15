@@ -26,7 +26,8 @@ namespace Gameplay
             GUI.Box(new Rect(panelX, panelY, panelW, panelH), "");
 
             float y = panelY + 10;
-            GUI.Label(new Rect(panelX + 20, y, panelW - 40, 26), "RUN TERMINADA");
+            GUI.Label(new Rect(panelX + 20, y, panelW - 40, 26),
+                dungeonManager.LastRunWasVictory ? "¡RUN COMPLETADA! Derrotaste al jefe" : "RUN TERMINADA (derrota)");
             y += 30;
             GUI.Label(new Rect(panelX + 20, y, panelW - 40, 22),
                 $"Puntos ganados esta run: {dungeonManager.LastRunPointsEarned}  |  Puntos disponibles: {meta.BankedPoints}");
