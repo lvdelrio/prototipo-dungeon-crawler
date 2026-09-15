@@ -4,7 +4,7 @@ using System.Linq;
 
 namespace Combat
 {
-    public enum ActionType { Attack, Skill, Guard }
+    public enum ActionType { Attack, Skill, Guard, ProtectAll }
 
     public class PartyAction
     {
@@ -12,6 +12,15 @@ namespace Combat
         public ActionType Type;
         public int TargetEnemyIndex;
         public int TargetAllyIndex;
+
+        // Si la habilidad se uso con exito en el mini-juego de tiempo (QTE): pega mas fuerte / cura mas.
+        public bool QteSuccess;
+    }
+
+    // Multiplicador de poder/curacion cuando el jugador completa a tiempo la secuencia del QTE.
+    public static class QteBonus
+    {
+        public const float Multiplier = 1.25f;
     }
 
     public class CombatEngine
@@ -35,7 +44,11 @@ namespace Combat
         // ronda de a un turno a la vez (con pausas/UI entre turno y turno) en vez de todo junto.
         public List<(bool isParty, int idx)> BuildTurnOrder(Dictionary<CharacterStats, PartyAction> actions)
         {
-            foreach (var p in Party) p.IsGuarding = false;
+            foreach (var p in Party)
+            {
+                p.IsGuarding = false;
+                p.IsProtectingAll = false;
+            }
 
             var order = new List<(bool isParty, int idx, int speed)>();
             for (int i = 0; i < Party.Count; i++)
@@ -88,6 +101,11 @@ namespace Combat
                     log.Add($"{actor.Name} se pone en guardia.");
                     break;
 
+                case ActionType.ProtectAll:
+                    actor.IsProtectingAll = true;
+                    log.Add($"{actor.Name} se pone al frente para proteger a todo el grupo (recibira todo el dano enemigo de esta ronda).");
+                    break;
+
                 case ActionType.Attack:
                 {
                     var target = PickAliveEnemy(action.TargetEnemyIndex);
@@ -105,9 +123,16 @@ namespace Combat
                         if (actor.TP >= actor.SkillTpCost && ally.IsAlive)
                         {
                             actor.TP -= actor.SkillTpCost;
-                            int healed = Math.Min(ally.MaxHP - ally.HP, actor.HealAmount);
+                            int healAmount = actor.HealAmount;
+                            string qteNote = "";
+                            if (action.QteSuccess)
+                            {
+                                healAmount = (int)Math.Round(healAmount * QteBonus.Multiplier);
+                                qteNote = " ¡QTE exitoso! Cura de mas.";
+                            }
+                            int healed = Math.Min(ally.MaxHP - ally.HP, healAmount);
                             ally.HP += healed;
-                            log.Add($"{actor.Name} usa {actor.SkillName} en {ally.Name}: recupera {healed} HP.");
+                            log.Add($"{actor.Name} usa {actor.SkillName} en {ally.Name}: recupera {healed} HP.{qteNote}");
                         }
                         else
                         {
@@ -121,10 +146,16 @@ namespace Combat
                         if (actor.TP >= actor.SkillTpCost)
                         {
                             actor.TP -= actor.SkillTpCost;
-                            int power = (int)Math.Round(actor.Attack * actor.SkillPower);
-                            int dmg = ComputeDamageVsEnemy(power, actor.SkillElement, target, out string note);
+                            float power = actor.Attack * actor.SkillPower;
+                            string qteNote = "";
+                            if (action.QteSuccess)
+                            {
+                                power *= QteBonus.Multiplier;
+                                qteNote = " ¡QTE exitoso!";
+                            }
+                            int dmg = ComputeDamageVsEnemy((int)Math.Round(power), actor.SkillElement, target, out string note);
                             target.HP = Math.Max(0, target.HP - dmg);
-                            log.Add($"{actor.Name} usa {actor.SkillName} en {target.Name}: {dmg} de daño.{note}");
+                            log.Add($"{actor.Name} usa {actor.SkillName} en {target.Name}: {dmg} de daño.{note}{qteNote}");
                         }
                         else
                         {
@@ -141,7 +172,11 @@ namespace Combat
         {
             var aliveParty = Party.Where(p => p.IsAlive).ToList();
             if (aliveParty.Count == 0) return;
-            var target = aliveParty[_rng.Next(aliveParty.Count)];
+
+            // Si alguien esta protegiendo a todo el grupo, todo el dano enemigo de esta ronda se
+            // le redirige a el/ella (a su propio costo), en vez de elegir un objetivo al azar.
+            var protector = aliveParty.FirstOrDefault(p => p.IsProtectingAll);
+            var target = protector ?? aliveParty[_rng.Next(aliveParty.Count)];
 
             int dmg = Math.Max(1, enemy.Attack - target.Defense / 2);
             bool wasGuarding = target.IsGuarding;

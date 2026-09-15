@@ -7,8 +7,14 @@ namespace Gameplay
     public class CombatHUD : MonoBehaviour
     {
         public CombatManager combatManager;
+        public QteManager qteManager;
+
+        [Header("QTE")]
+        public float qteTimeLimit = 2.5f;
 
         private ActionType? _pendingType;
+        private PartyAction _pendingSkillAction; // accion en espera de que termine el QTE
+        private System.Random _rng = new System.Random();
         private static Texture2D _whiteTex;
 
         void OnGUI()
@@ -16,6 +22,7 @@ namespace Gameplay
             if (combatManager == null || !combatManager.IsActive)
             {
                 _pendingType = null;
+                _pendingSkillAction = null;
                 return;
             }
 
@@ -44,14 +51,19 @@ namespace Gameplay
             foreach (var member in combatManager.Party)
             {
                 bool isTurn = combatManager.IsResolvingRound && combatManager.CurrentTurnIsParty && combatManager.CurrentTurnActorName == member.Name;
-                string status = !member.IsAlive ? "caído" : member.IsGuarding ? "en guardia" : "listo";
+                string status = !member.IsAlive ? "caído" : member.IsProtectingAll ? "protegiendo al grupo" : member.IsGuarding ? "en guardia" : "listo";
                 DrawTurnLine(panelX + 20, y, panelW - 40, $"{member.Name} ({member.Class}) - HP {member.HP}/{member.MaxHP}  TP {member.TP}/{member.MaxTP}  [{status}]", isTurn, isEnemyTurn: false);
                 y += 20;
             }
 
             y += 12;
 
-            if (combatManager.IsResolvingRound)
+            if (qteManager != null && qteManager.IsActive)
+            {
+                DrawQteOverlay(panelX, y, panelW);
+                y += 90;
+            }
+            else if (combatManager.IsResolvingRound)
             {
                 string who = combatManager.CurrentTurnIsParty ? "un aliado" : "un enemigo";
                 var oldColor = GUI.color;
@@ -70,20 +82,29 @@ namespace Gameplay
 
                     if (_pendingType == null)
                     {
-                        if (GUI.Button(new Rect(panelX + 20, y, 130, 26), "Atacar"))
+                        if (GUI.Button(new Rect(panelX + 20, y, 120, 26), "Atacar"))
                             _pendingType = ActionType.Attack;
 
                         string skillLabel = $"{chooser.SkillName} ({chooser.SkillTpCost} TP)";
-                        if (GUI.Button(new Rect(panelX + 160, y, 210, 26), skillLabel))
+                        if (GUI.Button(new Rect(panelX + 150, y, 200, 26), skillLabel))
                             _pendingType = ActionType.Skill;
 
-                        if (GUI.Button(new Rect(panelX + 380, y, 130, 26), "Guardia"))
+                        if (GUI.Button(new Rect(panelX + 360, y, 120, 26), "Guardia"))
                         {
                             combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.Guard });
                             _pendingType = null;
                         }
 
-                        if (GUI.Button(new Rect(panelX + 520, y, 150, 26), "Auto (todos atacan)"))
+                        if (chooser.CanProtectAll)
+                        {
+                            if (GUI.Button(new Rect(panelX + 490, y, 190, 26), "Proteger a todos"))
+                            {
+                                combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.ProtectAll });
+                                _pendingType = null;
+                            }
+                        }
+
+                        if (GUI.Button(new Rect(panelX + 690, y, 170, 26), "Auto (todos atacan)"))
                         {
                             combatManager.AutoAttackRemaining();
                             _pendingType = null;
@@ -98,14 +119,15 @@ namespace Gameplay
                         {
                             if (GUI.Button(new Rect(bx, y, 150, 26), ally.Name))
                             {
-                                combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.Skill, TargetAllyIndex = combatManager.Party.IndexOf(ally) });
+                                var action = new PartyAction { Actor = chooser, Type = ActionType.Skill, TargetAllyIndex = combatManager.Party.IndexOf(ally) };
+                                BeginSkillQte(chooser, action);
                                 _pendingType = null;
                             }
                             bx += 160;
                         }
                         if (GUI.Button(new Rect(panelX + 20, y + 34, 100, 24), "Cancelar")) _pendingType = null;
                     }
-                    else
+                    else if (_pendingType.HasValue)
                     {
                         GUI.Label(new Rect(panelX + 20, y, 300, 20), "Elegí un objetivo:");
                         y += 22;
@@ -115,7 +137,11 @@ namespace Gameplay
                             int idx = combatManager.Enemies.IndexOf(enemy);
                             if (GUI.Button(new Rect(bx, y, 180, 26), enemy.Name))
                             {
-                                combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = _pendingType.Value, TargetEnemyIndex = idx });
+                                var action = new PartyAction { Actor = chooser, Type = _pendingType.Value, TargetEnemyIndex = idx };
+                                if (_pendingType.Value == ActionType.Skill)
+                                    BeginSkillQte(chooser, action);
+                                else
+                                    combatManager.SubmitAction(action);
                                 _pendingType = null;
                             }
                             bx += 190;
@@ -138,6 +164,72 @@ namespace Gameplay
             {
                 GUI.Label(new Rect(panelX + 18, ly, panelW - 36, 18), line);
                 ly += 18;
+            }
+        }
+
+        // Arranca el QTE para una habilidad: elige al azar una de las 2 secuencias fijas del
+        // personaje y deja la accion "pendiente" hasta que el QteManager avise si salio bien o mal.
+        private void BeginSkillQte(CharacterStats actor, PartyAction action)
+        {
+            if (qteManager == null)
+            {
+                combatManager.SubmitAction(action);
+                return;
+            }
+
+            var sequence = _rng.Next(2) == 0 ? actor.SkillSequenceA : actor.SkillSequenceB;
+            if (sequence == null || sequence.Length == 0)
+            {
+                combatManager.SubmitAction(action);
+                return;
+            }
+
+            _pendingSkillAction = action;
+            qteManager.Begin(sequence, qteTimeLimit, success =>
+            {
+                _pendingSkillAction.QteSuccess = success;
+                combatManager.SubmitAction(_pendingSkillAction);
+                _pendingSkillAction = null;
+            });
+        }
+
+        private void DrawQteOverlay(float panelX, float y, float panelW)
+        {
+            GUI.Box(new Rect(panelX + 10, y, panelW - 20, 80), "");
+            GUI.Label(new Rect(panelX + 20, y + 4, panelW - 40, 20), "¡Repetí la secuencia a tiempo para un golpe extra!");
+
+            // Barra de tiempo que se achica en tiempo real.
+            float barX = panelX + 20, barY = y + 26, barW = panelW - 220, barH = 16;
+            DrawRect(new Rect(barX, barY, barW, barH), new Color(0.2f, 0.2f, 0.22f));
+            float frac = qteManager.TimeLimit > 0f ? Mathf.Clamp01(qteManager.TimeRemaining / qteManager.TimeLimit) : 0f;
+            Color barColor = Color.Lerp(new Color(0.9f, 0.2f, 0.2f), new Color(0.3f, 0.9f, 0.3f), frac);
+            DrawRect(new Rect(barX, barY, barW * frac, barH), barColor);
+
+            // Iconos de la secuencia: gris = pendiente, amarillo = el que toca ahora, verde = ya hecho.
+            float iconX = panelX + 20;
+            float iconY = y + 48;
+            for (int i = 0; i < qteManager.Sequence.Count; i++)
+            {
+                Color c = i < qteManager.ProgressIndex ? new Color(0.3f, 0.9f, 0.3f)
+                    : i == qteManager.ProgressIndex ? new Color(1f, 0.9f, 0.2f)
+                    : new Color(0.5f, 0.5f, 0.5f);
+                DrawRect(new Rect(iconX, iconY, 26, 26), c);
+                var old = GUI.color;
+                GUI.color = Color.black;
+                GUI.Label(new Rect(iconX, iconY + 3, 26, 20), ArrowGlyph(qteManager.Sequence[i]));
+                GUI.color = old;
+                iconX += 34;
+            }
+        }
+
+        private string ArrowGlyph(QteKey key)
+        {
+            switch (key)
+            {
+                case QteKey.Up: return "↑";
+                case QteKey.Down: return "↓";
+                case QteKey.Left: return "←";
+                default: return "→";
             }
         }
 

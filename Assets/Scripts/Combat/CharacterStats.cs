@@ -23,7 +23,17 @@ namespace Combat
         public bool IsHealSkill;
         public int HealAmount;
 
+        // Las 2 secuencias fijas de 3 teclas del QTE para la habilidad de este personaje. Al usar
+        // la habilidad se elige una de las dos al azar para presentarle al jugador.
+        public QteKey[] SkillSequenceA = new QteKey[0];
+        public QteKey[] SkillSequenceB = new QteKey[0];
+
         public bool IsGuarding;
+
+        // Habilidad especial del Protector: mientras este activa, todos los ataques enemigos de
+        // esta ronda se redirigen a el (a costa de recibir el, y solo el, todo ese dano).
+        public bool CanProtectAll;
+        public bool IsProtectingAll;
 
         public bool IsAlive => HP > 0;
     }
