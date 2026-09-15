@@ -30,7 +30,8 @@ namespace Gameplay
                 settings.stairPairsPerFloor,
                 settings.eventsPerFloor,
                 settings.bossFloorStart,
-                settings.bossFloorInterval);
+                settings.bossFloorInterval,
+                settings.voidFraction);
 
             foreach (var line in log) Debug.Log(line);
 
@@ -56,7 +57,8 @@ namespace Gameplay
             var cell = floor.Cells[x, y];
             if (cell.HasWall(dir)) return false;
             var (ox, oy) = dir.Offset();
-            return floor.InBounds(x + ox, y + oy);
+            int nx = x + ox, ny = y + oy;
+            return floor.InBounds(nx, ny) && floor.Cells[nx, ny].Type != CellType.Void;
         }
 
         public void OnPlayerEnterCell(int x, int y)

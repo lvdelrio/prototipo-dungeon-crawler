@@ -8,7 +8,7 @@ namespace DungeonGen
     {
         // ---------- Public orchestration ----------
 
-        public List<DungeonFloor> GenerateDungeon(int floorCount, int width, int height, int seed, float eventPercent, out List<string> log, IList<EventEntry> eventPool = null, int stairPairsPerFloor = 2, IList<int> eventCountsPerFloor = null, int bossFloorStart = 2, int bossFloorInterval = 2)
+        public List<DungeonFloor> GenerateDungeon(int floorCount, int width, int height, int seed, float eventPercent, out List<string> log, IList<EventEntry> eventPool = null, int stairPairsPerFloor = 2, IList<int> eventCountsPerFloor = null, int bossFloorStart = 2, int bossFloorInterval = 2, float voidFraction = 0.4f)
         {
             log = new List<string>();
             var rng = new Random(seed);
@@ -26,6 +26,9 @@ namespace DungeonGen
                         ? $"Piso {i}: sala de jefe en ({floor.BossRoomMinX},{floor.BossRoomMinY})-({floor.BossRoomMaxX},{floor.BossRoomMaxY}), jefe en {floor.BossPos}."
                         : $"Piso {i}: se pidio sala de jefe pero no hubo espacio libre (mapa muy chico).");
                 }
+
+                int voided = PruneToSparseMaze(floor, rng, voidFraction);
+                log.Add($"Piso {i}: poda de pasillos -> {voided} celdas convertidas en vacio (roca solida).");
 
                 floors.Add(floor);
                 log.Add($"Piso {i}: maze generado. Start={floor.StartPos} End={floor.EndPos} SecundariaQuest={floor.SecondaryQuestPos} ZonaAislada=({floor.IsoMinX},{floor.IsoMinY})-({floor.IsoMaxX},{floor.IsoMaxY}) Gates={floor.Gates.Count}");
@@ -230,6 +233,78 @@ namespace DungeonGen
             return false;
         }
 
+        // ---------- Poda de pasillos (asi el mapa deja celdas como vacio real, no un laberinto perfecto) ----------
+
+        // Convierte en "Void" (roca solida, no caminable, no se renderiza) puntas muertas del arbol
+        // de expansion que no son necesarias para llegar a ningun punto importante. Como solo se
+        // podan hojas (grado 1) que no estan protegidas, el camino entre dos puntos protegidos
+        // cualesquiera SIEMPRE sigue intacto (en un arbol, todo nodo intermedio de un camino tiene
+        // grado >= 2, nunca puede volverse hoja). Devuelve cuantas celdas quedaron vacias.
+        private int PruneToSparseMaze(DungeonFloor floor, Random rng, float voidFraction)
+        {
+            if (voidFraction <= 0f) return 0;
+
+            var protectedCells = new HashSet<(int, int)> { floor.StartPos, floor.EndPos, floor.SecondaryQuestPos };
+            if (floor.HasBossRoom)
+                foreach (var c in floor.BossRoomCells) protectedCells.Add(c);
+            foreach (var gate in floor.Gates)
+            {
+                protectedCells.Add((gate.SwitchX, gate.SwitchY));
+                protectedCells.Add((gate.LandingX, gate.LandingY));
+            }
+
+            int totalNormal = 0;
+            for (int x = 0; x < floor.Width; x++)
+                for (int y = 0; y < floor.Height; y++)
+                    if (floor.Cells[x, y].Type == CellType.Normal) totalNormal++;
+
+            int targetVoidCount = (int)(totalNormal * Math.Clamp(voidFraction, 0f, 0.85f));
+            int voided = 0;
+
+            while (voided < targetVoidCount)
+            {
+                var leaves = new List<(int, int)>();
+                for (int x = 0; x < floor.Width; x++)
+                {
+                    for (int y = 0; y < floor.Height; y++)
+                    {
+                        if (floor.Cells[x, y].Type != CellType.Normal) continue;
+                        if (protectedCells.Contains((x, y))) continue;
+                        if (Degree(floor, x, y) == 1) leaves.Add((x, y));
+                    }
+                }
+
+                if (leaves.Count == 0) break;
+
+                Shuffle(leaves, rng);
+                int take = Math.Min(leaves.Count, targetVoidCount - voided);
+                for (int i = 0; i < take; i++)
+                {
+                    PruneCell(floor, leaves[i]);
+                    voided++;
+                }
+            }
+
+            return voided;
+        }
+
+        private void PruneCell(DungeonFloor floor, (int x, int y) pos)
+        {
+            var cell = floor.Cells[pos.x, pos.y];
+            foreach (var dir in DirectionExtensions.All)
+            {
+                if (!cell.HasWall(dir))
+                {
+                    var (ox, oy) = dir.Offset();
+                    int nx = pos.x + ox, ny = pos.y + oy;
+                    if (floor.InBounds(nx, ny))
+                        floor.Cells[nx, ny].SetWall(dir.Opposite(), true);
+                }
+                cell.SetWall(dir, true);
+            }
+            cell.Type = CellType.Void;
+        }
+
         // ---------- Maze carving (iterative recursive backtracker) ----------
 
         private void Carve(DungeonFloor floor, Func<int, int, bool> inRegion, Random rng)
@@ -389,6 +464,15 @@ namespace DungeonGen
             return d;
         }
 
+        private int CountNonVoid(DungeonFloor floor)
+        {
+            int c = 0;
+            for (int x = 0; x < floor.Width; x++)
+                for (int y = 0; y < floor.Height; y++)
+                    if (floor.Cells[x, y].Type != CellType.Void) c++;
+            return c;
+        }
+
         private (int, int) FindDeadEnd(DungeonFloor floor, bool preferOutside, HashSet<(int, int)> exclude)
         {
             var candidates = new List<(int, int)>();
@@ -543,9 +627,11 @@ namespace DungeonGen
             var issues = new List<string>();
             var reachableClosed = BfsReachable(floor, floor.StartPos);
 
-            int totalCells = floor.Width * floor.Height;
+            // Las celdas Void son vacio intencional (podado): no cuentan como "deberian ser alcanzables".
+            int totalCells = CountNonVoid(floor);
+
             if (reachableClosed.Count != totalCells)
-                issues.Add($"Piso {floor.Index}: solo {reachableClosed.Count}/{totalCells} celdas alcanzables con el atajo cerrado.");
+                issues.Add($"Piso {floor.Index}: solo {reachableClosed.Count}/{totalCells} celdas (no-vacias) alcanzables con el atajo cerrado.");
 
             if (!reachableClosed.Contains(floor.EndPos))
                 issues.Add($"Piso {floor.Index}: End {floor.EndPos} NO alcanzable desde Start.");
@@ -683,7 +769,7 @@ namespace DungeonGen
                 }
             }
 
-            int totalAllCells = floors.Sum(f => f.Width * f.Height);
+            int totalAllCells = floors.Sum(f => CountNonVoid(f));
             if (visited.Count != totalAllCells)
                 issues.Add($"Multi-piso: solo {visited.Count}/{totalAllCells} celdas alcanzables cruzando todos los pisos desde el Start del piso 0.");
 

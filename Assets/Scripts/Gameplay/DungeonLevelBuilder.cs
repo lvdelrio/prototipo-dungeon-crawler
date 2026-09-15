@@ -49,6 +49,8 @@ namespace Gameplay
                 for (int y = 0; y < floor.Height; y++)
                 {
                     var cell = floor.Cells[x, y];
+                    if (cell.Type == CellType.Void) continue; // roca solida: no se construye nada aqui
+
                     Vector3 center = CellCenter(x, y, cellSize);
 
                     if (!cell.IsBossRoom)
@@ -57,20 +59,29 @@ namespace Gameplay
                         BuildCeilingTile(center, cellSize, wallHeight);
                     }
 
-                    // Pared compartida: se construye una sola vez por borde (Norte/Este de cada
-                    // celda, mas Sur/Oeste solo en el borde del mapa) para no duplicar geometria.
-                    if (cell.HasWall(Direction.North))
-                        BuildWall(center, Direction.North, cellSize, wallHeight, wallThickness);
-                    if (cell.HasWall(Direction.East))
-                        BuildWall(center, Direction.East, cellSize, wallHeight, wallThickness);
-                    if (y == 0 && cell.HasWall(Direction.South))
-                        BuildWall(center, Direction.South, cellSize, wallHeight, wallThickness);
-                    if (x == 0 && cell.HasWall(Direction.West))
-                        BuildWall(center, Direction.West, cellSize, wallHeight, wallThickness);
+                    // Pared: se construye una sola vez por borde compartido entre dos celdas reales
+                    // (Norte/Este de cada celda), salvo que el vecino no exista o sea Void - en ese
+                    // caso la pared solo la puede construir ESTA celda, porque del otro lado no hay
+                    // nadie que la levante.
+                    foreach (var dir in DirectionExtensions.All)
+                    {
+                        if (!cell.HasWall(dir)) continue;
+                        bool isPrimaryDir = dir == Direction.North || dir == Direction.East;
+                        bool neighborMissing = !HasRealNeighbor(floor, x, y, dir);
+                        if (isPrimaryDir || neighborMissing)
+                            BuildWall(center, dir, cellSize, wallHeight, wallThickness);
+                    }
 
                     BuildMarker(cell, center, cellSize);
                 }
             }
+        }
+
+        private bool HasRealNeighbor(DungeonFloor floor, int x, int y, Direction dir)
+        {
+            var (ox, oy) = dir.Offset();
+            int nx = x + ox, ny = y + oy;
+            return floor.InBounds(nx, ny) && floor.Cells[nx, ny].Type != CellType.Void;
         }
 
         public Vector3 CellCenter(int x, int y, float cellSize) => new Vector3(x * cellSize, 0f, y * cellSize);

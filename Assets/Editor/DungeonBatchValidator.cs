@@ -23,7 +23,7 @@ public static class DungeonBatchValidator
             {
                 floors = gen.GenerateDungeon(settings.floorCount, settings.size, settings.size, seed,
                     settings.eventPercent, out log, eventTable.entries, settings.stairPairsPerFloor, settings.eventsPerFloor,
-                    settings.bossFloorStart, settings.bossFloorInterval);
+                    settings.bossFloorStart, settings.bossFloorInterval, settings.voidFraction);
             }
             catch (System.Exception ex)
             {
@@ -53,7 +53,7 @@ public static class DungeonBatchValidator
             {
                 var floors = gen.GenerateDungeon(settings.floorCount, settings.size, settings.size, 4242,
                     settings.eventPercent, out _, eventTable.entries, settings.stairPairsPerFloor, overrideCounts,
-                    settings.bossFloorStart, settings.bossFloorInterval);
+                    settings.bossFloorStart, settings.bossFloorInterval, settings.voidFraction);
                 var (ok, issues) = gen.ValidateDungeon(floors);
                 int e0 = CountEvents(floors[0]);
                 int e1 = floors.Count > 1 ? CountEvents(floors[1]) : -1;

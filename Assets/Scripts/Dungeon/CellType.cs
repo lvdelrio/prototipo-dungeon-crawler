@@ -11,6 +11,7 @@ namespace DungeonGen
         StairsUp,
         StairsDown,
         Event,
-        Boss
+        Boss,
+        Void // celda podada: no es parte de ningun camino, roca solida (no caminable, no se renderiza)
     }
 }

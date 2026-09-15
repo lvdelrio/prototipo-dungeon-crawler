@@ -29,6 +29,11 @@ namespace DungeonGen
         public float wallHeight = 3f;
         public float wallThickness = 0.2f;
 
+        [Header("Vacio entre caminos (celdas podadas, como en el mapa real de Etrian Odyssey)")]
+        [Tooltip("Fraccion de las celdas normales que se convierten en roca solida (Void) despues de generar el laberinto. Solo se podan puntas muertas que no hacen falta para llegar a ningun punto importante, asi que la solucionabilidad nunca se rompe. 0 = laberinto denso (sin vacios), como antes.")]
+        [Range(0f, 0.7f)]
+        public float voidFraction = 0.4f;
+
         [Header("Piso de jefe (sala grande obligatoria con jefe + escalera)")]
         [Tooltip("Primer piso (indice, empezando en 0) que tiene sala de jefe.")]
         public int bossFloorStart = 2;

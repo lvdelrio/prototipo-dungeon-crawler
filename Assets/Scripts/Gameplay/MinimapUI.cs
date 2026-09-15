@@ -49,6 +49,12 @@ namespace Gameplay
                     float px = panelX + x * cellPixelSize;
                     float py = top + (h - 1 - y) * cellPixelSize;
 
+                    if (cell.Type == CellType.Void)
+                    {
+                        DrawRect(new Rect(px, py, cellPixelSize, cellPixelSize), new Color(0.05f, 0.05f, 0.06f));
+                        continue;
+                    }
+
                     bool revealed = !playerMode || cell.Discovered;
                     if (!revealed)
                     {
@@ -104,6 +110,7 @@ namespace Gameplay
                 case CellType.End: return Color.red;
                 case CellType.SecondaryQuest: return Color.yellow;
                 case CellType.ShortcutSwitch: return new Color(0.2f, 0.4f, 1f);
+                case CellType.ShortcutLanding: return new Color(0.85f, 0.45f, 0.1f);
                 case CellType.StairsUp: return Color.cyan;
                 case CellType.StairsDown: return new Color(1f, 0.5f, 0f);
                 case CellType.Event: return cell.EventConsumed ? (Color?)null : Color.white;
