@@ -481,12 +481,14 @@ namespace DungeonGen
             }
         }
 
+        // Excluye celdas de sala de jefe: ahi nunca deben caer eventos ni escaleras "genericas"
+        // (las escaleras de la sala de jefe se fuerzan aparte, via restrictLowerTo).
         private List<(int, int)> FreeNormalCells(DungeonFloor floor)
         {
             var list = new List<(int, int)>();
             for (int x = 0; x < floor.Width; x++)
                 for (int y = 0; y < floor.Height; y++)
-                    if (floor.Cells[x, y].Type == CellType.Normal)
+                    if (floor.Cells[x, y].Type == CellType.Normal && !floor.Cells[x, y].IsBossRoom)
                         list.Add((x, y));
             return list;
         }
@@ -550,6 +552,15 @@ namespace DungeonGen
 
             if (!reachableClosed.Contains(floor.SecondaryQuestPos))
                 issues.Add($"Piso {floor.Index}: mision secundaria {floor.SecondaryQuestPos} NO alcanzable desde Start.");
+
+            if (floor.HasBossRoom)
+            {
+                foreach (var (bx, by) in floor.BossRoomCells)
+                {
+                    if (floor.Cells[bx, by].Type == CellType.Event)
+                        issues.Add($"Piso {floor.Index}: hay un evento en ({bx},{by}), dentro de la sala de jefe (no deberia haber eventos ahi).");
+                }
+            }
 
             for (int gi = 0; gi < floor.Gates.Count; gi++)
             {

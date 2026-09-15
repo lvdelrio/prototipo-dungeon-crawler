@@ -62,11 +62,13 @@ namespace Gameplay
 
                     // Cada celda construye sus propias 4 paredes (ninguna se comparte con la vecina):
                     // asi dos caminos sin conexion quedan separados por un vacio real, no por una
-                    // unica pared en el medio.
+                    // unica pared en el medio. Dentro de una sala de jefe, las paredes van al borde
+                    // de cellSize (no de pathWidth) para quedar al ras del slab grande de la sala.
+                    float wallSpan = cell.IsBossRoom ? cellSize : pathWidth;
                     foreach (var dir in DirectionExtensions.All)
                     {
                         if (cell.HasWall(dir))
-                            BuildWall(center, dir, pathWidth, wallHeight, wallThickness);
+                            BuildWall(center, dir, wallSpan, wallHeight, wallThickness);
                     }
 
                     // Puentes: solo se procesan desde Norte/Este para no duplicar el mismo puente por
