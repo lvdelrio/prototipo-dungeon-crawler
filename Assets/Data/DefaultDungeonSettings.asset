@@ -16,7 +16,7 @@ MonoBehaviour:
   height: 16
   floorCount: 3
   stairPairsPerFloor: 2
-  seed: 12345
+  seed: 0
   eventPercent: 0.12
   cellSize: 4
   wallHeight: 3

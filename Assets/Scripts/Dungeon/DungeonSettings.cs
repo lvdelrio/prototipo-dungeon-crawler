@@ -13,8 +13,8 @@ namespace DungeonGen
         public int floorCount = 3;
         public int stairPairsPerFloor = 2;
 
-        [Header("Semilla (0 = aleatoria cada vez)")]
-        public int seed = 12345;
+        [Header("Semilla (0 = aleatoria cada vez que se abre la escena)")]
+        public int seed = 0;
 
         [Header("Eventos (porcentaje global usado como valor por defecto)")]
         [Range(0f, 0.5f)]
@@ -28,6 +28,11 @@ namespace DungeonGen
         public float cellSize = 4f;
         public float wallHeight = 3f;
         public float wallThickness = 0.2f;
+
+        [Header("Separacion entre caminos")]
+        [Tooltip("Fraccion de cellSize que ocupa cada camino (piso + sus propias paredes). El resto queda como vacio real entre un camino y el de al lado - cada uno tiene su propia pared, nunca comparten la misma. La distancia de un paso del jugador (cellSize) no cambia.")]
+        [Range(0.4f, 0.9f)]
+        public float pathWidthFraction = 0.6f;
 
         [Header("Piso de jefe (sala grande obligatoria con jefe + escalera)")]
         [Tooltip("Primer piso (indice, empezando en 0) que tiene sala de jefe.")]
