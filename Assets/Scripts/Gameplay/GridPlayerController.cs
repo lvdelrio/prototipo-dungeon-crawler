@@ -49,7 +49,10 @@ namespace Gameplay
         void Update()
         {
             if (_busy || dungeonManager == null) return;
-            if (dungeonManager.IsCombatActive) return; // congelado mientras dura el combate
+            if (dungeonManager.IsCombatActive || dungeonManager.IsGameOverShopActive) return; // congelado en combate o en la tienda post-derrota
+
+            if (Input.GetKeyDown(KeyCode.M)) { dungeonManager.TryUseMap(); return; }
+            if (Input.GetKeyDown(KeyCode.P)) { dungeonManager.TryUseDrill(_x, _y, _facing); return; }
 
             if (Input.GetKeyDown(KeyCode.LeftArrow)) { StartCoroutine(Turn(-1)); return; }
             if (Input.GetKeyDown(KeyCode.RightArrow)) { StartCoroutine(Turn(1)); return; }

@@ -396,6 +396,25 @@ namespace DungeonGen
             floor.Cells[nx, ny].SetWall(dir.Opposite(), false);
         }
 
+        // Item "Perforador": intenta abrir un paso PERMANENTE (para esta run) a traves de la pared
+        // en la direccion dada desde (x,y). Solo funciona si hay una pared ahi y del otro lado hay
+        // una celda real dentro del mapa (no Void, no roca fuera de los limites); si no, no hace
+        // nada y devuelve false (para no gastar el item en vano).
+        public bool TryDrillWall(DungeonFloor floor, int x, int y, Direction dir)
+        {
+            if (!floor.InBounds(x, y)) return false;
+            var cell = floor.Cells[x, y];
+            if (!cell.HasWall(dir)) return false;
+
+            var (ox, oy) = dir.Offset();
+            int nx = x + ox, ny = y + oy;
+            if (!floor.InBounds(nx, ny)) return false;
+            if (floor.Cells[nx, ny].Type == CellType.Void) return false;
+
+            OpenWallBetween(floor, x, y, dir);
+            return true;
+        }
+
         // Activa el atajo: no abre ninguna pared (el vacio entre el switch y el punto de llegada es
         // permanente), solo habilita el teletransporte entre ambos extremos.
         public void OpenGate(DungeonFloor floor, int gateIndex)

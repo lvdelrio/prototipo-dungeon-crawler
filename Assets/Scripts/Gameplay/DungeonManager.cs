@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using DungeonGen;
 using Combat;
+using Meta;
 
 namespace Gameplay
 {
@@ -21,6 +22,12 @@ namespace Gameplay
         private int _encounterThreshold;
         private readonly HashSet<int> _bossDefeatedFloors = new HashSet<int>();
 
+        private MetaProgress _meta;
+        private int _deepestFloorReachedThisRun;
+        private int _enemiesDefeatedThisRun;
+        private int _bossesDefeatedThisRun;
+        private int _lastRunPointsEarned;
+
         public DungeonFloor CurrentFloor => _floors[_currentFloorIndex];
         public int CurrentFloorIndex => _currentFloorIndex;
         public List<DungeonFloor> Floors => _floors;
@@ -28,9 +35,25 @@ namespace Gameplay
         public int CurrentWalkingCounter => _walkingCounter;
         public int CurrentEncounterThreshold => _encounterThreshold;
 
+        public MetaProgress Meta => _meta;
+        public bool IsGameOverShopActive { get; private set; }
+        public int LastRunPointsEarned => _lastRunPointsEarned;
+
         void Awake()
         {
+            _meta = MetaSaveService.Load();
+            if (combat != null)
+            {
+                combat.InitializeParty(_meta);
+                combat.OnCombatFinished += HandleCombatFinished;
+            }
+
             int seed = settings.seed != 0 ? settings.seed : System.Environment.TickCount;
+            GenerateAndEnterDungeon(seed);
+        }
+
+        private void GenerateAndEnterDungeon(int seed)
+        {
             _floors = _generator.GenerateDungeon(
                 settings.floorCount, settings.size, settings.size, seed,
                 settings.eventPercent, out var log,
@@ -45,11 +68,14 @@ namespace Gameplay
 
             foreach (var line in log) Debug.Log(line);
 
-            RollNewEncounterThreshold();
-            if (combat != null) combat.OnCombatFinished += HandleCombatFinished;
+            _bossDefeatedFloors.Clear();
+            _deepestFloorReachedThisRun = 0;
+            _enemiesDefeatedThisRun = 0;
+            _bossesDefeatedThisRun = 0;
 
             _currentFloorIndex = 0;
             BuildActiveFloor();
+            RollNewEncounterThreshold();
 
             var start = CurrentFloor.StartPos;
             player.Warp(start.x, start.y, Direction.North);
@@ -154,17 +180,65 @@ namespace Gameplay
         {
             RollNewEncounterThreshold();
 
-            if (wasBoss && victory)
-                _bossDefeatedFloors.Add(_currentFloorIndex);
-
-            if (!victory)
+            if (victory)
             {
-                // Derrota: la party despierta malherida de vuelta en el Start de este piso.
-                var start = CurrentFloor.StartPos;
-                player.Warp(start.x, start.y, Direction.North);
-                CurrentFloor.Cells[start.x, start.y].Discovered = true;
-                if (hud != null) hud.SetLastMessage("Despiertan de vuelta cerca del inicio del piso...");
+                if (wasBoss)
+                {
+                    _bossDefeatedFloors.Add(_currentFloorIndex);
+                    _bossesDefeatedThisRun++;
+                }
+                else
+                {
+                    _enemiesDefeatedThisRun += combat.Enemies.Count;
+                }
+                return;
             }
+
+            // Derrota: la run termina aca. Se banca la recompensa (piso alcanzado + enemigos/jefes)
+            // y se abre la pantalla de tienda/mejoras; la proxima mazmorra (semilla nueva) arranca
+            // recien cuando el jugador la cierra (StartNewRun).
+            _lastRunPointsEarned = _meta.AddRunRewards(_deepestFloorReachedThisRun, _enemiesDefeatedThisRun, _bossesDefeatedThisRun);
+            MetaSaveService.Save(_meta);
+            IsGameOverShopActive = true;
+            if (hud != null) hud.SetLastMessage("La party cae derrotada. La run termina aca.");
+        }
+
+        public void StartNewRun()
+        {
+            if (!IsGameOverShopActive) return;
+            IsGameOverShopActive = false;
+            combat.InitializeParty(_meta);
+            int seed = Random.Range(int.MinValue, int.MaxValue);
+            GenerateAndEnterDungeon(seed);
+        }
+
+        // Item "Mapa": revela de golpe todo el piso actual (fog of war) sin moverse.
+        public bool TryUseMap()
+        {
+            if (_meta.MapCharges <= 0) return false;
+            _meta.MapCharges--;
+            MetaSaveService.Save(_meta);
+            foreach (var cell in CurrentFloor.Cells)
+                cell.Discovered = true;
+            if (hud != null) hud.SetLastMessage("Usaste un Mapa: se revelo todo este piso.");
+            return true;
+        }
+
+        // Item "Perforador": intenta abrir un paso permanente (para esta run) en la pared que el
+        // jugador tiene enfrente. Solo se gasta si realmente hay algo del otro lado (no Void).
+        public bool TryUseDrill(int x, int y, Direction facing)
+        {
+            if (_meta.DrillCharges <= 0) return false;
+            if (!_generator.TryDrillWall(CurrentFloor, x, y, facing))
+            {
+                if (hud != null) hud.SetLastMessage("El Perforador no encontro nada solido detras de esa pared.");
+                return false;
+            }
+            _meta.DrillCharges--;
+            MetaSaveService.Save(_meta);
+            BuildActiveFloor();
+            if (hud != null) hud.SetLastMessage("¡Perforaste la pared! Se abrio un paso permanente para esta run.");
+            return true;
         }
 
         public void TryInteract(int x, int y)
@@ -217,6 +291,7 @@ namespace Gameplay
         {
             if (floorIndex < 0 || floorIndex >= _floors.Count) return;
             _currentFloorIndex = floorIndex;
+            if (floorIndex > _deepestFloorReachedThisRun) _deepestFloorReachedThisRun = floorIndex;
             BuildActiveFloor();
             RollNewEncounterThreshold();
             player.Warp(spawnX, spawnY, Direction.North);

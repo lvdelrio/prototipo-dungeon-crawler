@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using Combat;
+using Meta;
 
 namespace Gameplay
 {
@@ -40,9 +41,13 @@ namespace Gameplay
         private readonly Dictionary<CharacterStats, PartyAction> _queuedActions = new Dictionary<CharacterStats, PartyAction>();
         private int _chooserIndex;
 
-        void Awake()
+        // Crea una party nueva con las stats base y le aplica los niveles de mejora permanentes
+        // comprados en runs anteriores. La llama DungeonManager al arrancar y cada vez que empieza
+        // una run nueva (tras la pantalla de tienda/mejoras post-derrota).
+        public void InitializeParty(MetaProgress meta)
         {
             Party = PartyFactory.CreateDefaultParty();
+            meta.ApplyUpgradesToParty(Party);
         }
 
         public void StartEncounter(bool isBoss)
@@ -133,7 +138,7 @@ namespace Gameplay
             }
             else if (_engine.AllPartyDefeated())
             {
-                Log.Add("La party cae derrotada... despiertan malheridos.");
+                Log.Add("La party cae derrotada. La run termina aca...");
                 foreach (var p in Party) p.HP = Math.Max(1, p.HP);
                 EndCombat(victory: false);
             }

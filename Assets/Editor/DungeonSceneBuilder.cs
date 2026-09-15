@@ -52,6 +52,8 @@ public static class DungeonSceneBuilder
         var combatHud = combatHudGo.AddComponent<CombatHUD>();
         var qteGo = new GameObject("QteManager");
         var qteManager = qteGo.AddComponent<QteManager>();
+        var metaShopGo = new GameObject("MetaShopHUD");
+        var metaShopHud = metaShopGo.AddComponent<MetaShopHUD>();
 
         manager.settings = settings;
         manager.eventTable = eventTable;
@@ -67,6 +69,8 @@ public static class DungeonSceneBuilder
         minimap.player = playerController;
         combatHud.combatManager = combatManager;
         combatManager.qteManager = qteManager;
+        metaShopHud.dungeonManager = manager;
+        metaShopHud.combatManager = combatManager;
 
         if (!AssetDatabase.IsValidFolder("Assets/Scenes"))
             AssetDatabase.CreateFolder("Assets", "Scenes");
