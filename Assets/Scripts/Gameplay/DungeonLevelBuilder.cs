@@ -21,6 +21,7 @@ namespace Gameplay
         public Material bossMarkerMaterial;
         public Material bossRoomFloorMaterial;
         public Material bossRoomCeilingMaterial;
+        public Material voidBlockMaterial;
 
         private GameObject _root;
         private readonly Dictionary<int, (GameObject switchGo, GameObject landingGo)> _shortcutMarkers = new Dictionary<int, (GameObject, GameObject)>();
@@ -32,9 +33,9 @@ namespace Gameplay
         }
 
         // Una celda logica = una distancia cellSize = un paso del jugador, en angulos de 90°, igual
-        // que el mapa real de Etrian Odyssey: cada casilla es un cuadrado completo de piso/techo, y
-        // las paredes son simplemente la linea que divide una casilla de la vecina (un unico objeto
-        // compartido en el borde, no un vacio fisico entre caminos).
+        // que el mapa real de Etrian Odyssey. Entre caminos que no estan conectados puede haber
+        // celdas "Void": esas se construyen como un BLOQUE SOLIDO real (un volumen de piso a techo),
+        // no como una simple pared delgada - asi separan un camino de otro con un bloque de verdad.
         public void Build(DungeonFloor floor, float cellSize, float wallHeight, float wallThickness)
         {
             Clear();
@@ -49,9 +50,13 @@ namespace Gameplay
                 for (int y = 0; y < floor.Height; y++)
                 {
                     var cell = floor.Cells[x, y];
-                    if (cell.Type == CellType.Void) continue; // roca solida: no se construye nada aqui
-
                     Vector3 center = CellCenter(x, y, cellSize);
+
+                    if (cell.Type == CellType.Void)
+                    {
+                        BuildVoidBlock(center, cellSize, wallHeight);
+                        continue;
+                    }
 
                     if (!cell.IsBossRoom)
                     {
@@ -60,15 +65,24 @@ namespace Gameplay
                     }
 
                     // Pared: se construye una sola vez por borde compartido entre dos celdas reales
-                    // (Norte/Este de cada celda), salvo que el vecino no exista o sea Void - en ese
-                    // caso la pared solo la puede construir ESTA celda, porque del otro lado no hay
-                    // nadie que la levante.
+                    // (Norte/Este de cada celda). Si el vecino es Void, no hace falta pared propia -
+                    // el bloque solido del vacio ya cubre y sella ese borde. Si no hay vecino (borde
+                    // del mapa), esta celda es la unica que puede construirla.
                     foreach (var dir in DirectionExtensions.All)
                     {
                         if (!cell.HasWall(dir)) continue;
+                        var (ox, oy) = dir.Offset();
+                        int nx = x + ox, ny = y + oy;
+                        bool outOfBounds = !floor.InBounds(nx, ny);
+                        if (outOfBounds)
+                        {
+                            BuildWall(center, dir, cellSize, wallHeight, wallThickness);
+                            continue;
+                        }
+                        if (floor.Cells[nx, ny].Type == CellType.Void) continue;
+
                         bool isPrimaryDir = dir == Direction.North || dir == Direction.East;
-                        bool neighborMissing = !HasRealNeighbor(floor, x, y, dir);
-                        if (isPrimaryDir || neighborMissing)
+                        if (isPrimaryDir)
                             BuildWall(center, dir, cellSize, wallHeight, wallThickness);
                     }
 
@@ -77,11 +91,16 @@ namespace Gameplay
             }
         }
 
-        private bool HasRealNeighbor(DungeonFloor floor, int x, int y, Direction dir)
+        // Un bloque solido de piso a techo (y un poco mas, para que no se vean costuras) que ocupa
+        // toda la celda: esto es lo que separa dos caminos entre si, no una pared delgada.
+        private void BuildVoidBlock(Vector3 center, float cellSize, float wallHeight)
         {
-            var (ox, oy) = dir.Offset();
-            int nx = x + ox, ny = y + oy;
-            return floor.InBounds(nx, ny) && floor.Cells[nx, ny].Type != CellType.Void;
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = "VoidBlock";
+            go.transform.SetParent(_root.transform, false);
+            go.transform.position = center + new Vector3(0, wallHeight / 2f, 0);
+            go.transform.localScale = new Vector3(cellSize, wallHeight + 0.4f, cellSize);
+            ApplyMaterial(go, voidBlockMaterial, new Color(0.08f, 0.08f, 0.09f));
         }
 
         public Vector3 CellCenter(int x, int y, float cellSize) => new Vector3(x * cellSize, 0f, y * cellSize);
@@ -93,7 +112,7 @@ namespace Gameplay
             go.transform.SetParent(_root.transform, false);
             go.transform.position = center + new Vector3(0, -0.1f, 0);
             go.transform.localScale = new Vector3(cellSize, 0.2f, cellSize);
-            ApplyMaterial(go, floorMaterial, new Color(0.32f, 0.45f, 0.58f));
+            ApplyMaterial(go, floorMaterial, new Color(0.35f, 0.35f, 0.38f));
         }
 
         private void BuildCeilingTile(Vector3 center, float cellSize, float wallHeight)
@@ -103,7 +122,7 @@ namespace Gameplay
             go.transform.SetParent(_root.transform, false);
             go.transform.position = center + new Vector3(0, wallHeight + 0.1f, 0);
             go.transform.localScale = new Vector3(cellSize, 0.2f, cellSize);
-            ApplyMaterial(go, ceilingMaterial, new Color(0.06f, 0.1f, 0.2f));
+            ApplyMaterial(go, ceilingMaterial, new Color(0.15f, 0.15f, 0.17f));
         }
 
         // Un unico piso/techo grande que cubre todo el rectangulo de la sala de jefe, para que se
@@ -151,7 +170,7 @@ namespace Gameplay
                 ? new Vector3(cellSize, wallHeight, wallThickness)
                 : new Vector3(wallThickness, wallHeight, cellSize);
 
-            ApplyMaterial(go, wallMaterial, new Color(0.05f, 0.14f, 0.28f));
+            ApplyMaterial(go, wallMaterial, new Color(0.5f, 0.45f, 0.4f));
         }
 
         private void BuildMarker(DungeonCell cell, Vector3 center, float cellSize)
