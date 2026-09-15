@@ -22,7 +22,8 @@ public static class DungeonBatchValidator
             try
             {
                 floors = gen.GenerateDungeon(settings.floorCount, settings.size, settings.size, seed,
-                    settings.eventPercent, out log, eventTable.entries, settings.stairPairsPerFloor);
+                    settings.eventPercent, out log, eventTable.entries, settings.stairPairsPerFloor, settings.eventsPerFloor,
+                    settings.bossFloorStart, settings.bossFloorInterval);
             }
             catch (System.Exception ex)
             {
@@ -34,12 +35,41 @@ public static class DungeonBatchValidator
             var (ok, issues) = gen.ValidateDungeon(floors);
             if (ok)
             {
-                Debug.Log($"[DUNGEON-VALIDATE] seed={seed} OK - {floors.Count} pisos, {settings.size}x{settings.size}.");
+                var bossFloors = string.Join(",", floors.FindAll(f => f.HasBossRoom).ConvertAll(f => f.Index));
+                Debug.Log($"[DUNGEON-VALIDATE] seed={seed} OK - {floors.Count} pisos, {settings.size}x{settings.size}, pisos con jefe=[{bossFloors}].");
             }
             else
             {
                 allOk = false;
                 Debug.LogError($"[DUNGEON-VALIDATE] seed={seed} FALLÓ:\n" + string.Join("\n", issues));
+            }
+        }
+
+        // Prueba especifica del override "eventos por piso" (piso 0 sin eventos, piso1=6 exactos, piso2 usa el default).
+        {
+            var overrideCounts = new List<int> { 0, 6, -1 };
+            var gen = new DungeonGenerator();
+            try
+            {
+                var floors = gen.GenerateDungeon(settings.floorCount, settings.size, settings.size, 4242,
+                    settings.eventPercent, out _, eventTable.entries, settings.stairPairsPerFloor, overrideCounts,
+                    settings.bossFloorStart, settings.bossFloorInterval);
+                var (ok, issues) = gen.ValidateDungeon(floors);
+                int e0 = CountEvents(floors[0]);
+                int e1 = floors.Count > 1 ? CountEvents(floors[1]) : -1;
+                bool countsOk = e0 == 0 && (floors.Count <= 1 || e1 == 6);
+                if (ok && countsOk)
+                    Debug.Log($"[DUNGEON-VALIDATE] override eventsPerFloor OK (piso0={e0}, piso1={e1}).");
+                else
+                {
+                    allOk = false;
+                    Debug.LogError($"[DUNGEON-VALIDATE] override eventsPerFloor FALLÓ (piso0={e0}, piso1={e1}, ok={ok}).\n" + string.Join("\n", issues));
+                }
+            }
+            catch (System.Exception ex)
+            {
+                allOk = false;
+                Debug.LogError($"[DUNGEON-VALIDATE] override eventsPerFloor EXCEPCION: {ex}");
             }
         }
 
@@ -49,5 +79,14 @@ public static class DungeonBatchValidator
             Debug.LogError("[DUNGEON-VALIDATE] RESULTADO FINAL: HAY FALLOS");
 
         if (!allOk) EditorApplication.Exit(1);
+    }
+
+    private static int CountEvents(DungeonFloor floor)
+    {
+        int c = 0;
+        for (int x = 0; x < floor.Width; x++)
+            for (int y = 0; y < floor.Height; y++)
+                if (floor.Cells[x, y].Type == CellType.Event) c++;
+        return c;
     }
 }

@@ -15,7 +15,8 @@ namespace Gameplay
 
         public int panelX = 500;
         public int panelY = 10;
-        public int cellPixelSize = 16;
+        public int cellPixelSize = 14;
+        public int gapPixelSize = 8;
         public int wallPixelThickness = 2;
 
         private static Texture2D _whiteTex;
@@ -33,21 +34,24 @@ namespace Gameplay
 
             int w = floor.Width;
             int h = floor.Height;
+            int pitch = cellPixelSize + gapPixelSize;
             float top = panelY + 24;
+            float mapWidth = w * cellPixelSize + (w - 1) * gapPixelSize;
+            float mapHeight = h * cellPixelSize + (h - 1) * gapPixelSize;
 
-            GUI.Box(new Rect(panelX - 10, panelY - 10, w * cellPixelSize + 20, h * cellPixelSize + 44), "");
+            GUI.Box(new Rect(panelX - 10, panelY - 10, mapWidth + 20, mapHeight + 44), "");
             string title = playerMode
                 ? $"Mapa - Piso {dungeonManager.CurrentFloorIndex} (jugador - Tab: ver todo)"
                 : $"Mapa - Piso {dungeonManager.CurrentFloorIndex} (DEBUG: mapa completo - Tab: ocultar)";
-            GUI.Label(new Rect(panelX, panelY, w * cellPixelSize, 20), title);
+            GUI.Label(new Rect(panelX, panelY, mapWidth, 20), title);
 
             for (int x = 0; x < w; x++)
             {
                 for (int y = 0; y < h; y++)
                 {
                     var cell = floor.Cells[x, y];
-                    float px = panelX + x * cellPixelSize;
-                    float py = top + (h - 1 - y) * cellPixelSize;
+                    float px = panelX + x * pitch;
+                    float py = top + (h - 1 - y) * pitch;
 
                     bool revealed = !playerMode || cell.Discovered;
                     if (!revealed)
@@ -73,15 +77,41 @@ namespace Gameplay
                         float m = cellPixelSize * 0.4f;
                         DrawRect(new Rect(px + (cellPixelSize - m) / 2f, py + (cellPixelSize - m) / 2f, m, m), markerColor.Value);
                     }
+
+                    // Hueco hacia el Este: solo se pinta como corredor si el paso esta abierto Y el otro
+                    // extremo tambien fue descubierto; si no, queda como espacio vacio/oscuro (igual que
+                    // en el nivel 3D, donde ese hueco no tiene piso salvo que haya un puente conectando).
+                    if (x + 1 < w)
+                    {
+                        var eastNeighbor = floor.Cells[x + 1, y];
+                        bool eastRevealed = !playerMode || eastNeighbor.Discovered;
+                        var gapRect = new Rect(px + cellPixelSize, py, gapPixelSize, cellPixelSize);
+                        if (!cell.HasWall(Direction.East) && eastRevealed)
+                            DrawRect(gapRect, BridgeColor(cell, eastNeighbor));
+                        else if (revealed && eastRevealed)
+                            DrawRect(gapRect, new Color(0.05f, 0.05f, 0.06f));
+                    }
+
+                    // Hueco hacia el Norte (arriba en pantalla).
+                    if (y + 1 < h)
+                    {
+                        var northNeighbor = floor.Cells[x, y + 1];
+                        bool northRevealed = !playerMode || northNeighbor.Discovered;
+                        var gapRect = new Rect(px, py - gapPixelSize, cellPixelSize, gapPixelSize);
+                        if (!cell.HasWall(Direction.North) && northRevealed)
+                            DrawRect(gapRect, BridgeColor(cell, northNeighbor));
+                        else if (revealed && northRevealed)
+                            DrawRect(gapRect, new Color(0.05f, 0.05f, 0.06f));
+                    }
                 }
             }
 
             // Jugador: punto magenta + marca de la direccion hacia la que mira. Siempre visible en ambos modos.
-            float ppx = panelX + player.CellX * cellPixelSize + cellPixelSize / 2f;
-            float ppy = top + (h - 1 - player.CellY) * cellPixelSize + cellPixelSize / 2f;
+            float ppx = panelX + player.CellX * pitch + cellPixelSize / 2f;
+            float ppy = top + (h - 1 - player.CellY) * pitch + cellPixelSize / 2f;
             var (fx, fy) = player.Facing.Offset();
-            float facingPx = ppx + fx * (cellPixelSize * 0.35f);
-            float facingPy = ppy - fy * (cellPixelSize * 0.35f);
+            float facingPx = ppx + fx * (cellPixelSize * 0.6f);
+            float facingPy = ppy - fy * (cellPixelSize * 0.6f);
 
             DrawRect(new Rect(ppx - 4, ppy - 4, 8, 8), Color.magenta);
             DrawRect(new Rect(facingPx - 2, facingPy - 2, 4, 4), Color.magenta);
@@ -91,7 +121,15 @@ namespace Gameplay
         {
             if (cell.Type == CellType.Event && cell.EventConsumed)
                 return new Color(0.45f, 0.45f, 0.45f);
+            if (cell.IsBossRoom)
+                return new Color(0.5f, 0.16f, 0.16f);
             return cell.IsIsolatedZone ? new Color(0.30f, 0.20f, 0.35f) : new Color(0.62f, 0.62f, 0.66f);
+        }
+
+        private Color BridgeColor(DungeonCell a, DungeonCell b)
+        {
+            if (a.IsBossRoom && b.IsBossRoom) return new Color(0.5f, 0.16f, 0.16f);
+            return new Color(0.5f, 0.5f, 0.54f);
         }
 
         private Color? MarkerColor(DungeonCell cell)
@@ -105,6 +143,7 @@ namespace Gameplay
                 case CellType.StairsUp: return Color.cyan;
                 case CellType.StairsDown: return new Color(1f, 0.5f, 0f);
                 case CellType.Event: return cell.EventConsumed ? (Color?)null : Color.white;
+                case CellType.Boss: return new Color(1f, 0f, 0.1f);
                 default: return null;
             }
         }

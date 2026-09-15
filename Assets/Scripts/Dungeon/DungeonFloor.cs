@@ -25,6 +25,12 @@ namespace DungeonGen
         // rectangle bounds of the isolated zone (inclusive)
         public int IsoMinX, IsoMinY, IsoMaxX, IsoMaxY;
 
+        // sala de jefe (opcional, solo en pisos designados como "boss floor")
+        public List<(int, int)> BossRoomCells;
+        public int BossRoomMinX, BossRoomMinY, BossRoomMaxX, BossRoomMaxY;
+        public (int x, int y) BossPos;
+        public bool HasBossRoom => BossRoomCells != null && BossRoomCells.Count > 0;
+
         public DungeonFloor(int width, int height, int index)
         {
             Width = width;

@@ -27,19 +27,30 @@ namespace Gameplay
                 settings.floorCount, settings.size, settings.size, seed,
                 settings.eventPercent, out var log,
                 eventTable != null ? eventTable.entries : null,
-                settings.stairPairsPerFloor);
+                settings.stairPairsPerFloor,
+                settings.eventsPerFloor,
+                settings.bossFloorStart,
+                settings.bossFloorInterval);
 
             foreach (var line in log) Debug.Log(line);
 
             _currentFloorIndex = 0;
-            levelBuilder.Build(CurrentFloor, settings.cellSize, settings.wallHeight, settings.wallThickness);
+            BuildActiveFloor();
 
             var start = CurrentFloor.StartPos;
             player.Warp(start.x, start.y, Direction.North);
             OnPlayerEnterCell(start.x, start.y);
         }
 
-        public Vector3 CellToWorld(int x, int y) => levelBuilder.CellCenter(x, y, settings.cellSize);
+        private float Spacing => settings.cellSize * (1f + Mathf.Max(0.05f, settings.corridorGapMultiplier));
+
+        private void BuildActiveFloor()
+        {
+            levelBuilder.Build(CurrentFloor, settings.cellSize, settings.wallHeight, settings.wallThickness,
+                settings.corridorWidthFraction, settings.corridorGapMultiplier);
+        }
+
+        public Vector3 CellToWorld(int x, int y) => levelBuilder.CellCenter(x, y, Spacing);
 
         public bool CanMove(int x, int y, Direction dir)
         {
@@ -72,6 +83,9 @@ namespace Gameplay
                     break;
                 case CellType.ShortcutSwitch:
                     message = "Palanca de atajo. Presiona Espacio para activarla permanentemente.";
+                    break;
+                case CellType.Boss:
+                    message = "Sala del jefe. La escalera para avanzar esta en esta sala.";
                     break;
                 case CellType.Event:
                     if (!cell.EventConsumed)
@@ -106,7 +120,7 @@ namespace Gameplay
         {
             if (floorIndex < 0 || floorIndex >= _floors.Count) return;
             _currentFloorIndex = floorIndex;
-            levelBuilder.Build(CurrentFloor, settings.cellSize, settings.wallHeight, settings.wallThickness);
+            BuildActiveFloor();
             player.Warp(spawnX, spawnY, Direction.North);
             OnPlayerEnterCell(spawnX, spawnY);
             if (hud != null) hud.SetLastMessage($"Cambiaste al piso {floorIndex}.");

@@ -7,6 +7,7 @@ namespace DungeonGen
         public bool[] Walls = { true, true, true, true }; // indexed by Direction, true = wall present
         public CellType Type = CellType.Normal;
         public bool IsIsolatedZone;
+        public bool IsBossRoom;
         public bool EventConsumed;
         public bool Discovered; // runtime: revelado en el minimapa del jugador al pisarlo
 

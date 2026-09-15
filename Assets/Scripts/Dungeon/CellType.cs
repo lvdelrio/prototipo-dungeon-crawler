@@ -9,6 +9,7 @@ namespace DungeonGen
         ShortcutSwitch,
         StairsUp,
         StairsDown,
-        Event
+        Event,
+        Boss
     }
 }

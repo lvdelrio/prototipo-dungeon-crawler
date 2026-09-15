@@ -8,7 +8,7 @@ namespace DungeonGen
     {
         // ---------- Public orchestration ----------
 
-        public List<DungeonFloor> GenerateDungeon(int floorCount, int width, int height, int seed, float eventPercent, out List<string> log, IList<EventEntry> eventPool = null, int stairPairsPerFloor = 2)
+        public List<DungeonFloor> GenerateDungeon(int floorCount, int width, int height, int seed, float eventPercent, out List<string> log, IList<EventEntry> eventPool = null, int stairPairsPerFloor = 2, IList<int> eventCountsPerFloor = null, int bossFloorStart = 1, int bossFloorInterval = 3)
         {
             log = new List<string>();
             var rng = new Random(seed);
@@ -17,19 +17,39 @@ namespace DungeonGen
             for (int i = 0; i < floorCount; i++)
             {
                 var floor = GenerateFloor(width, height, i, rng);
+
+                bool isBossFloor = bossFloorInterval > 0 && i >= bossFloorStart && (i - bossFloorStart) % bossFloorInterval == 0;
+                if (isBossFloor)
+                {
+                    bool added = AddBossRoom(floor, rng);
+                    log.Add(added
+                        ? $"Piso {i}: sala de jefe en ({floor.BossRoomMinX},{floor.BossRoomMinY})-({floor.BossRoomMaxX},{floor.BossRoomMaxY}), jefe en {floor.BossPos}."
+                        : $"Piso {i}: se pidio sala de jefe pero no hubo espacio libre (mapa muy chico).");
+                }
+
                 floors.Add(floor);
                 log.Add($"Piso {i}: maze generado. Start={floor.StartPos} End={floor.EndPos} SecundariaQuest={floor.SecondaryQuestPos} ZonaAislada=({floor.IsoMinX},{floor.IsoMinY})-({floor.IsoMaxX},{floor.IsoMaxY}) Gates={floor.Gates.Count}");
             }
 
             for (int i = 0; i < floorCount - 1; i++)
             {
-                PlaceStairsBetween(floors[i], floors[i + 1], rng, pairCount: stairPairsPerFloor);
-                log.Add($"Escaleras piso {i} <-> {i + 1} colocadas ({stairPairsPerFloor} pares).");
+                var lower = floors[i];
+                int pairs = lower.HasBossRoom ? 1 : stairPairsPerFloor;
+                var restrict = lower.HasBossRoom ? lower.BossRoomCells : null;
+                PlaceStairsBetween(lower, floors[i + 1], rng, pairCount: pairs, restrictLowerTo: restrict);
+                log.Add($"Escaleras piso {i} <-> {i + 1} colocadas ({pairs} pares{(lower.HasBossRoom ? ", forzadas dentro de la sala de jefe" : "")}).");
             }
 
             foreach (var floor in floors)
             {
-                PlaceEvents(floor, rng, eventPercent, eventPool);
+                bool hasOverride = eventCountsPerFloor != null
+                    && floor.Index < eventCountsPerFloor.Count
+                    && eventCountsPerFloor[floor.Index] >= 0;
+
+                if (hasOverride)
+                    PlaceEventsExact(floor, rng, eventCountsPerFloor[floor.Index], eventPool);
+                else
+                    PlaceEvents(floor, rng, eventPercent, eventPool);
             }
 
             return floors;
@@ -119,6 +139,83 @@ namespace DungeonGen
             floor.Cells[switchPos.Item1, switchPos.Item2].ControlledGateIndex = gateIndex;
 
             return floor;
+        }
+
+        // ---------- Sala de jefe ----------
+
+        // Fusiona un bloque rectangular de tamano/posicion aleatorios en una unica sala grande
+        // (abre todas las paredes internas del bloque) y coloca al jefe en el centro. El tamano y la
+        // posicion varian por piso/semilla para que cada sala de jefe resulte distinta.
+        private bool AddBossRoom(DungeonFloor floor, Random rng)
+        {
+            int minSize = 3;
+            int maxSize = Math.Max(minSize, Math.Min(6, Math.Min(floor.Width, floor.Height) - 1));
+
+            for (int attempt = 0; attempt < 40; attempt++)
+            {
+                int rw = rng.Next(minSize, maxSize + 1);
+                int rh = rng.Next(minSize, maxSize + 1);
+                if (rw > floor.Width || rh > floor.Height) continue;
+
+                int rx = rng.Next(0, floor.Width - rw + 1);
+                int ry = rng.Next(0, floor.Height - rh + 1);
+
+                if (RectOverlapsIsolatedZone(floor, rx, ry, rw, rh)) continue;
+                if (RectOverlapsSpecialCells(floor, rx, ry, rw, rh)) continue;
+
+                var cells = new List<(int, int)>();
+                for (int x = rx; x < rx + rw; x++)
+                {
+                    for (int y = ry; y < ry + rh; y++)
+                    {
+                        cells.Add((x, y));
+                        var cell = floor.Cells[x, y];
+                        cell.IsBossRoom = true;
+                        foreach (var dir in DirectionExtensions.All)
+                        {
+                            var (ox, oy) = dir.Offset();
+                            int nx = x + ox, ny = y + oy;
+                            if (nx >= rx && nx < rx + rw && ny >= ry && ny < ry + rh)
+                                cell.SetWall(dir, false);
+                        }
+                    }
+                }
+
+                floor.BossRoomCells = cells;
+                floor.BossRoomMinX = rx;
+                floor.BossRoomMinY = ry;
+                floor.BossRoomMaxX = rx + rw - 1;
+                floor.BossRoomMaxY = ry + rh - 1;
+
+                int cx = rx + rw / 2;
+                int cy = ry + rh / 2;
+                floor.Cells[cx, cy].Type = CellType.Boss;
+                floor.BossPos = (cx, cy);
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool RectOverlapsIsolatedZone(DungeonFloor floor, int rx, int ry, int rw, int rh)
+        {
+            return rx <= floor.IsoMaxX && rx + rw - 1 >= floor.IsoMinX
+                && ry <= floor.IsoMaxY && ry + rh - 1 >= floor.IsoMinY;
+        }
+
+        private bool RectOverlapsSpecialCells(DungeonFloor floor, int rx, int ry, int rw, int rh)
+        {
+            (int x, int y)[] special = { floor.StartPos, floor.EndPos, floor.SecondaryQuestPos };
+            foreach (var (x, y) in special)
+            {
+                if (x >= rx && x < rx + rw && y >= ry && y < ry + rh) return true;
+            }
+            foreach (var gate in floor.Gates)
+            {
+                if (gate.Bx >= rx && gate.Bx < rx + rw && gate.By >= ry && gate.By < ry + rh) return true;
+            }
+            return false;
         }
 
         // ---------- Maze carving (iterative recursive backtracker) ----------
@@ -327,9 +424,11 @@ namespace DungeonGen
 
         // ---------- Stairs ----------
 
-        public void PlaceStairsBetween(DungeonFloor lower, DungeonFloor upper, Random rng, int pairCount)
+        public void PlaceStairsBetween(DungeonFloor lower, DungeonFloor upper, Random rng, int pairCount, IList<(int, int)> restrictLowerTo = null)
         {
-            var lowerFree = FreeNormalCells(lower);
+            var lowerFree = (restrictLowerTo != null && restrictLowerTo.Count > 0)
+                ? restrictLowerTo.Where(c => lower.Cells[c.Item1, c.Item2].Type == CellType.Normal).ToList()
+                : FreeNormalCells(lower);
             var upperFree = FreeNormalCells(upper);
             Shuffle(lowerFree, rng);
             Shuffle(upperFree, rng);
@@ -368,10 +467,22 @@ namespace DungeonGen
 
         public void PlaceEvents(DungeonFloor floor, Random rng, float percent, IList<EventEntry> pool = null)
         {
-            var effectivePool = (pool != null && pool.Count > 0) ? pool : EventTable.Entries;
             var free = FreeNormalCells(floor);
-            Shuffle(free, rng);
             int count = (int)Math.Round(free.Count * percent);
+            PlaceEventsOnCells(floor, rng, count, pool, free);
+        }
+
+        public void PlaceEventsExact(DungeonFloor floor, Random rng, int count, IList<EventEntry> pool = null)
+        {
+            var free = FreeNormalCells(floor);
+            PlaceEventsOnCells(floor, rng, count, pool, free);
+        }
+
+        private void PlaceEventsOnCells(DungeonFloor floor, Random rng, int count, IList<EventEntry> pool, List<(int, int)> free)
+        {
+            var effectivePool = (pool != null && pool.Count > 0) ? pool : EventTable.Entries;
+            Shuffle(free, rng);
+            count = Math.Max(0, Math.Min(count, free.Count));
             for (int i = 0; i < count; i++)
             {
                 var (x, y) = free[i];
@@ -461,6 +572,24 @@ namespace DungeonGen
             {
                 var (ok, floorIssues) = ValidateFloor(floor);
                 issues.AddRange(floorIssues);
+            }
+
+            for (int i = 0; i < floors.Count; i++)
+            {
+                var floor = floors[i];
+                if (!floor.HasBossRoom) continue;
+
+                bool hasBossMarker = floor.BossRoomCells.Any(c => floor.Cells[c.Item1, c.Item2].Type == CellType.Boss);
+                if (!hasBossMarker)
+                    issues.Add($"Piso {i}: es piso de jefe pero no se encontro la celda del jefe dentro de la sala.");
+
+                bool hasNextFloor = i < floors.Count - 1;
+                if (hasNextFloor)
+                {
+                    bool stairsInRoom = floor.BossRoomCells.Any(c => floor.Cells[c.Item1, c.Item2].Type == CellType.StairsUp);
+                    if (!stairsInRoom)
+                        issues.Add($"Piso {i}: es piso de jefe pero la escalera de subida no quedo dentro de la sala del jefe.");
+                }
             }
 
             // Cross-floor reachability: BFS across floors using stair links, starting at floor0 Start.

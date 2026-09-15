@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace DungeonGen
@@ -15,13 +16,32 @@ namespace DungeonGen
         [Header("Semilla (0 = aleatoria cada vez)")]
         public int seed = 12345;
 
-        [Header("Eventos")]
+        [Header("Eventos (porcentaje global usado como valor por defecto)")]
         [Range(0f, 0.5f)]
         public float eventPercent = 0.12f;
+
+        [Header("Eventos por piso (opcional)")]
+        [Tooltip("Cantidad exacta de eventos para el piso en ese indice. -1 = usar eventPercent para ese piso. Si la lista es mas corta que la cantidad de pisos, los pisos sin entrada tambien usan eventPercent.")]
+        public List<int> eventsPerFloor = new List<int>();
 
         [Header("Escala del mundo (unidades Unity)")]
         public float cellSize = 4f;
         public float wallHeight = 3f;
         public float wallThickness = 0.2f;
+
+        [Header("Separacion entre pasillos paralelos")]
+        [Tooltip("Fraccion de cellSize que ocupa el ancho caminable de cada corredor.")]
+        [Range(0.3f, 1f)]
+        public float corridorWidthFraction = 0.6f;
+
+        [Tooltip("Tamano del hueco entre dos celdas logicas vecinas, como multiplo de cellSize. 1 = un cuadrante completo de distancia entre dos pasillos que no estan conectados entre si (solo se rellena con un puente caminable cuando SI hay paso).")]
+        [Range(0.1f, 2f)]
+        public float corridorGapMultiplier = 1f;
+
+        [Header("Piso de jefe (sala grande obligatoria con jefe + escalera)")]
+        [Tooltip("Primer piso (indice, empezando en 0) que tiene sala de jefe.")]
+        public int bossFloorStart = 1;
+        [Tooltip("Cada cuantos pisos se repite la sala de jefe despues del primero. 0 = desactivar salas de jefe.")]
+        public int bossFloorInterval = 3;
     }
 }
