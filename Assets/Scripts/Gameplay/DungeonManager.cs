@@ -44,7 +44,7 @@ namespace Gameplay
 
         private void BuildActiveFloor()
         {
-            levelBuilder.Build(CurrentFloor, settings.cellSize, settings.wallHeight, settings.wallThickness, settings.pathWidthFraction);
+            levelBuilder.Build(CurrentFloor, settings.cellSize, settings.wallHeight, settings.wallThickness);
         }
 
         public Vector3 CellToWorld(int x, int y) => levelBuilder.CellCenter(x, y, settings.cellSize);

@@ -29,11 +29,6 @@ namespace DungeonGen
         public float wallHeight = 3f;
         public float wallThickness = 0.2f;
 
-        [Header("Separacion entre caminos")]
-        [Tooltip("Fraccion de cellSize que ocupa cada camino (piso + sus propias paredes). El resto queda como vacio real entre un camino y el de al lado - cada uno tiene su propia pared, nunca comparten la misma. La distancia de un paso del jugador (cellSize) no cambia. Verificado visualmente con un render aparte: 0.35 da un vacio bien notorio (tipo === [hueco] ===) sin romper el movimiento.")]
-        [Range(0.25f, 0.9f)]
-        public float pathWidthFraction = 0.35f;
-
         [Header("Piso de jefe (sala grande obligatoria con jefe + escalera)")]
         [Tooltip("Primer piso (indice, empezando en 0) que tiene sala de jefe.")]
         public int bossFloorStart = 2;
