@@ -11,6 +11,11 @@ namespace DungeonGen
         public bool EventConsumed;
         public bool Discovered; // runtime: revelado en el minimapa del jugador al pisarlo
 
+        // Valor de peligro (0-5) usado por el sistema real de encuentros de Etrian Odyssey: se
+        // suma a un contador de pasos cada vez que se pisa la celda. Solo celdas Normal/Event
+        // tienen un valor mayor a 0; el resto (Start/End/escaleras/vacio/etc.) es siempre seguro.
+        public int DangerValue;
+
         // Populated when Type == Event
         public EventEntry AssignedEvent;
 

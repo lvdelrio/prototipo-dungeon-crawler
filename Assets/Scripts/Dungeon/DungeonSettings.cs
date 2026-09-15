@@ -40,15 +40,16 @@ namespace DungeonGen
         [Tooltip("Cada cuantos pisos se repite la sala de jefe despues del primero. 0 = desactivar salas de jefe.")]
         public int bossFloorInterval = 2;
 
-        [Header("Encuentros aleatorios (tuneable - se siente muy alto? bajalo aca)")]
-        [Tooltip("Chance inicial (0-100) de encontrar enemigos al entrar a una celda normal/evento.")]
-        [Range(0f, 30f)]
-        public float encounterBaseChance = 3f;
-        [Tooltip("Cuanto sube la chance (0-100) por cada paso sin encuentro.")]
-        [Range(0f, 15f)]
-        public float encounterIncrement = 1.5f;
-        [Tooltip("Tope maximo (0-100) de la chance de encuentro.")]
-        [Range(5f, 100f)]
-        public float encounterCap = 30f;
+        [Header("Encuentros aleatorios (sistema real de Etrian Odyssey)")]
+        [Tooltip("Cada celda Normal/Event tiene un 'valor de peligro' al azar entre este minimo y el maximo (0-5). Al pisarla, ese valor se suma a un contador interno de pasos.")]
+        [Range(0, 5)]
+        public int dangerValueMin = 0;
+        [Tooltip("Maximo del valor de peligro por celda (0-5).")]
+        [Range(0, 5)]
+        public int dangerValueMax = 5;
+        [Tooltip("Minimo del limite oculto: cuando el contador de pasos supera este limite (elegido al azar tras cada combate o al entrar a un piso nuevo), aparece un encuentro y el contador se reinicia.")]
+        public int encounterThresholdMin = 16;
+        [Tooltip("Maximo del limite oculto de pasos.")]
+        public int encounterThresholdMax = 64;
     }
 }

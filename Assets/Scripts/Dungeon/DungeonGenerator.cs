@@ -8,7 +8,7 @@ namespace DungeonGen
     {
         // ---------- Public orchestration ----------
 
-        public List<DungeonFloor> GenerateDungeon(int floorCount, int width, int height, int seed, float eventPercent, out List<string> log, IList<EventEntry> eventPool = null, int stairPairsPerFloor = 2, IList<int> eventCountsPerFloor = null, int bossFloorStart = 2, int bossFloorInterval = 2, float voidFraction = 0.4f)
+        public List<DungeonFloor> GenerateDungeon(int floorCount, int width, int height, int seed, float eventPercent, out List<string> log, IList<EventEntry> eventPool = null, int stairPairsPerFloor = 2, IList<int> eventCountsPerFloor = null, int bossFloorStart = 2, int bossFloorInterval = 2, float voidFraction = 0.4f, int dangerValueMin = 0, int dangerValueMax = 5)
         {
             log = new List<string>();
             var rng = new Random(seed);
@@ -53,9 +53,28 @@ namespace DungeonGen
                     PlaceEventsExact(floor, rng, eventCountsPerFloor[floor.Index], eventPool);
                 else
                     PlaceEvents(floor, rng, eventPercent, eventPool);
+
+                AssignDangerValues(floor, rng, dangerValueMin, dangerValueMax);
             }
 
             return floors;
+        }
+
+        // Le da a cada celda Normal/Event un valor de peligro (0-5) al azar. Todas las demas
+        // (Start/End/escaleras/vacio/switch/etc.) se quedan en 0: son siempre seguras de pisar.
+        private void AssignDangerValues(DungeonFloor floor, Random rng, int min, int max)
+        {
+            int lo = Math.Max(0, Math.Min(min, max));
+            int hi = Math.Max(lo, Math.Max(min, max));
+            for (int x = 0; x < floor.Width; x++)
+            {
+                for (int y = 0; y < floor.Height; y++)
+                {
+                    var cell = floor.Cells[x, y];
+                    if (cell.Type == CellType.Normal || cell.Type == CellType.Event)
+                        cell.DangerValue = rng.Next(lo, hi + 1);
+                }
+            }
         }
 
         // ---------- Single floor generation ----------

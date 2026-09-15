@@ -21,7 +21,7 @@ namespace Gameplay
                 $"Piso: {dungeonManager.CurrentFloorIndex} | Celda: ({player.CellX},{player.CellY}) | Mirando: {player.Facing}");
             GUI.Label(new Rect(20, 35, 440, 20), "WASD: mover/strafe | flechas izq/der: girar | Espacio: interactuar | Tab: modo mapa");
             GUI.Label(new Rect(20, 55, 440, 40), $"Ultimo evento: {_lastMessage}");
-            GUI.Label(new Rect(20, 95, 440, 20), $"Chance de encuentro actual: {dungeonManager.CurrentEncounterChancePercent:F1}% (tuneable en DungeonSettings)");
+            GUI.Label(new Rect(20, 95, 440, 20), $"Peligro acumulado: {dungeonManager.CurrentWalkingCounter} / {dungeonManager.CurrentEncounterThreshold} (limite oculto real en el juego; visible aca solo para debug)");
 
             if (GUI.Button(new Rect(20, 118, 160, 25), "Validar Dungeon"))
             {

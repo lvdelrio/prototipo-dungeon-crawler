@@ -66,7 +66,7 @@ public static class DungeonSceneBuilder
         minimap.dungeonManager = manager;
         minimap.player = playerController;
         combatHud.combatManager = combatManager;
-        combatHud.qteManager = qteManager;
+        combatManager.qteManager = qteManager;
 
         if (!AssetDatabase.IsValidFolder("Assets/Scenes"))
             AssetDatabase.CreateFolder("Assets", "Scenes");

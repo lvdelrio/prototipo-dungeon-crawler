@@ -17,6 +17,11 @@ namespace Gameplay
         [Tooltip("Pausa (segundos) antes de mostrar el resultado de cada turno individual dentro de una ronda.")]
         public float turnRevealDelay = 0.7f;
 
+        [Header("QTE de habilidades")]
+        public QteManager qteManager;
+        [Tooltip("Tiempo (segundos) para completar la secuencia de 3 teclas del QTE.")]
+        public float qteTimeLimit = 2.5f;
+
         public List<CharacterStats> Party { get; private set; }
         public List<EnemyStats> Enemies { get; private set; }
         public List<string> Log { get; } = new List<string>();
@@ -102,6 +107,11 @@ namespace Gameplay
                 CurrentTurnActorName = isParty ? Party[idx].Name : Enemies[idx].Name;
                 yield return new WaitForSeconds(turnRevealDelay);
 
+                // Si a este personaje le toca ejecutar una habilidad, el QTE se juega justo ahora
+                // (en el momento real de su turno), no cuando se elige el objetivo.
+                if (isParty && qteManager != null && Party[idx].IsAlive && _queuedActions.TryGetValue(Party[idx], out var action) && action.Type == ActionType.Skill)
+                    yield return RunSkillQte(Party[idx], action);
+
                 var turnLog = _engine.ExecuteTurn(isParty, idx, _queuedActions);
                 Log.AddRange(turnLog);
             }
@@ -126,6 +136,19 @@ namespace Gameplay
             {
                 AdvanceChooser();
             }
+        }
+
+        // Elige al azar una de las 2 secuencias fijas de QTE del personaje y espera a que el
+        // jugador la resuelva (a tiempo o no) antes de dejar que se ejecute la habilidad.
+        private IEnumerator RunSkillQte(CharacterStats actor, PartyAction action)
+        {
+            var sequence = _rng.Next(2) == 0 ? actor.SkillSequenceA : actor.SkillSequenceB;
+            if (sequence == null || sequence.Length == 0) yield break;
+
+            bool? result = null;
+            qteManager.Begin(sequence, qteTimeLimit, success => result = success);
+            while (result == null) yield return null;
+            action.QteSuccess = result.Value;
         }
 
         private void EndCombat(bool victory)

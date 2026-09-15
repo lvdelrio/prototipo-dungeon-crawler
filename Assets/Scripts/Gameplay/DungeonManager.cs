@@ -17,14 +17,16 @@ namespace Gameplay
         private readonly DungeonGenerator _generator = new DungeonGenerator();
         private List<DungeonFloor> _floors;
         private int _currentFloorIndex;
-        private float _currentEncounterChance;
+        private int _walkingCounter;
+        private int _encounterThreshold;
         private readonly HashSet<int> _bossDefeatedFloors = new HashSet<int>();
 
         public DungeonFloor CurrentFloor => _floors[_currentFloorIndex];
         public int CurrentFloorIndex => _currentFloorIndex;
         public List<DungeonFloor> Floors => _floors;
         public bool IsCombatActive => combat != null && combat.IsActive;
-        public float CurrentEncounterChancePercent => _currentEncounterChance;
+        public int CurrentWalkingCounter => _walkingCounter;
+        public int CurrentEncounterThreshold => _encounterThreshold;
 
         void Awake()
         {
@@ -37,11 +39,13 @@ namespace Gameplay
                 settings.eventsPerFloor,
                 settings.bossFloorStart,
                 settings.bossFloorInterval,
-                settings.voidFraction);
+                settings.voidFraction,
+                settings.dangerValueMin,
+                settings.dangerValueMax);
 
             foreach (var line in log) Debug.Log(line);
 
-            _currentEncounterChance = settings.encounterBaseChance;
+            RollNewEncounterThreshold();
             if (combat != null) combat.OnCombatFinished += HandleCombatFinished;
 
             _currentFloorIndex = 0;
@@ -76,7 +80,7 @@ namespace Gameplay
             cell.Discovered = true;
 
             if ((cell.Type == CellType.Normal || cell.Type == CellType.Event) && !IsCombatActive)
-                TryRollEncounter();
+                AccumulateDangerAndMaybeEncounter(cell);
 
             string message = null;
             switch (cell.Type)
@@ -125,23 +129,30 @@ namespace Gameplay
         private bool IsGateOpen(DungeonCell cell) =>
             cell.ControlledGateIndex >= 0 && CurrentFloor.Gates[cell.ControlledGateIndex].IsOpen;
 
-        private void TryRollEncounter()
+        // Sistema real de encuentros de Etrian Odyssey: cada celda tiene un valor de peligro
+        // (0-5) oculto que se suma a un contador de pasos. Cuando el contador supera un limite
+        // tambien oculto (elegido al azar tras cada combate o al entrar a un piso nuevo), aparece
+        // un encuentro de inmediato y el contador se reinicia a 0.
+        private void AccumulateDangerAndMaybeEncounter(DungeonCell cell)
         {
             if (combat == null) return;
-            if (Random.value < _currentEncounterChance / 100f)
+            _walkingCounter += cell.DangerValue;
+            if (_walkingCounter >= _encounterThreshold)
             {
-                _currentEncounterChance = settings.encounterBaseChance;
+                _walkingCounter = 0;
                 combat.StartEncounter(isBoss: false);
             }
-            else
-            {
-                _currentEncounterChance = Mathf.Min(settings.encounterCap, _currentEncounterChance + settings.encounterIncrement);
-            }
+        }
+
+        private void RollNewEncounterThreshold()
+        {
+            _walkingCounter = 0;
+            _encounterThreshold = Random.Range(settings.encounterThresholdMin, settings.encounterThresholdMax + 1);
         }
 
         private void HandleCombatFinished(bool victory, bool wasBoss)
         {
-            _currentEncounterChance = settings.encounterBaseChance;
+            RollNewEncounterThreshold();
 
             if (wasBoss && victory)
                 _bossDefeatedFloors.Add(_currentFloorIndex);
@@ -207,6 +218,7 @@ namespace Gameplay
             if (floorIndex < 0 || floorIndex >= _floors.Count) return;
             _currentFloorIndex = floorIndex;
             BuildActiveFloor();
+            RollNewEncounterThreshold();
             player.Warp(spawnX, spawnY, Direction.North);
             OnPlayerEnterCell(spawnX, spawnY);
             if (hud != null) hud.SetLastMessage($"Cambiaste al piso {floorIndex}.");
