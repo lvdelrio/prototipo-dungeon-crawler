@@ -5,9 +5,8 @@ namespace DungeonGen
     [CreateAssetMenu(fileName = "DungeonSettings", menuName = "Dungeon/Dungeon Settings")]
     public class DungeonSettings : ScriptableObject
     {
-        [Header("Tamano de cada piso (celdas)")]
-        public int width = 16;
-        public int height = 16;
+        [Header("Tamano del mapa (cuadrado, celdas por lado - igual para todos los pisos)")]
+        public int size = 16;
 
         [Header("Pisos")]
         public int floorCount = 3;

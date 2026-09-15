@@ -24,7 +24,7 @@ namespace Gameplay
         {
             int seed = settings.seed != 0 ? settings.seed : System.Environment.TickCount;
             _floors = _generator.GenerateDungeon(
-                settings.floorCount, settings.width, settings.height, seed,
+                settings.floorCount, settings.size, settings.size, seed,
                 settings.eventPercent, out var log,
                 eventTable != null ? eventTable.entries : null,
                 settings.stairPairsPerFloor);

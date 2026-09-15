@@ -43,6 +43,9 @@ public static class DungeonSceneBuilder
         var hudGo = new GameObject("DebugHUD");
         var hud = hudGo.AddComponent<DebugHUD>();
 
+        var minimapGo = new GameObject("MinimapUI");
+        var minimap = minimapGo.AddComponent<MinimapUI>();
+
         manager.settings = settings;
         manager.eventTable = eventTable;
         manager.player = playerController;
@@ -51,6 +54,8 @@ public static class DungeonSceneBuilder
         playerController.dungeonManager = manager;
         hud.dungeonManager = manager;
         hud.player = playerController;
+        minimap.dungeonManager = manager;
+        minimap.player = playerController;
 
         if (!AssetDatabase.IsValidFolder("Assets/Scenes"))
             AssetDatabase.CreateFolder("Assets", "Scenes");
@@ -71,8 +76,7 @@ public static class DungeonSceneBuilder
             AssetDatabase.CreateFolder("Assets", "Data");
 
         var settings = ScriptableObject.CreateInstance<DungeonSettings>();
-        settings.width = 16;
-        settings.height = 16;
+        settings.size = 16;
         settings.floorCount = 3;
         settings.stairPairsPerFloor = 2;
         settings.seed = 12345;

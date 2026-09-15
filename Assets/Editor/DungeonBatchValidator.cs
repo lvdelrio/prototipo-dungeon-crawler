@@ -21,7 +21,7 @@ public static class DungeonBatchValidator
             List<string> log;
             try
             {
-                floors = gen.GenerateDungeon(settings.floorCount, settings.width, settings.height, seed,
+                floors = gen.GenerateDungeon(settings.floorCount, settings.size, settings.size, seed,
                     settings.eventPercent, out log, eventTable.entries, settings.stairPairsPerFloor);
             }
             catch (System.Exception ex)
@@ -34,7 +34,7 @@ public static class DungeonBatchValidator
             var (ok, issues) = gen.ValidateDungeon(floors);
             if (ok)
             {
-                Debug.Log($"[DUNGEON-VALIDATE] seed={seed} OK - {floors.Count} pisos, {settings.width}x{settings.height}.");
+                Debug.Log($"[DUNGEON-VALIDATE] seed={seed} OK - {floors.Count} pisos, {settings.size}x{settings.size}.");
             }
             else
             {
