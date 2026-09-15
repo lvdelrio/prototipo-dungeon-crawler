@@ -23,6 +23,13 @@ namespace Combat
         public const float Multiplier = 1.25f;
     }
 
+    // Porcentaje del TP maximo que un personaje recupera cada vez que golpea con exito a un
+    // enemigo (ataque basico o habilidad de dano; curar no cuenta como "golpe").
+    public static class TpRegen
+    {
+        public const float PercentOnHit = 0.10f;
+    }
+
     public class CombatEngine
     {
         public readonly List<CharacterStats> Party;
@@ -112,7 +119,8 @@ namespace Combat
                     if (target == null) break;
                     int dmg = ComputeDamageVsEnemy(actor.Attack, actor.AttackElement, target, out string note);
                     target.HP = Math.Max(0, target.HP - dmg);
-                    log.Add($"{actor.Name} ataca a {target.Name}: {dmg} de daño.{note}");
+                    int regenAtk = RegenTpOnHit(actor);
+                    log.Add($"{actor.Name} ataca a {target.Name}: {dmg} de daño.{note}{(regenAtk > 0 ? $" (+{regenAtk} TP)" : "")}");
                     break;
                 }
 
@@ -155,13 +163,15 @@ namespace Combat
                             }
                             int dmg = ComputeDamageVsEnemy((int)Math.Round(power), actor.SkillElement, target, out string note);
                             target.HP = Math.Max(0, target.HP - dmg);
-                            log.Add($"{actor.Name} usa {actor.SkillName} en {target.Name}: {dmg} de daño.{note}{qteNote}");
+                            int regenSkill = RegenTpOnHit(actor);
+                            log.Add($"{actor.Name} usa {actor.SkillName} en {target.Name}: {dmg} de daño.{note}{qteNote}{(regenSkill > 0 ? $" (+{regenSkill} TP)" : "")}");
                         }
                         else
                         {
                             int dmg = ComputeDamageVsEnemy(actor.Attack, actor.AttackElement, target, out string note);
                             target.HP = Math.Max(0, target.HP - dmg);
-                            log.Add($"{actor.Name} no tiene TP, ataca normal a {target.Name}: {dmg} de daño.{note}");
+                            int regenNoTp = RegenTpOnHit(actor);
+                            log.Add($"{actor.Name} no tiene TP, ataca normal a {target.Name}: {dmg} de daño.{note}{(regenNoTp > 0 ? $" (+{regenNoTp} TP)" : "")}");
                         }
                     }
                     break;
@@ -183,6 +193,16 @@ namespace Combat
             if (wasGuarding) dmg = Math.Max(1, dmg / 2);
             target.HP = Math.Max(0, target.HP - dmg);
             log.Add($"{enemy.Name} ataca a {target.Name}: {dmg} de daño.{(wasGuarding ? " (bloqueado con guardia)" : "")}");
+        }
+
+        // Recupera un porcentaje del TP maximo del personaje tras un golpe exitoso (ataque basico o
+        // habilidad de dano); devuelve cuanto se recupero, para poder anotarlo en el log.
+        private int RegenTpOnHit(CharacterStats actor)
+        {
+            int before = actor.TP;
+            int regen = (int)Math.Round(actor.MaxTP * TpRegen.PercentOnHit);
+            actor.TP = Math.Min(actor.MaxTP, actor.TP + regen);
+            return actor.TP - before;
         }
 
         private EnemyStats? PickAliveEnemy(int preferredIndex)

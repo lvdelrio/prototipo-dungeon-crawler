@@ -114,6 +114,11 @@ namespace Gameplay
 
                 var turnLog = _engine.ExecuteTurn(isParty, idx, _queuedActions);
                 Log.AddRange(turnLog);
+
+                // En cuanto la pelea queda decidida no se esperan mas turnos ni personajes: se corta
+                // la ronda ahi mismo en vez de seguir resolviendo al resto del orden de turnos.
+                if (_engine.AllEnemiesDefeated() || _engine.AllPartyDefeated())
+                    break;
             }
 
             CurrentTurnActorName = null;
