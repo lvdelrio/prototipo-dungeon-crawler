@@ -8,12 +8,22 @@ namespace Gameplay
         public DungeonManager dungeonManager;
         public GridPlayerController player;
 
+        [Header("Modo de mapa")]
+        [Tooltip("true = solo se ve lo que el jugador ya piso (niebla de guerra). false = mapa completo (modo debug).")]
+        public bool playerMode = true;
+        public KeyCode toggleModeKey = KeyCode.Tab;
+
         public int panelX = 500;
         public int panelY = 10;
         public int cellPixelSize = 16;
         public int wallPixelThickness = 2;
 
         private static Texture2D _whiteTex;
+
+        void Update()
+        {
+            if (Input.GetKeyDown(toggleModeKey)) playerMode = !playerMode;
+        }
 
         void OnGUI()
         {
@@ -26,7 +36,10 @@ namespace Gameplay
             float top = panelY + 24;
 
             GUI.Box(new Rect(panelX - 10, panelY - 10, w * cellPixelSize + 20, h * cellPixelSize + 44), "");
-            GUI.Label(new Rect(panelX, panelY, w * cellPixelSize, 20), $"Mapa - Piso {dungeonManager.CurrentFloorIndex}");
+            string title = playerMode
+                ? $"Mapa - Piso {dungeonManager.CurrentFloorIndex} (jugador - Tab: ver todo)"
+                : $"Mapa - Piso {dungeonManager.CurrentFloorIndex} (DEBUG: mapa completo - Tab: ocultar)";
+            GUI.Label(new Rect(panelX, panelY, w * cellPixelSize, 20), title);
 
             for (int x = 0; x < w; x++)
             {
@@ -35,6 +48,13 @@ namespace Gameplay
                     var cell = floor.Cells[x, y];
                     float px = panelX + x * cellPixelSize;
                     float py = top + (h - 1 - y) * cellPixelSize;
+
+                    bool revealed = !playerMode || cell.Discovered;
+                    if (!revealed)
+                    {
+                        DrawRect(new Rect(px, py, cellPixelSize, cellPixelSize), new Color(0.05f, 0.05f, 0.06f));
+                        continue;
+                    }
 
                     DrawRect(new Rect(px, py, cellPixelSize, cellPixelSize), FloorColor(cell));
 
@@ -56,7 +76,7 @@ namespace Gameplay
                 }
             }
 
-            // Jugador: punto magenta + marca de la direccion hacia la que mira.
+            // Jugador: punto magenta + marca de la direccion hacia la que mira. Siempre visible en ambos modos.
             float ppx = panelX + player.CellX * cellPixelSize + cellPixelSize / 2f;
             float ppy = top + (h - 1 - player.CellY) * cellPixelSize + cellPixelSize / 2f;
             var (fx, fy) = player.Facing.Offset();

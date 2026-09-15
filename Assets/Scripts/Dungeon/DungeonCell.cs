@@ -8,6 +8,7 @@ namespace DungeonGen
         public CellType Type = CellType.Normal;
         public bool IsIsolatedZone;
         public bool EventConsumed;
+        public bool Discovered; // runtime: revelado en el minimapa del jugador al pisarlo
 
         // Populated when Type == Event
         public EventEntry AssignedEvent;

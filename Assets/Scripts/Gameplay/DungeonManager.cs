@@ -54,6 +54,7 @@ namespace Gameplay
         public void OnPlayerEnterCell(int x, int y)
         {
             var cell = CurrentFloor.Cells[x, y];
+            cell.Discovered = true;
             string message = null;
             switch (cell.Type)
             {

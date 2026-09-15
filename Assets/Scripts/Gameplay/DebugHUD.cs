@@ -19,7 +19,7 @@ namespace Gameplay
             GUI.Box(new Rect(10, 10, 460, 150), "");
             GUI.Label(new Rect(20, 15, 440, 20),
                 $"Piso: {dungeonManager.CurrentFloorIndex} | Celda: ({player.CellX},{player.CellY}) | Mirando: {player.Facing}");
-            GUI.Label(new Rect(20, 35, 440, 20), "WASD: mover/strafe | flechas izq/der: girar | Espacio: interactuar");
+            GUI.Label(new Rect(20, 35, 440, 20), "WASD: mover/strafe | flechas izq/der: girar | Espacio: interactuar | Tab: modo mapa");
             GUI.Label(new Rect(20, 55, 440, 40), $"Ultimo evento: {_lastMessage}");
 
             if (GUI.Button(new Rect(20, 100, 160, 25), "Validar Dungeon"))
