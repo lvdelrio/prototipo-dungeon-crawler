@@ -10,11 +10,11 @@ namespace Gameplay
         public Material floorMaterial;
         public Material ceilingMaterial;
         public Material wallMaterial;
-        public Material gateWallMaterial;
         public Material startMarkerMaterial;
         public Material endMarkerMaterial;
         public Material questMarkerMaterial;
         public Material switchMarkerMaterial;
+        public Material landingMarkerMaterial;
         public Material stairsUpMaterial;
         public Material stairsDownMaterial;
         public Material eventMarkerMaterial;
@@ -23,25 +23,23 @@ namespace Gameplay
         public Material bossRoomCeilingMaterial;
 
         private GameObject _root;
-        private readonly Dictionary<int, GameObject> _gateWallObjects = new Dictionary<int, GameObject>();
+        private readonly Dictionary<int, (GameObject switchGo, GameObject landingGo)> _shortcutMarkers = new Dictionary<int, (GameObject, GameObject)>();
 
         public void Clear()
         {
             if (_root != null) Destroy(_root);
-            _gateWallObjects.Clear();
+            _shortcutMarkers.Clear();
         }
 
-        // Cada celda logica ocupa exactamente "cellSize" de distancia con su vecina (1 celda = 1 paso
-        // del jugador, igual que siempre). El "espacio vacio" entre pasillos paralelos es solo el
-        // margen entre el piso angosto (corridorWidth) y la pared completa que cierra cada celda -
-        // no altera la distancia de movimiento ni deja huecos en las paredes.
-        public void Build(DungeonFloor floor, float cellSize, float wallHeight, float wallThickness, float corridorWidthFraction = 0.5f)
+        // Una celda logica = una distancia cellSize = un paso del jugador (igual que el prototipo
+        // original). El "espacio vacio" entre pasillos ya no se representa como un margen dentro de
+        // la celda: los unicos vacios reales del mapa son los que cruza el atajo por teletransporte
+        // (ver DungeonManager.TryInteract), y ahi no se construye ningun piso/pared especial.
+        public void Build(DungeonFloor floor, float cellSize, float wallHeight, float wallThickness)
         {
             Clear();
             _root = new GameObject($"Floor_{floor.Index}");
             _root.transform.SetParent(transform, false);
-
-            float corridorWidth = Mathf.Clamp(cellSize * corridorWidthFraction, 0.5f, cellSize);
 
             if (floor.HasBossRoom)
                 BuildBossRoomSlab(floor, cellSize, wallHeight);
@@ -55,62 +53,48 @@ namespace Gameplay
 
                     if (!cell.IsBossRoom)
                     {
-                        BuildFloorPad(center, corridorWidth);
-                        BuildCeilingPad(center, corridorWidth, wallHeight);
+                        BuildFloorTile(center, cellSize);
+                        BuildCeilingTile(center, cellSize, wallHeight);
                     }
 
-                    if (!cell.HasWall(Direction.North) && !BothInsideSameBossRoom(floor, x, y, x, y + 1))
-                        BuildBridge(center, Direction.North, cellSize, corridorWidth, wallHeight);
-                    if (!cell.HasWall(Direction.East) && !BothInsideSameBossRoom(floor, x, y, x + 1, y))
-                        BuildBridge(center, Direction.East, cellSize, corridorWidth, wallHeight);
-
-                    // Las paredes se construyen una sola vez por borde compartido (Norte/Este de cada
-                    // celda, mas Sur/Oeste solo en el borde del mapa) para que queden a todo lo ancho
-                    // de la celda y sin huecos en las esquinas.
                     if (cell.HasWall(Direction.North))
-                        BuildWall(floor, x, y, Direction.North, center, cellSize, wallHeight, wallThickness);
+                        BuildWall(center, Direction.North, cellSize, wallHeight, wallThickness);
                     if (cell.HasWall(Direction.East))
-                        BuildWall(floor, x, y, Direction.East, center, cellSize, wallHeight, wallThickness);
+                        BuildWall(center, Direction.East, cellSize, wallHeight, wallThickness);
                     if (y == 0 && cell.HasWall(Direction.South))
-                        BuildWall(floor, x, y, Direction.South, center, cellSize, wallHeight, wallThickness);
+                        BuildWall(center, Direction.South, cellSize, wallHeight, wallThickness);
                     if (x == 0 && cell.HasWall(Direction.West))
-                        BuildWall(floor, x, y, Direction.West, center, cellSize, wallHeight, wallThickness);
+                        BuildWall(center, Direction.West, cellSize, wallHeight, wallThickness);
 
                     BuildMarker(cell, center, cellSize);
                 }
             }
         }
 
-        private bool BothInsideSameBossRoom(DungeonFloor floor, int ax, int ay, int bx, int by)
-        {
-            if (!floor.InBounds(bx, by)) return false;
-            return floor.Cells[ax, ay].IsBossRoom && floor.Cells[bx, by].IsBossRoom;
-        }
-
         public Vector3 CellCenter(int x, int y, float cellSize) => new Vector3(x * cellSize, 0f, y * cellSize);
 
-        private void BuildFloorPad(Vector3 center, float corridorWidth)
+        private void BuildFloorTile(Vector3 center, float cellSize)
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
             go.name = "Floor";
             go.transform.SetParent(_root.transform, false);
             go.transform.position = center + new Vector3(0, -0.1f, 0);
-            go.transform.localScale = new Vector3(corridorWidth, 0.2f, corridorWidth);
+            go.transform.localScale = new Vector3(cellSize, 0.2f, cellSize);
             ApplyMaterial(go, floorMaterial, new Color(0.35f, 0.35f, 0.38f));
         }
 
-        private void BuildCeilingPad(Vector3 center, float corridorWidth, float wallHeight)
+        private void BuildCeilingTile(Vector3 center, float cellSize, float wallHeight)
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
             go.name = "Ceiling";
             go.transform.SetParent(_root.transform, false);
             go.transform.position = center + new Vector3(0, wallHeight + 0.1f, 0);
-            go.transform.localScale = new Vector3(corridorWidth, 0.2f, corridorWidth);
+            go.transform.localScale = new Vector3(cellSize, 0.2f, cellSize);
             ApplyMaterial(go, ceilingMaterial, new Color(0.15f, 0.15f, 0.17f));
         }
 
         // Un unico piso/techo grande que cubre todo el rectangulo de la sala de jefe, para que se
-        // vea como una sala espaciosa continua en vez de celdas conectadas por puentes angostos.
+        // vea como una sala espaciosa continua en vez de celdas individuales.
         private void BuildBossRoomSlab(DungeonFloor floor, float cellSize, float wallHeight)
         {
             Vector3 minCenter = CellCenter(floor.BossRoomMinX, floor.BossRoomMinY, cellSize);
@@ -134,46 +118,18 @@ namespace Gameplay
             ApplyMaterial(ceilGo, bossRoomCeilingMaterial, new Color(0.2f, 0.08f, 0.08f));
         }
 
-        // Rellena, solo cuando hay paso abierto, el margen entre el "pad" caminable de esta celda y
-        // el de la celda vecina (ambos dentro de la MISMA distancia cellSize - no se alarga el paso).
-        // Cuando no hay paso, ese margen queda vacio a proposito: es el espacio real entre dos
-        // pasillos paralelos sin conexion, sin tocar la distancia de movimiento del jugador.
-        private void BuildBridge(Vector3 center, Direction dir, float cellSize, float corridorWidth, float wallHeight)
-        {
-            float gapLength = cellSize - corridorWidth;
-            if (gapLength <= 0.001f) return;
-
-            var (ox, oy) = dir.Offset();
-            Vector3 bridgeCenter = center + new Vector3(ox, 0, oy) * (cellSize / 2f);
-            bool northSouth = (dir == Direction.North || dir == Direction.South);
-            Vector3 scaleXZ = northSouth
-                ? new Vector3(corridorWidth, 0.2f, gapLength)
-                : new Vector3(gapLength, 0.2f, corridorWidth);
-
-            var floorGo = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            floorGo.name = "FloorBridge";
-            floorGo.transform.SetParent(_root.transform, false);
-            floorGo.transform.position = bridgeCenter + new Vector3(0, -0.1f, 0);
-            floorGo.transform.localScale = scaleXZ;
-            ApplyMaterial(floorGo, floorMaterial, new Color(0.35f, 0.35f, 0.38f));
-
-            var ceilGo = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            ceilGo.name = "CeilingBridge";
-            ceilGo.transform.SetParent(_root.transform, false);
-            ceilGo.transform.position = bridgeCenter + new Vector3(0, wallHeight + 0.1f, 0);
-            ceilGo.transform.localScale = scaleXZ;
-            ApplyMaterial(ceilGo, ceilingMaterial, new Color(0.15f, 0.15f, 0.17f));
-        }
-
-        // Pared a todo lo ancho de la celda (cellSize), construida una sola vez por borde compartido:
-        // asi queda flush con las paredes vecinas y no deja huecos diagonales en las esquinas.
-        private void BuildWall(DungeonFloor floor, int x, int y, Direction dir, Vector3 cellCenter, float cellSize, float wallHeight, float wallThickness)
+        // Pared a todo lo ancho de la celda, construida una sola vez por borde compartido (Norte/Este
+        // de cada celda, mas Sur/Oeste solo en el borde del mapa): queda flush con las vecinas y sin
+        // huecos en las esquinas. La pared del atajo NUNCA se destruye ni se abre: el "vacio" entre el
+        // switch y el punto de llegada se cruza por teletransporte, no caminando.
+        private void BuildWall(Vector3 cellCenter, Direction dir, float cellSize, float wallHeight, float wallThickness)
         {
             var (ox, oy) = dir.Offset();
             Vector3 edgeOffset = new Vector3(ox, 0, oy) * (cellSize / 2f);
             Vector3 pos = cellCenter + edgeOffset + new Vector3(0, wallHeight / 2f, 0);
 
             var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = "Wall";
             go.transform.SetParent(_root.transform, false);
             go.transform.position = pos;
 
@@ -182,27 +138,7 @@ namespace Gameplay
                 ? new Vector3(cellSize, wallHeight, wallThickness)
                 : new Vector3(wallThickness, wallHeight, cellSize);
 
-            bool isGate = false;
-            int gateIndex = -1;
-            for (int gi = 0; gi < floor.Gates.Count; gi++)
-            {
-                var g = floor.Gates[gi];
-                bool matchesA = (g.Ax == x && g.Ay == y && g.DirFromA == dir);
-                bool matchesB = (g.Bx == x && g.By == y && g.DirFromA.Opposite() == dir);
-                if (matchesA || matchesB) { isGate = true; gateIndex = gi; break; }
-            }
-
-            if (isGate)
-            {
-                go.name = $"GateWall_{gateIndex}";
-                ApplyMaterial(go, gateWallMaterial, new Color(0.6f, 0.2f, 0.75f));
-                _gateWallObjects[gateIndex] = go;
-            }
-            else
-            {
-                go.name = "Wall";
-                ApplyMaterial(go, wallMaterial, new Color(0.5f, 0.45f, 0.4f));
-            }
+            ApplyMaterial(go, wallMaterial, new Color(0.5f, 0.45f, 0.4f));
         }
 
         private void BuildMarker(DungeonCell cell, Vector3 center, float cellSize)
@@ -218,6 +154,7 @@ namespace Gameplay
                 case CellType.End: color = Color.red; mat = endMarkerMaterial; break;
                 case CellType.SecondaryQuest: color = Color.yellow; mat = questMarkerMaterial; break;
                 case CellType.ShortcutSwitch: color = new Color(0.2f, 0.4f, 1f); mat = switchMarkerMaterial; shape = PrimitiveType.Cylinder; break;
+                case CellType.ShortcutLanding: color = new Color(0.85f, 0.45f, 0.1f); mat = landingMarkerMaterial; shape = PrimitiveType.Cylinder; break;
                 case CellType.StairsUp: color = Color.cyan; mat = stairsUpMaterial; shape = PrimitiveType.Cube; break;
                 case CellType.StairsDown: color = new Color(1f, 0.5f, 0f); mat = stairsDownMaterial; shape = PrimitiveType.Cube; break;
                 case CellType.Event: color = Color.white; mat = eventMarkerMaterial; shape = PrimitiveType.Cylinder; break;
@@ -235,6 +172,13 @@ namespace Gameplay
             if (col != null) Destroy(col);
 
             ApplyMaterial(go, mat, color);
+
+            if (cell.Type == CellType.ShortcutSwitch || cell.Type == CellType.ShortcutLanding)
+            {
+                var entry = _shortcutMarkers.TryGetValue(cell.ControlledGateIndex, out var pair) ? pair : (null, null);
+                if (cell.Type == CellType.ShortcutSwitch) entry.switchGo = go; else entry.landingGo = go;
+                _shortcutMarkers[cell.ControlledGateIndex] = entry;
+            }
         }
 
         private void ApplyMaterial(GameObject go, Material mat, Color fallbackColor)
@@ -252,13 +196,14 @@ namespace Gameplay
             }
         }
 
-        public void OpenGateVisual(int gateIndex)
+        // Al activar el atajo, los dos marcadores (switch y llegada) cambian a un color brillante
+        // compartido para que se note que ya se puede teletransportar entre ambos.
+        public void ActivateShortcutVisual(int gateIndex)
         {
-            if (_gateWallObjects.TryGetValue(gateIndex, out var go) && go != null)
-            {
-                Destroy(go);
-                _gateWallObjects.Remove(gateIndex);
-            }
+            if (!_shortcutMarkers.TryGetValue(gateIndex, out var pair)) return;
+            var activeColor = new Color(1f, 0.95f, 0.2f);
+            if (pair.switchGo != null) ApplyMaterial(pair.switchGo, null, activeColor);
+            if (pair.landingGo != null) ApplyMaterial(pair.landingGo, null, activeColor);
         }
     }
 }

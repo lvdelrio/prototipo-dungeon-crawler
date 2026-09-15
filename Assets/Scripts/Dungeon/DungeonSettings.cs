@@ -29,15 +29,10 @@ namespace DungeonGen
         public float wallHeight = 3f;
         public float wallThickness = 0.2f;
 
-        [Header("Separacion entre pasillos paralelos")]
-        [Tooltip("Fraccion de cellSize que ocupa el ancho caminable de cada corredor. El resto queda como espacio vacio real entre pasillos no conectados, dentro de la misma distancia de un paso (no alarga el movimiento).")]
-        [Range(0.35f, 0.9f)]
-        public float corridorWidthFraction = 0.5f;
-
         [Header("Piso de jefe (sala grande obligatoria con jefe + escalera)")]
         [Tooltip("Primer piso (indice, empezando en 0) que tiene sala de jefe.")]
-        public int bossFloorStart = 1;
+        public int bossFloorStart = 2;
         [Tooltip("Cada cuantos pisos se repite la sala de jefe despues del primero. 0 = desactivar salas de jefe.")]
-        public int bossFloorInterval = 3;
+        public int bossFloorInterval = 2;
     }
 }

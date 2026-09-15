@@ -8,7 +8,7 @@ namespace DungeonGen
     {
         // ---------- Public orchestration ----------
 
-        public List<DungeonFloor> GenerateDungeon(int floorCount, int width, int height, int seed, float eventPercent, out List<string> log, IList<EventEntry> eventPool = null, int stairPairsPerFloor = 2, IList<int> eventCountsPerFloor = null, int bossFloorStart = 1, int bossFloorInterval = 3)
+        public List<DungeonFloor> GenerateDungeon(int floorCount, int width, int height, int seed, float eventPercent, out List<string> log, IList<EventEntry> eventPool = null, int stairPairsPerFloor = 2, IList<int> eventCountsPerFloor = null, int bossFloorStart = 2, int bossFloorInterval = 2)
         {
             log = new List<string>();
             var rng = new Random(seed);
@@ -134,9 +134,21 @@ namespace DungeonGen
             floor.Cells[secondary.Item1, secondary.Item2].Type = CellType.SecondaryQuest;
 
             // 6. Shortcut switch: inside cell of the gate; if occupied, find nearest free inside cell.
+            //    La pared entre Ax/Ay y Bx/By NUNCA se abre: queda como el "vacio" permanente entre
+            //    ambos lados. El atajo, una vez activado, teletransporta entre el switch y el punto
+            //    de llegada en vez de dejar caminar a traves de esa pared.
             var switchPos = FindFreeCellNear(floor, (gate.Bx, gate.By), c => floor.IsInIsolatedZone(c.Item1, c.Item2), new HashSet<(int, int)> { startPos, endPos, secondary });
             floor.Cells[switchPos.Item1, switchPos.Item2].Type = CellType.ShortcutSwitch;
             floor.Cells[switchPos.Item1, switchPos.Item2].ControlledGateIndex = gateIndex;
+            gate.SwitchX = switchPos.Item1;
+            gate.SwitchY = switchPos.Item2;
+
+            // 7. Punto de llegada: celda del lado de afuera, cerca del borde del gate.
+            var landingPos = FindFreeCellNear(floor, (gate.Ax, gate.Ay), c => !floor.IsInIsolatedZone(c.Item1, c.Item2), new HashSet<(int, int)> { startPos, endPos, secondary, switchPos });
+            floor.Cells[landingPos.Item1, landingPos.Item2].Type = CellType.ShortcutLanding;
+            floor.Cells[landingPos.Item1, landingPos.Item2].ControlledGateIndex = gateIndex;
+            gate.LandingX = landingPos.Item1;
+            gate.LandingY = landingPos.Item2;
 
             return floor;
         }
@@ -263,12 +275,28 @@ namespace DungeonGen
             floor.Cells[nx, ny].SetWall(dir.Opposite(), false);
         }
 
+        // Activa el atajo: no abre ninguna pared (el vacio entre el switch y el punto de llegada es
+        // permanente), solo habilita el teletransporte entre ambos extremos.
         public void OpenGate(DungeonFloor floor, int gateIndex)
         {
-            var gate = floor.Gates[gateIndex];
-            if (gate.IsOpen) return;
-            OpenWallBetween(floor, gate.Ax, gate.Ay, gate.DirFromA);
-            gate.IsOpen = true;
+            floor.Gates[gateIndex].IsOpen = true;
+        }
+
+        // Si la celda (x,y) es un extremo de atajo activo, devuelve el otro extremo para teletransportar.
+        public bool TryGetTeleportTarget(DungeonFloor floor, int x, int y, out int targetX, out int targetY)
+        {
+            targetX = -1;
+            targetY = -1;
+            var cell = floor.Cells[x, y];
+            if (cell.Type != CellType.ShortcutSwitch && cell.Type != CellType.ShortcutLanding) return false;
+            if (cell.ControlledGateIndex < 0 || cell.ControlledGateIndex >= floor.Gates.Count) return false;
+
+            var gate = floor.Gates[cell.ControlledGateIndex];
+            if (!gate.IsOpen) return false;
+
+            if (cell.Type == CellType.ShortcutSwitch) { targetX = gate.LandingX; targetY = gate.LandingY; }
+            else { targetX = gate.SwitchX; targetY = gate.SwitchY; }
+            return true;
         }
 
         // ---------- Helpers ----------
@@ -527,26 +555,45 @@ namespace DungeonGen
             {
                 var gate = floor.Gates[gi];
                 var switchCell = FindCellOfType(floor, CellType.ShortcutSwitch, gi);
+                var landingCell = FindCellOfType(floor, CellType.ShortcutLanding, gi);
+
                 if (switchCell == null)
                 {
                     issues.Add($"Piso {floor.Index}: no se encontro celda switch para el gate {gi}.");
                     continue;
                 }
-                if (!reachableClosed.Contains(switchCell.Value))
-                    issues.Add($"Piso {floor.Index}: switch del atajo {gi} en {switchCell.Value} NO alcanzable con el atajo cerrado (deberia serlo via la entrada larga).");
+                if (landingCell == null)
+                {
+                    issues.Add($"Piso {floor.Index}: no se encontro celda de llegada para el gate {gi}.");
+                    continue;
+                }
+                if (switchCell.Value == landingCell.Value)
+                    issues.Add($"Piso {floor.Index}: switch y punto de llegada del atajo {gi} son la misma celda.");
 
-                // simulate opening and confirm shortcut actually shortens the path
+                if (!reachableClosed.Contains(switchCell.Value))
+                    issues.Add($"Piso {floor.Index}: switch del atajo {gi} en {switchCell.Value} NO alcanzable (deberia serlo via la entrada larga).");
+                if (!reachableClosed.Contains(landingCell.Value))
+                    issues.Add($"Piso {floor.Index}: punto de llegada del atajo {gi} en {landingCell.Value} NO alcanzable desde Start.");
+
+                // La pared entre ambos lados del gate debe seguir cerrada SIEMPRE (el vacio es
+                // permanente); el atajo nunca debe convertirse en un paso caminable.
+                if (!floor.Cells[gate.Ax, gate.Ay].HasWall(gate.DirFromA))
+                    issues.Add($"Piso {floor.Index}: la pared del gate {gi} esta abierta (deberia quedar cerrada para siempre; el atajo es un teletransporte, no un paso).");
+
+                bool teleportOkFromSwitch = TryGetTeleportTarget(floor, switchCell.Value.Item1, switchCell.Value.Item2, out int tx, out int ty);
                 bool wasOpen = gate.IsOpen;
                 if (!wasOpen)
                 {
+                    if (teleportOkFromSwitch)
+                        issues.Add($"Piso {floor.Index}: el atajo {gi} deberia estar inactivo pero TryGetTeleportTarget devolvio un destino.");
                     OpenGate(floor, gi);
-                    var reachableOpen = BfsReachable(floor, floor.StartPos);
-                    if (reachableOpen.Count != totalCells)
-                        issues.Add($"Piso {floor.Index}: tras abrir el atajo {gi} igual faltan celdas alcanzables ({reachableOpen.Count}/{totalCells}).");
-                    // close it back for a clean state after the check (undo simulation)
-                    floor.Cells[gate.Ax, gate.Ay].SetWall(gate.DirFromA, true);
-                    floor.Cells[gate.Bx, gate.By].SetWall(gate.DirFromA.Opposite(), true);
-                    gate.IsOpen = false;
+                    teleportOkFromSwitch = TryGetTeleportTarget(floor, switchCell.Value.Item1, switchCell.Value.Item2, out tx, out ty);
+                    if (!teleportOkFromSwitch || (tx, ty) != landingCell.Value)
+                        issues.Add($"Piso {floor.Index}: al activar el atajo {gi}, el switch no teletransporta al punto de llegada correcto.");
+                    bool teleportOkFromLanding = TryGetTeleportTarget(floor, landingCell.Value.Item1, landingCell.Value.Item2, out int lx, out int ly);
+                    if (!teleportOkFromLanding || (lx, ly) != switchCell.Value)
+                        issues.Add($"Piso {floor.Index}: al activar el atajo {gi}, el punto de llegada no teletransporta al switch correcto.");
+                    gate.IsOpen = false; // deja el estado limpio tras la simulacion
                 }
             }
 

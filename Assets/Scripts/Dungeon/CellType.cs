@@ -7,6 +7,7 @@ namespace DungeonGen
         End,
         SecondaryQuest,
         ShortcutSwitch,
+        ShortcutLanding,
         StairsUp,
         StairsDown,
         Event,

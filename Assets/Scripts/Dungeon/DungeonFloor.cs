@@ -4,10 +4,15 @@ namespace DungeonGen
 {
     public class ShortcutGate
     {
-        public int Ax, Ay;      // cell on the "outside" side
-        public int Bx, By;      // cell on the "isolated zone" side
-        public Direction DirFromA; // direction from A to B
+        public int Ax, Ay;      // celda "afuera" del borde elegido (referencia, nunca se camina por ahi)
+        public int Bx, By;      // celda "adentro" de la zona aislada, en ese mismo borde
+        public Direction DirFromA; // direccion de A a B (la pared entre ambas queda cerrada para siempre)
         public bool IsOpen;
+
+        // Puntos reales del teletransporte (pueden diferir de Ax/Ay y Bx/By si esas celdas ya
+        // estaban ocupadas por otro elemento y hubo que reubicar el switch o el punto de llegada).
+        public int SwitchX, SwitchY;
+        public int LandingX, LandingY;
     }
 
     public class DungeonFloor

@@ -44,8 +44,7 @@ namespace Gameplay
 
         private void BuildActiveFloor()
         {
-            levelBuilder.Build(CurrentFloor, settings.cellSize, settings.wallHeight, settings.wallThickness,
-                settings.corridorWidthFraction);
+            levelBuilder.Build(CurrentFloor, settings.cellSize, settings.wallHeight, settings.wallThickness);
         }
 
         public Vector3 CellToWorld(int x, int y) => levelBuilder.CellCenter(x, y, settings.cellSize);
@@ -80,7 +79,14 @@ namespace Gameplay
                     message = "Escalera hacia abajo. Presiona Espacio para bajar.";
                     break;
                 case CellType.ShortcutSwitch:
-                    message = "Palanca de atajo. Presiona Espacio para activarla permanentemente.";
+                    message = IsGateOpen(cell)
+                        ? "Punto de atajo activo. Presiona Espacio para teletransportarte al otro lado."
+                        : "Palanca de atajo. Presiona Espacio para activarla permanentemente.";
+                    break;
+                case CellType.ShortcutLanding:
+                    message = IsGateOpen(cell)
+                        ? "Punto de atajo activo. Presiona Espacio para teletransportarte al otro lado."
+                        : "Un punto extrano al borde de un vacio. Quiza haya algo del otro lado.";
                     break;
                 case CellType.Boss:
                     message = "Sala del jefe. La escalera para avanzar esta en esta sala.";
@@ -99,14 +105,37 @@ namespace Gameplay
             if (message != null && hud != null) hud.SetLastMessage(message);
         }
 
+        private bool IsGateOpen(DungeonCell cell) =>
+            cell.ControlledGateIndex >= 0 && CurrentFloor.Gates[cell.ControlledGateIndex].IsOpen;
+
         public void TryInteract(int x, int y)
         {
             var cell = CurrentFloor.Cells[x, y];
-            if (cell.Type == CellType.ShortcutSwitch)
+
+            if (cell.Type == CellType.ShortcutSwitch || cell.Type == CellType.ShortcutLanding)
             {
-                _generator.OpenGate(CurrentFloor, cell.ControlledGateIndex);
-                levelBuilder.OpenGateVisual(cell.ControlledGateIndex);
-                if (hud != null) hud.SetLastMessage("Atajo permanente activado. Ya puedes usarlo el resto de la partida.");
+                if (!IsGateOpen(cell))
+                {
+                    // Solo la palanca (lado del switch) puede activar el atajo por primera vez.
+                    if (cell.Type == CellType.ShortcutSwitch)
+                    {
+                        _generator.OpenGate(CurrentFloor, cell.ControlledGateIndex);
+                        levelBuilder.ActivateShortcutVisual(cell.ControlledGateIndex);
+                        if (hud != null) hud.SetLastMessage("Atajo activado de forma permanente: ahora puedes teletransportarte entre este punto y el otro lado del vacio.");
+                    }
+                    else if (hud != null)
+                    {
+                        hud.SetLastMessage("Este punto de atajo todavia esta inactivo.");
+                    }
+                    return;
+                }
+
+                if (_generator.TryGetTeleportTarget(CurrentFloor, x, y, out int tx, out int ty))
+                {
+                    player.Warp(tx, ty, player.Facing);
+                    OnPlayerEnterCell(tx, ty);
+                    if (hud != null) hud.SetLastMessage("Te teletransportaste a traves del atajo.");
+                }
             }
             else if (cell.Type == CellType.StairsUp || cell.Type == CellType.StairsDown)
             {
