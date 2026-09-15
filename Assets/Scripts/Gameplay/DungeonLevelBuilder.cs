@@ -93,7 +93,7 @@ namespace Gameplay
             go.transform.SetParent(_root.transform, false);
             go.transform.position = center + new Vector3(0, -0.1f, 0);
             go.transform.localScale = new Vector3(cellSize, 0.2f, cellSize);
-            ApplyMaterial(go, floorMaterial, new Color(0.35f, 0.35f, 0.38f));
+            ApplyMaterial(go, floorMaterial, new Color(0.32f, 0.45f, 0.58f));
         }
 
         private void BuildCeilingTile(Vector3 center, float cellSize, float wallHeight)
@@ -103,7 +103,7 @@ namespace Gameplay
             go.transform.SetParent(_root.transform, false);
             go.transform.position = center + new Vector3(0, wallHeight + 0.1f, 0);
             go.transform.localScale = new Vector3(cellSize, 0.2f, cellSize);
-            ApplyMaterial(go, ceilingMaterial, new Color(0.15f, 0.15f, 0.17f));
+            ApplyMaterial(go, ceilingMaterial, new Color(0.06f, 0.1f, 0.2f));
         }
 
         // Un unico piso/techo grande que cubre todo el rectangulo de la sala de jefe, para que se
@@ -151,7 +151,7 @@ namespace Gameplay
                 ? new Vector3(cellSize, wallHeight, wallThickness)
                 : new Vector3(wallThickness, wallHeight, cellSize);
 
-            ApplyMaterial(go, wallMaterial, new Color(0.5f, 0.45f, 0.4f));
+            ApplyMaterial(go, wallMaterial, new Color(0.05f, 0.14f, 0.28f));
         }
 
         private void BuildMarker(DungeonCell cell, Vector3 center, float cellSize)

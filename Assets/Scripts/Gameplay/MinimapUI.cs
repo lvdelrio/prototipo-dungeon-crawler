@@ -51,27 +51,27 @@ namespace Gameplay
 
                     if (cell.Type == CellType.Void)
                     {
-                        DrawRect(new Rect(px, py, cellPixelSize, cellPixelSize), new Color(0.05f, 0.05f, 0.06f));
+                        DrawRect(new Rect(px, py, cellPixelSize, cellPixelSize), VoidColor);
                         continue;
                     }
 
                     bool revealed = !playerMode || cell.Discovered;
                     if (!revealed)
                     {
-                        DrawRect(new Rect(px, py, cellPixelSize, cellPixelSize), new Color(0.05f, 0.05f, 0.06f));
+                        DrawRect(new Rect(px, py, cellPixelSize, cellPixelSize), VoidColor);
                         continue;
                     }
 
                     DrawRect(new Rect(px, py, cellPixelSize, cellPixelSize), FloorColor(cell));
 
                     if (cell.HasWall(Direction.North))
-                        DrawRect(new Rect(px, py, cellPixelSize, wallPixelThickness), Color.black);
+                        DrawRect(new Rect(px, py, cellPixelSize, wallPixelThickness), VoidColor);
                     if (cell.HasWall(Direction.South))
-                        DrawRect(new Rect(px, py + cellPixelSize - wallPixelThickness, cellPixelSize, wallPixelThickness), Color.black);
+                        DrawRect(new Rect(px, py + cellPixelSize - wallPixelThickness, cellPixelSize, wallPixelThickness), VoidColor);
                     if (cell.HasWall(Direction.West))
-                        DrawRect(new Rect(px, py, wallPixelThickness, cellPixelSize), Color.black);
+                        DrawRect(new Rect(px, py, wallPixelThickness, cellPixelSize), VoidColor);
                     if (cell.HasWall(Direction.East))
-                        DrawRect(new Rect(px + cellPixelSize - wallPixelThickness, py, wallPixelThickness, cellPixelSize), Color.black);
+                        DrawRect(new Rect(px + cellPixelSize - wallPixelThickness, py, wallPixelThickness, cellPixelSize), VoidColor);
 
                     Color? markerColor = MarkerColor(cell);
                     if (markerColor.HasValue)
@@ -93,13 +93,17 @@ namespace Gameplay
             DrawRect(new Rect(facingPx - 2, facingPy - 2, 4, 4), Color.magenta);
         }
 
+        // Paleta calcada de un automapa real de Etrian Odyssey: piso celeste, vacio azul oscuro.
+        private static readonly Color VoidColor = new Color(0.04f, 0.1f, 0.2f);
+        private static readonly Color PathColor = new Color(0.47f, 0.67f, 0.82f);
+
         private Color FloorColor(DungeonCell cell)
         {
             if (cell.Type == CellType.Event && cell.EventConsumed)
-                return new Color(0.45f, 0.45f, 0.45f);
+                return new Color(0.35f, 0.42f, 0.5f);
             if (cell.IsBossRoom)
                 return new Color(0.5f, 0.16f, 0.16f);
-            return cell.IsIsolatedZone ? new Color(0.30f, 0.20f, 0.35f) : new Color(0.62f, 0.62f, 0.66f);
+            return cell.IsIsolatedZone ? new Color(0.30f, 0.20f, 0.35f) : PathColor;
         }
 
         private Color? MarkerColor(DungeonCell cell)

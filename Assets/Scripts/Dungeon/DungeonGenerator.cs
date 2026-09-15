@@ -125,14 +125,16 @@ namespace DungeonGen
             // 4. Start = farthest reachable cell from an outside-region seed cell; End = farthest cell from Start.
             var outsideSeed = FirstCellMatching(floor, (x, y) => !floor.IsInIsolatedZone(x, y)) ?? (0, 0);
             var (startPos, _) = FarthestCell(floor, outsideSeed);
-            var (endPos, _) = FarthestCell(floor, startPos);
+            var (endPos, _) = FarthestCell(floor, startPos, new HashSet<(int, int)> { startPos });
             floor.StartPos = startPos;
             floor.EndPos = endPos;
             floor.Cells[startPos.x, startPos.y].Type = CellType.Start;
             floor.Cells[endPos.x, endPos.y].Type = CellType.End;
 
-            // 5. Secondary quest room: a dead-end (degree 1) cell, preferably outside region, not Start/End.
-            var secondary = FindDeadEnd(floor, preferOutside: true, exclude: new HashSet<(int, int)> { startPos, endPos, (gate.Bx, gate.By) });
+            // 5. Secondary quest room: a dead-end (degree 1) cell, preferably outside region, not Start/End,
+            //    y preferentemente sin quedar pegada (sin paso) a Start o End.
+            var secondary = FindDeadEnd(floor, preferOutside: true, exclude: new HashSet<(int, int)> { startPos, endPos, (gate.Bx, gate.By) },
+                avoidAdjacentTo: new HashSet<(int, int)> { startPos, endPos });
             floor.SecondaryQuestPos = secondary;
             floor.Cells[secondary.Item1, secondary.Item2].Type = CellType.SecondaryQuest;
 
@@ -140,20 +142,45 @@ namespace DungeonGen
             //    La pared entre Ax/Ay y Bx/By NUNCA se abre: queda como el "vacio" permanente entre
             //    ambos lados. El atajo, una vez activado, teletransporta entre el switch y el punto
             //    de llegada en vez de dejar caminar a traves de esa pared.
-            var switchPos = FindFreeCellNear(floor, (gate.Bx, gate.By), c => floor.IsInIsolatedZone(c.Item1, c.Item2), new HashSet<(int, int)> { startPos, endPos, secondary });
+            var switchPos = FindFreeCellNear(floor, (gate.Bx, gate.By), c => floor.IsInIsolatedZone(c.Item1, c.Item2), new HashSet<(int, int)> { startPos, endPos, secondary },
+                avoidAdjacentTo: new HashSet<(int, int)> { startPos, endPos, secondary });
             floor.Cells[switchPos.Item1, switchPos.Item2].Type = CellType.ShortcutSwitch;
             floor.Cells[switchPos.Item1, switchPos.Item2].ControlledGateIndex = gateIndex;
             gate.SwitchX = switchPos.Item1;
             gate.SwitchY = switchPos.Item2;
 
             // 7. Punto de llegada: celda del lado de afuera, cerca del borde del gate.
-            var landingPos = FindFreeCellNear(floor, (gate.Ax, gate.Ay), c => !floor.IsInIsolatedZone(c.Item1, c.Item2), new HashSet<(int, int)> { startPos, endPos, secondary, switchPos });
+            var landingPos = FindFreeCellNear(floor, (gate.Ax, gate.Ay), c => !floor.IsInIsolatedZone(c.Item1, c.Item2), new HashSet<(int, int)> { startPos, endPos, secondary, switchPos },
+                avoidAdjacentTo: new HashSet<(int, int)> { startPos, endPos, secondary, switchPos });
             floor.Cells[landingPos.Item1, landingPos.Item2].Type = CellType.ShortcutLanding;
             floor.Cells[landingPos.Item1, landingPos.Item2].ControlledGateIndex = gateIndex;
             gate.LandingX = landingPos.Item1;
             gate.LandingY = landingPos.Item2;
 
+            // Ultimo recurso: en mapas muy chicos puede no existir ninguna celda candidata que evite
+            // quedar pegada a otro punto importante. Si igual quedo asi, en vez de dejarlos pegados
+            // sin vacio ni conexion, los conectamos directamente (es preferible a violar la regla).
+            RepairAdjacentImportantPoints(floor, startPos, endPos, secondary, switchPos, landingPos);
+
             return floor;
+        }
+
+        private void RepairAdjacentImportantPoints(DungeonFloor floor, params (int x, int y)[] points)
+        {
+            for (int i = 0; i < points.Length; i++)
+            {
+                for (int j = i + 1; j < points.Length; j++)
+                {
+                    foreach (var dir in DirectionExtensions.All)
+                    {
+                        var (ox, oy) = dir.Offset();
+                        if (points[i].x + ox == points[j].x && points[i].y + oy == points[j].y && floor.Cells[points[i].x, points[i].y].HasWall(dir))
+                        {
+                            OpenWallBetween(floor, points[i].x, points[i].y, dir);
+                        }
+                    }
+                }
+            }
         }
 
         // ---------- Sala de jefe ----------
@@ -406,14 +433,40 @@ namespace DungeonGen
             return null;
         }
 
-        private ((int x, int y) pos, int dist) FarthestCell(DungeonFloor floor, (int x, int y) from)
+        // Dos celdas distintas e importantes (Start/End/mision secundaria/switch/etc.) nunca deben
+        // quedar pegadas por una sola pared: si son vecinas en la grilla, tiene que haber paso entre
+        // ellas (forman una sola zona) o no ser vecinas en absoluto. No hay forma de meter un vacio
+        // "entre medio" de dos celdas que ya son adyacentes, asi que evitamos el caso eligiendo otra
+        // celda candidata en vez de esa.
+        private bool IsAdjacentUnconnected(DungeonFloor floor, (int x, int y) a, (int x, int y) b)
+        {
+            foreach (var dir in DirectionExtensions.All)
+            {
+                var (ox, oy) = dir.Offset();
+                if (a.x + ox == b.x && a.y + oy == b.y)
+                    return floor.Cells[a.x, a.y].HasWall(dir);
+            }
+            return false;
+        }
+
+        private bool ViolatesAdjacency(DungeonFloor floor, (int x, int y) candidate, HashSet<(int, int)> avoid)
+        {
+            if (avoid == null) return false;
+            foreach (var p in avoid)
+                if (IsAdjacentUnconnected(floor, candidate, p)) return true;
+            return false;
+        }
+
+        private ((int x, int y) pos, int dist) FarthestCell(DungeonFloor floor, (int x, int y) from, HashSet<(int, int)> avoidAdjacentTo = null)
         {
             var dist = new Dictionary<(int, int), int>();
             var queue = new Queue<(int, int)>();
             dist[from] = 0;
             queue.Enqueue(from);
-            (int, int) best = from;
-            int bestDist = 0;
+            (int, int) bestOverall = from;
+            int bestOverallDist = 0;
+            (int, int)? bestSafe = null;
+            int bestSafeDist = -1;
 
             while (queue.Count > 0)
             {
@@ -426,12 +479,18 @@ namespace DungeonGen
                     var next = (cur.Item1 + ox, cur.Item2 + oy);
                     if (!floor.InBounds(next.Item1, next.Item2) || dist.ContainsKey(next)) continue;
                     dist[next] = dist[cur] + 1;
-                    if (dist[next] > bestDist) { bestDist = dist[next]; best = next; }
+                    if (dist[next] > bestOverallDist) { bestOverallDist = dist[next]; bestOverall = next; }
+                    if (dist[next] > bestSafeDist && !ViolatesAdjacency(floor, next, avoidAdjacentTo))
+                    {
+                        bestSafeDist = dist[next];
+                        bestSafe = next;
+                    }
                     queue.Enqueue(next);
                 }
             }
 
-            return (best, bestDist);
+            if (bestSafe.HasValue) return (bestSafe.Value, bestSafeDist);
+            return (bestOverall, bestOverallDist);
         }
 
         public HashSet<(int, int)> BfsReachable(DungeonFloor floor, (int x, int y) from)
@@ -473,7 +532,7 @@ namespace DungeonGen
             return c;
         }
 
-        private (int, int) FindDeadEnd(DungeonFloor floor, bool preferOutside, HashSet<(int, int)> exclude)
+        private (int, int) FindDeadEnd(DungeonFloor floor, bool preferOutside, HashSet<(int, int)> exclude, HashSet<(int, int)> avoidAdjacentTo = null)
         {
             var candidates = new List<(int, int)>();
             for (int x = 0; x < floor.Width; x++)
@@ -495,13 +554,17 @@ namespace DungeonGen
             }
             if (candidates.Count == 0)
                 throw new InvalidOperationException("No se encontro celda sin salida para la mision secundaria.");
-            return candidates[0];
+
+            // Preferimos una que no quede pegada (sin paso) a otro punto importante como Start/End.
+            int safeIndex = candidates.FindIndex(c => !ViolatesAdjacency(floor, c, avoidAdjacentTo));
+            return safeIndex >= 0 ? candidates[safeIndex] : candidates[0];
         }
 
-        private (int, int) FindFreeCellNear(DungeonFloor floor, (int x, int y) near, Func<(int, int), bool> region, HashSet<(int, int)> exclude)
+        private (int, int) FindFreeCellNear(DungeonFloor floor, (int x, int y) near, Func<(int, int), bool> region, HashSet<(int, int)> exclude, HashSet<(int, int)> avoidAdjacentTo = null)
         {
+            var found = new List<(int, int)>();
             if (!exclude.Contains(near) && floor.Cells[near.x, near.y].Type == CellType.Normal)
-                return near;
+                found.Add(near);
 
             var visited = new HashSet<(int, int)> { near };
             var queue = new Queue<(int, int)>();
@@ -510,7 +573,10 @@ namespace DungeonGen
             {
                 var cur = queue.Dequeue();
                 if (!exclude.Contains(cur) && floor.Cells[cur.Item1, cur.Item2].Type == CellType.Normal)
-                    return cur;
+                {
+                    found.Add(cur);
+                    if (found.Count >= 12) break; // suficientes candidatos, no hace falta recorrer todo
+                }
                 var cell = floor.Cells[cur.Item1, cur.Item2];
                 foreach (var dir in DirectionExtensions.All)
                 {
@@ -522,7 +588,12 @@ namespace DungeonGen
                     queue.Enqueue(next);
                 }
             }
-            throw new InvalidOperationException("No se encontro celda libre cerca del portón para el switch.");
+
+            if (found.Count == 0)
+                throw new InvalidOperationException("No se encontro celda libre cerca del portón para el switch.");
+
+            int safeIndex = found.FindIndex(c => !ViolatesAdjacency(floor, c, avoidAdjacentTo));
+            return safeIndex >= 0 ? found[safeIndex] : found[0];
         }
 
         private void Shuffle<T>(IList<T> list, Random rng)
@@ -645,6 +716,29 @@ namespace DungeonGen
                 {
                     if (floor.Cells[bx, by].Type == CellType.Event)
                         issues.Add($"Piso {floor.Index}: hay un evento en ({bx},{by}), dentro de la sala de jefe (no deberia haber eventos ahi).");
+                }
+            }
+
+            // Ningun par de puntos importantes deberia quedar pegado por una sola pared sin conexion.
+            var importantPoints = new List<(string name, int x, int y)>
+            {
+                ("Start", floor.StartPos.x, floor.StartPos.y),
+                ("End", floor.EndPos.x, floor.EndPos.y),
+                ("SecondaryQuest", floor.SecondaryQuestPos.x, floor.SecondaryQuestPos.y),
+            };
+            foreach (var gate in floor.Gates)
+            {
+                importantPoints.Add(("Switch", gate.SwitchX, gate.SwitchY));
+                importantPoints.Add(("Landing", gate.LandingX, gate.LandingY));
+            }
+            for (int i = 0; i < importantPoints.Count; i++)
+            {
+                for (int j = i + 1; j < importantPoints.Count; j++)
+                {
+                    var a = importantPoints[i];
+                    var b = importantPoints[j];
+                    if (IsAdjacentUnconnected(floor, (a.x, a.y), (b.x, b.y)))
+                        issues.Add($"Piso {floor.Index}: {a.name} ({a.x},{a.y}) y {b.name} ({b.x},{b.y}) quedaron pegados por una sola pared, sin vacio ni conexion entre ellos.");
                 }
             }
 
