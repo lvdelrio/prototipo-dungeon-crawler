@@ -96,7 +96,14 @@ public static class DungeonSceneBuilder
     {
         const string path = "Assets/Data/DefaultDungeonSettings.asset";
         var existing = AssetDatabase.LoadAssetAtPath<DungeonSettings>(path);
-        if (existing != null) return existing;
+        if (existing != null)
+        {
+            // El asset ya existia de antes: se le fuerza el valor actual de eventPercent, asi los
+            // cambios de balance (menos eventos en el mapa) aplican tambien a proyectos existentes.
+            existing.eventPercent = 0.06f;
+            EditorUtility.SetDirty(existing);
+            return existing;
+        }
 
         if (!AssetDatabase.IsValidFolder("Assets/Data"))
             AssetDatabase.CreateFolder("Assets", "Data");
@@ -106,7 +113,7 @@ public static class DungeonSceneBuilder
         settings.floorCount = 3;
         settings.stairPairsPerFloor = 2;
         settings.seed = 12345;
-        settings.eventPercent = 0.12f;
+        settings.eventPercent = 0.06f;
         settings.cellSize = 4f;
         settings.wallHeight = 3f;
         settings.wallThickness = 0.2f;

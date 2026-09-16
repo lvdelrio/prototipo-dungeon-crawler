@@ -27,6 +27,37 @@ namespace Combat
             };
         }
 
+        // Slime: al morir por primera vez se divide en 2 "crias" mas debiles (OnDeathSplit), que
+        // ya no vuelven a dividirse. Debil a Pierce (se pincha facil), resiste Strike (los golpes
+        // contundentes solo lo aplastan sin hacerle mucho).
+        public static EnemyStats CreateSlime(int suffix)
+        {
+            var slime = new EnemyStats
+            {
+                Name = $"Slime {suffix}", MaxHP = 50, HP = 50,
+                Attack = 8, Defense = 2, Speed = 4,
+                AttackElement = Element.Strike,
+                Weakness = Element.Pierce, Resistance = Element.Strike,
+            };
+            slime.OnDeathSplit = () => new List<EnemyStats>
+            {
+                CreateSlimeling($"{suffix}a"),
+                CreateSlimeling($"{suffix}b"),
+            };
+            return slime;
+        }
+
+        public static EnemyStats CreateSlimeling(string suffix)
+        {
+            return new EnemyStats
+            {
+                Name = $"Cria de Slime {suffix}", MaxHP = 18, HP = 18,
+                Attack = 5, Defense = 1, Speed = 5,
+                AttackElement = Element.Strike,
+                Weakness = Element.Pierce, Resistance = Element.Strike,
+            };
+        }
+
         public static EnemyStats CreateBoss()
         {
             return new EnemyStats
@@ -45,8 +76,10 @@ namespace Combat
             var list = new List<EnemyStats>();
             for (int i = 0; i < count; i++)
             {
-                if (rng.Next(2) == 0) list.Add(CreateWolf(i + 1));
-                else list.Add(CreateBeetle(i + 1));
+                int roll = rng.Next(3);
+                if (roll == 0) list.Add(CreateWolf(i + 1));
+                else if (roll == 1) list.Add(CreateBeetle(i + 1));
+                else list.Add(CreateSlime(i + 1));
             }
             return list;
         }

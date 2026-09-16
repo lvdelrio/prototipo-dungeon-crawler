@@ -24,7 +24,8 @@ namespace Combat
     }
 
     // Porcentaje del TP maximo que un personaje recupera cada vez que golpea con exito a un
-    // enemigo (ataque basico o habilidad de dano; curar no cuenta como "golpe").
+    // enemigo con un ATAQUE BASICO (las habilidades no regeneran TP: si lo hicieran, usar
+    // habilidades seria gratis a la larga).
     public static class TpRegen
     {
         public const float PercentOnHit = 0.10f;
@@ -32,6 +33,13 @@ namespace Combat
 
     public class CombatEngine
     {
+        // Tope de enemigos simultaneos en pantalla (coincide con los 3 "parantes" de la escena de
+        // batalla): un Slime que se divide nunca puede hacer crecer la pelea mas alla de esto.
+        public const int MaxEnemies = 3;
+
+        // Costo en TP de la habilidad de Protector de proteger a todo el grupo (antes era gratis).
+        public const int ProtectAllTpCost = 6;
+
         public readonly List<CharacterStats> Party;
         public readonly List<EnemyStats> Enemies;
         private readonly Random _rng;
@@ -109,8 +117,16 @@ namespace Combat
                     break;
 
                 case ActionType.ProtectAll:
-                    actor.IsProtectingAll = true;
-                    log.Add($"{actor.Name} se pone al frente para proteger a todo el grupo (recibira todo el dano enemigo de esta ronda).");
+                    if (actor.TP >= ProtectAllTpCost)
+                    {
+                        actor.TP -= ProtectAllTpCost;
+                        actor.IsProtectingAll = true;
+                        log.Add($"{actor.Name} se pone al frente para proteger a todo el grupo (recibira todo el dano enemigo de esta ronda).");
+                    }
+                    else
+                    {
+                        log.Add($"{actor.Name} no tiene suficiente TP para proteger a todo el grupo.");
+                    }
                     break;
 
                 case ActionType.Attack:
@@ -118,7 +134,7 @@ namespace Combat
                     var target = PickAliveEnemy(action.TargetEnemyIndex);
                     if (target == null) break;
                     int dmg = ComputeDamageVsEnemy(actor.Attack, actor.AttackElement, target, out string note);
-                    target.HP = Math.Max(0, target.HP - dmg);
+                    ApplyDamageToEnemy(target, dmg);
                     int regenAtk = RegenTpOnHit(actor);
                     log.Add($"{actor.Name} ataca a {target.Name}: {dmg} de daño.{note}{(regenAtk > 0 ? $" (+{regenAtk} TP)" : "")}");
                     break;
@@ -162,14 +178,14 @@ namespace Combat
                                 qteNote = " ¡QTE exitoso!";
                             }
                             int dmg = ComputeDamageVsEnemy((int)Math.Round(power), actor.SkillElement, target, out string note);
-                            target.HP = Math.Max(0, target.HP - dmg);
-                            int regenSkill = RegenTpOnHit(actor);
-                            log.Add($"{actor.Name} usa {actor.SkillName} en {target.Name}: {dmg} de daño.{note}{qteNote}{(regenSkill > 0 ? $" (+{regenSkill} TP)" : "")}");
+                            ApplyDamageToEnemy(target, dmg);
+                            // Las habilidades NO regeneran TP (solo los ataques basicos, ver mas abajo).
+                            log.Add($"{actor.Name} usa {actor.SkillName} en {target.Name}: {dmg} de daño.{note}{qteNote}");
                         }
                         else
                         {
                             int dmg = ComputeDamageVsEnemy(actor.Attack, actor.AttackElement, target, out string note);
-                            target.HP = Math.Max(0, target.HP - dmg);
+                            ApplyDamageToEnemy(target, dmg);
                             int regenNoTp = RegenTpOnHit(actor);
                             log.Add($"{actor.Name} no tiene TP, ataca normal a {target.Name}: {dmg} de daño.{note}{(regenNoTp > 0 ? $" (+{regenNoTp} TP)" : "")}");
                         }
@@ -193,6 +209,31 @@ namespace Combat
             if (wasGuarding) dmg = Math.Max(1, dmg / 2);
             target.HP = Math.Max(0, target.HP - dmg);
             log.Add($"{enemy.Name} ataca a {target.Name}: {dmg} de daño.{(wasGuarding ? " (bloqueado con guardia)" : "")}");
+        }
+
+        // Aplica dano a un enemigo y, si con eso muere y tiene OnDeathSplit configurado (p.ej. un
+        // Slime grande), lo reemplaza por sus versiones mas debiles -- hasta el tope MaxEnemies.
+        // El enemigo original queda "derrotado" en su lugar (no se borra de la lista: mantiene
+        // estables los indices que usan el resto de los sistemas).
+        private void ApplyDamageToEnemy(EnemyStats target, int dmg)
+        {
+            bool wasAlive = target.IsAlive;
+            target.HP = Math.Max(0, target.HP - dmg);
+
+            if (wasAlive && !target.IsAlive && target.OnDeathSplit != null)
+            {
+                var split = target.OnDeathSplit;
+                target.OnDeathSplit = null; // que los reemplazos no vuelvan a dividirse en cadena
+                var replacements = split();
+                if (replacements != null)
+                {
+                    foreach (var r in replacements)
+                    {
+                        if (Enemies.Count >= MaxEnemies) break;
+                        Enemies.Add(r);
+                    }
+                }
+            }
         }
 
         // Recupera un porcentaje del TP maximo del personaje tras un golpe exitoso (ataque basico o

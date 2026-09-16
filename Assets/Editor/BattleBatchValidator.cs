@@ -147,6 +147,44 @@ public static class BattleBatchValidator
                     Check("La camara de la mazmorra se reactiva al terminar el combate", _battleStage.dungeonCamera != null && _battleStage.dungeonCamera.enabled);
                     var remaining = Object.FindObjectsOfType<EnemyView>();
                     Check("No quedan EnemyView colgados tras terminar el combate", remaining.Length == 0, $"quedaron={remaining.Length}");
+
+                    // Segunda pelea: probar "Huir" (forzado al 100% para que el resultado sea
+                    // determinista) y confirmar que se limpia igual que un combate normal, pero
+                    // sin contar como derrota (no abre la tienda/mejoras post-run).
+                    _combatManager.fleeChancePercent = 100f;
+                    _combatManager.StartEncounter(false);
+                    SetPhase(4);
+                }
+                break;
+
+            case 4: // esperar a que la segunda pelea (para probar Huir) este activa y luego huir
+                if (elapsed > PhaseTimeout)
+                {
+                    Check("La segunda pelea (test de Huir) arranco a tiempo", false, $"paso {PhaseTimeout}s");
+                    Finish();
+                    return;
+                }
+                if (_combatManager.IsActive)
+                {
+                    _combatManager.TryFlee();
+                    SetPhase(5);
+                }
+                break;
+
+            case 5: // confirmar que Huir (100% de chance) termina el combate sin contar como derrota
+                if (elapsed > PhaseTimeout)
+                {
+                    Check("Huir termino el combate y limpio la escena de batalla a tiempo", false, $"paso {PhaseTimeout}s");
+                    Finish();
+                    return;
+                }
+                var battleScene3 = SceneManager.GetSceneByName(BattleSceneBuilder.SceneName);
+                bool sceneGoneAfterFlee = !battleScene3.IsValid() || !battleScene3.isLoaded;
+                if (!_combatManager.IsActive && sceneGoneAfterFlee)
+                {
+                    Check("Huir con 100% de chance termina el combate", true);
+                    Check("Huir NO cuenta como derrota (no abre la tienda de fin de run)", !_dungeonManager.IsGameOverShopActive);
+                    Check("La camara de la mazmorra se reactiva tras huir", _battleStage.dungeonCamera != null && _battleStage.dungeonCamera.enabled);
                     Finish();
                 }
                 break;

@@ -12,6 +12,8 @@ namespace Gameplay
         private ActionType? _pendingType;
         private static Texture2D _whiteTex;
         private bool _wasActive;
+        private bool _inspecting;
+        private bool _showingAbilities;
 
         // Numeros de dano/curacion flotantes: se detectan comparando el HP visto en el frame
         // anterior contra el actual (asi el motor de combate puro no necesita saber nada de UI).
@@ -36,6 +38,7 @@ namespace Gameplay
             {
                 _pendingType = null;
                 _wasActive = false;
+                _showingAbilities = false;
                 return;
             }
 
@@ -56,8 +59,12 @@ namespace Gameplay
             float panelX = 10f;
             float panelW = Screen.width - 20f;
             GUI.Box(new Rect(panelX, panelY, panelW, panelH), "");
-            GUI.Label(new Rect(panelX + 10, panelY + 5, panelW - 240, 24), combatManager.IsBossFight ? "COMBATE DE JEFE" : "COMBATE");
+            GUI.Label(new Rect(panelX + 10, panelY + 5, panelW - 350, 24), combatManager.IsBossFight ? "COMBATE DE JEFE" : "COMBATE");
 
+            GUI.enabled = !combatManager.IsBossFight;
+            if (GUI.Button(new Rect(panelX + panelW - 330, panelY + 4, 100, 24), $"Huir ({combatManager.fleeChancePercent:F0}%)"))
+                combatManager.TryFlee();
+            GUI.enabled = true;
             if (GUI.Button(new Rect(panelX + panelW - 220, panelY + 4, 100, 24), "Rendirse"))
                 combatManager.Surrender();
             if (GUI.Button(new Rect(panelX + panelW - 110, panelY + 4, 100, 24), "[TEST] Saltar"))
@@ -66,13 +73,18 @@ namespace Gameplay
             float y = panelY + 32;
 
             // --- Enemigos ---
-            GUI.Label(new Rect(panelX + 10, y, 300, 20), "Enemigos:");
+            GUI.Label(new Rect(panelX + 10, y, 200, 20), "Enemigos:");
+            if (GUI.Button(new Rect(panelX + 200, y - 2, 150, 22), _inspecting ? "Ocultar debilidades" : "Inspeccionar"))
+                _inspecting = !_inspecting;
             y += 22;
             foreach (var enemy in combatManager.Enemies)
             {
                 bool isTurn = combatManager.IsResolvingRound && !combatManager.CurrentTurnIsParty && combatManager.CurrentTurnActorName == enemy.Name;
                 string status = enemy.IsAlive ? $"HP {enemy.HP}/{enemy.MaxHP}" : "derrotado";
-                DrawTurnLine(panelX + 20, y, panelW - 40, $"{enemy.Name} - {status}", isTurn, isEnemyTurn: true);
+                string inspect = _inspecting
+                    ? $"  |  Debil: {ElementLabel(enemy.Weakness)}  Resiste: {ElementLabel(enemy.Resistance)}  DEF {enemy.Defense}  VEL {enemy.Speed}"
+                    : "";
+                DrawTurnLine(panelX + 20, y, panelW - 40, $"{enemy.Name} - {status}{inspect}", isTurn, isEnemyTurn: true);
                 TrackHpChange(_lastEnemyHp, enemy, enemy.HP, panelX + panelW - 60, y);
                 y += 20;
             }
@@ -112,10 +124,16 @@ namespace Gameplay
                 var chooser = combatManager.GetChooser();
                 if (chooser != null)
                 {
-                    GUI.Label(new Rect(panelX + 10, y, panelW - 20, 20), $"Turno de {chooser.Name}:");
+                    GUI.Label(new Rect(panelX + 10, y, panelW - 180, 20), $"Turno de {chooser.Name}:");
+                    if (GUI.Button(new Rect(panelX + panelW - 160, y - 2, 150, 22), _showingAbilities ? "Cerrar" : "Habilidades"))
+                        _showingAbilities = !_showingAbilities;
                     y += 24;
 
-                    if (_pendingType == null)
+                    if (_showingAbilities)
+                    {
+                        DrawAbilitiesPanel(panelX, y, panelW);
+                    }
+                    else if (_pendingType == null)
                     {
                         if (GUI.Button(new Rect(panelX + 20, y, 120, 26), "Atacar"))
                             _pendingType = ActionType.Attack;
@@ -132,7 +150,8 @@ namespace Gameplay
 
                         if (chooser.CanProtectAll)
                         {
-                            if (GUI.Button(new Rect(panelX + 490, y, 190, 26), "Proteger a todos"))
+                            string protectLabel = $"Proteger a todos ({CombatEngine.ProtectAllTpCost} TP)";
+                            if (GUI.Button(new Rect(panelX + 490, y, 190, 26), protectLabel))
                             {
                                 combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.ProtectAll });
                                 _pendingType = null;
@@ -228,6 +247,38 @@ namespace Gameplay
                 GUI.color = new Color(popup.Color.r, popup.Color.g, popup.Color.b, 1f - frac);
                 GUI.Label(new Rect(popup.X, popup.Y - frac * 24f, 60, 20), popup.Text);
                 GUI.color = oldColor;
+            }
+        }
+
+        // Resumen de las habilidades de los 6 personajes (elemento, poder/curacion, costo de TP),
+        // para no tener que adivinar que hace cada boton de habilidad antes de usarlo.
+        private void DrawAbilitiesPanel(float panelX, float y, float panelW)
+        {
+            GUI.Label(new Rect(panelX + 20, y, panelW - 40, 20), "Habilidades de la party:");
+            y += 22;
+            foreach (var member in combatManager.Party)
+            {
+                string desc = member.IsHealSkill
+                    ? $"{member.Name}: {member.SkillName} - cura {member.HealAmount} HP ({member.SkillTpCost} TP)"
+                    : $"{member.Name}: {member.SkillName} - {ElementLabel(member.SkillElement)}, x{member.SkillPower:F1} de ataque ({member.SkillTpCost} TP)";
+                if (member.CanProtectAll)
+                    desc += $"  |  Proteger a todos ({CombatEngine.ProtectAllTpCost} TP)";
+                GUI.Label(new Rect(panelX + 30, y, panelW - 60, 20), desc);
+                y += 20;
+            }
+        }
+
+        private string ElementLabel(Element element)
+        {
+            switch (element)
+            {
+                case Element.Fire: return "Fuego";
+                case Element.Ice: return "Hielo";
+                case Element.Volt: return "Rayo";
+                case Element.Slash: return "Corte";
+                case Element.Strike: return "Golpe";
+                case Element.Pierce: return "Perforación";
+                default: return "Ninguno";
             }
         }
 

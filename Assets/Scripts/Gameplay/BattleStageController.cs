@@ -25,14 +25,18 @@ namespace Gameplay
         private AudioListener _battleAudioListener;
         private readonly List<Transform> _stands = new List<Transform>();
         private readonly List<EnemyView> _activeViews = new List<EnemyView>();
+        // Indice de parante ocupado por cada entrada de _activeViews (misma posicion = mismo enemigo).
+        private readonly List<int> _viewStandIndex = new List<int>();
 
         void Awake()
         {
             if (combatManager == null) return;
             combatManager.OnCombatStarted += HandleCombatStarted;
             combatManager.OnCombatFinished += HandleCombatFinished;
+            combatManager.OnCombatFled += HandleCombatFled;
             combatManager.OnEnemyDamaged += HandleEnemyDamaged;
             combatManager.OnEnemyDefeated += HandleEnemyDefeated;
+            combatManager.OnEnemyAdded += HandleEnemyAdded;
             combatManager.OnEnemySkillHit += HandleEnemySkillHit;
         }
 
@@ -78,7 +82,38 @@ namespace Gameplay
 
             var order = StandOrderForCount(combatManager.Enemies.Count);
             for (int i = 0; i < combatManager.Enemies.Count && i < order.Length; i++)
+            {
                 _activeViews.Add(CreateEnemyVisual(combatManager.Enemies[i], _stands[order[i]].position));
+                _viewStandIndex.Add(order[i]);
+            }
+        }
+
+        // Un enemigo nuevo aparecio a mitad de combate (p.ej. las 2 crias de un Slime que se
+        // dividio al morir): le busca un parante libre (uno que ningun otro enemigo activo este
+        // usando ya) y le crea su representacion visual ahi.
+        private void HandleEnemyAdded(int index)
+        {
+            if (combatManager == null || combatManager.Enemies == null) return;
+            if (index < 0 || index >= combatManager.Enemies.Count) return;
+
+            int standIdx = FirstFreeStandIndex();
+            if (standIdx < 0) return; // no deberia pasar: CombatEngine ya respeta el tope de parantes
+
+            while (_activeViews.Count <= index)
+            {
+                _activeViews.Add(null);
+                _viewStandIndex.Add(-1);
+            }
+
+            _activeViews[index] = CreateEnemyVisual(combatManager.Enemies[index], _stands[standIdx].position);
+            _viewStandIndex[index] = standIdx;
+        }
+
+        private int FirstFreeStandIndex()
+        {
+            for (int s = 0; s < _stands.Count; s++)
+                if (!_viewStandIndex.Contains(s)) return s;
+            return -1;
         }
 
         // Con menos de 3 enemigos, se centran en vez de arrancar siempre por el parante de la
@@ -118,6 +153,13 @@ namespace Gameplay
                 shape = PrimitiveType.Cylinder;
                 scale = new Vector3(2.6f, 3.0f, 2.6f);
                 baseColor = new Color(0.62f, 0.62f, 0.68f);
+            }
+            else if (stats.Name.Contains("Slime"))
+            {
+                bool isCria = stats.Name.Contains("Cria");
+                shape = PrimitiveType.Sphere;
+                scale = isCria ? new Vector3(0.9f, 0.7f, 0.9f) : new Vector3(1.7f, 1.3f, 1.7f);
+                baseColor = isCria ? new Color(0.5f, 0.8f, 0.55f) : new Color(0.3f, 0.68f, 0.4f);
             }
             else
             {
@@ -186,7 +228,13 @@ namespace Gameplay
             });
         }
 
-        private void HandleCombatFinished(bool victory, bool wasBoss)
+        private void HandleCombatFinished(bool victory, bool wasBoss) => CleanupAfterCombat();
+
+        // Escapar es otra forma de terminar el combate (ni victoria ni derrota): limpia la escena
+        // de batalla igual que un fin de combate normal.
+        private void HandleCombatFled() => CleanupAfterCombat();
+
+        private void CleanupAfterCombat()
         {
             ClearViews();
 
@@ -203,6 +251,7 @@ namespace Gameplay
             foreach (var view in _activeViews)
                 if (view != null) Destroy(view.gameObject);
             _activeViews.Clear();
+            _viewStandIndex.Clear();
         }
     }
 }

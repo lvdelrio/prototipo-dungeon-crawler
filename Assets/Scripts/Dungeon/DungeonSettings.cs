@@ -18,7 +18,7 @@ namespace DungeonGen
 
         [Header("Eventos (porcentaje global usado como valor por defecto)")]
         [Range(0f, 0.5f)]
-        public float eventPercent = 0.12f;
+        public float eventPercent = 0.06f;
 
         [Header("Eventos por piso (opcional)")]
         [Tooltip("Cantidad exacta de eventos para el piso en ese indice. -1 = usar eventPercent para ese piso. Si la lista es mas corta que la cantidad de pisos, los pisos sin entrada tambien usan eventPercent.")]

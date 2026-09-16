@@ -47,6 +47,7 @@ namespace Gameplay
             {
                 combat.InitializeParty(_meta);
                 combat.OnCombatFinished += HandleCombatFinished;
+                combat.OnCombatFled += HandleCombatFled;
             }
 
             int seed = settings.seed != 0 ? settings.seed : System.Environment.TickCount;
@@ -197,6 +198,14 @@ namespace Gameplay
 
             // Derrota o rendicion: la run termina aca.
             EndRun(won: false, "La party cae derrotada. La run termina aca.");
+        }
+
+        // La party escapo con exito del combate: la run sigue igual que antes de que empezara la
+        // pelea (no cuenta como victoria ni como derrota, no se banca nada de este encuentro).
+        private void HandleCombatFled()
+        {
+            RollNewEncounterThreshold();
+            if (hud != null) hud.SetLastMessage("Escapaste del combate.");
         }
 
         // La run termina (por derrota, rendicion, o por vencer a un jefe): se banca la recompensa

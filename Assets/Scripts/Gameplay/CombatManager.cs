@@ -26,6 +26,11 @@ namespace Gameplay
         [Header("Feedback de impacto (flash + sacudida de camara)")]
         public CombatFeedback feedback;
 
+        [Header("Huir del combate")]
+        [Tooltip("Chance (0-100) de escapar con exito al usar 'Huir'. No se puede huir de un jefe.")]
+        [Range(0f, 100f)]
+        public float fleeChancePercent = 55f;
+
         public List<CharacterStats> Party { get; private set; }
         public List<EnemyStats> Enemies { get; private set; }
         public List<string> Log { get; } = new List<string>();
@@ -39,9 +44,13 @@ namespace Gameplay
         // (victoria, era jefe)
         public event Action<bool, bool> OnCombatFinished;
         public event Action OnCombatStarted;
+        // La party escapo con exito del combate (no cuenta como victoria ni como derrota).
+        public event Action OnCombatFled;
         // Indice dentro de Enemies del enemigo que recibio dano / que acaba de caer.
         public event Action<int> OnEnemyDamaged;
         public event Action<int> OnEnemyDefeated;
+        // Enemigo nuevo agregado a Enemies a mitad de combate (p.ej. crias de un Slime dividido).
+        public event Action<int> OnEnemyAdded;
         // Golpe de HABILIDAD (no ataque basico) contra un enemigo: indice + elemento de la habilidad.
         public event Action<int, Element> OnEnemySkillHit;
 
@@ -97,6 +106,32 @@ namespace Gameplay
             if (!IsActive || IsResolvingRound) return;
             Log.Add("La party decide rendirse.");
             EndCombat(victory: false);
+        }
+
+        // Boton "Huir": chance de escapar sin jugar la ronda. No se puede huir de un jefe. Si
+        // falla, se pierde el turno de toda la party esta ronda (solo actuan los enemigos).
+        public void TryFlee()
+        {
+            if (!IsActive || IsResolvingRound) return;
+            if (IsBossFight)
+            {
+                Log.Add("No se puede huir de un jefe.");
+                return;
+            }
+
+            _queuedActions.Clear();
+            bool success = UnityEngine.Random.value < fleeChancePercent / 100f;
+            if (success)
+            {
+                Log.Add("¡La party escapa del combate!");
+                EndCombatFled();
+            }
+            else
+            {
+                Log.Add("El intento de huir fallo... los enemigos aprovechan la oportunidad.");
+                _chooserIndex = Party.Count;
+                StartCoroutine(ResolveRoundCoroutine());
+            }
         }
 
         // Boton de test (para probar el resto del juego rapido): gana el combate actual al
@@ -215,7 +250,12 @@ namespace Gameplay
                 int dmg = partyHpBefore[i] - Party[i].HP;
                 if (dmg > 0) feedback?.OnPartyHit(dmg);
             }
-            for (int i = 0; i < Enemies.Count; i++)
+
+            // Solo se recorren los indices que YA existian antes de este turno: si un Slime se
+            // dividio al morir, Enemies.Count crecio durante ExecuteTurn y enemyHpBefore (tomado
+            // antes) no tiene entradas para los indices nuevos.
+            int previousEnemyCount = enemyHpBefore.Length;
+            for (int i = 0; i < previousEnemyCount; i++)
             {
                 int dmg = enemyHpBefore[i] - Enemies[i].HP;
                 if (dmg <= 0) continue;
@@ -226,12 +266,21 @@ namespace Gameplay
                 if (enemyHpBefore[i] > 0 && Enemies[i].HP <= 0)
                     OnEnemyDefeated?.Invoke(i);
             }
+
+            for (int i = previousEnemyCount; i < Enemies.Count; i++)
+                OnEnemyAdded?.Invoke(i);
         }
 
         private void EndCombat(bool victory)
         {
             IsActive = false;
             OnCombatFinished?.Invoke(victory, IsBossFight);
+        }
+
+        private void EndCombatFled()
+        {
+            IsActive = false;
+            OnCombatFled?.Invoke();
         }
     }
 }
