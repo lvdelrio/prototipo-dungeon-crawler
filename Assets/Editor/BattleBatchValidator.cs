@@ -88,6 +88,7 @@ public static class BattleBatchValidator
                     return;
                 }
                 _combatManager.StartEncounter(false);
+                TestGoBack();
                 SetPhase(1);
                 break;
 
@@ -189,6 +190,27 @@ public static class BattleBatchValidator
                 }
                 break;
         }
+    }
+
+    // Prueba el boton "Volver": elige una accion para el primer personaje, retrocede, y confirma
+    // que la accion se deshizo y que el mismo personaje vuelve a poder elegir.
+    private static void TestGoBack()
+    {
+        var first = _combatManager.GetChooser();
+        if (!Check("Hay un primer personaje para elegir accion al arrancar el combate", first != null))
+            return;
+
+        Check("CanGoBack es false antes de elegir ninguna accion", !_combatManager.CanGoBack);
+        _combatManager.SubmitAction(new Combat.PartyAction { Actor = first, Type = Combat.ActionType.Guard });
+
+        var second = _combatManager.GetChooser();
+        Check("Tras elegir, le toca al siguiente personaje", second != null && second != first);
+        Check("CanGoBack es true despues de elegir una accion", _combatManager.CanGoBack);
+
+        _combatManager.GoToPreviousChooser();
+        var backTo = _combatManager.GetChooser();
+        Check("Volver deja elegir de nuevo al mismo personaje de antes", backTo == first, $"esperado={first?.Name} real={backTo?.Name}");
+        Check("Volver deshace la accion elegida (CanGoBack vuelve a false)", !_combatManager.CanGoBack);
     }
 
     private static void TakeScreenshot()

@@ -125,7 +125,15 @@ namespace Gameplay
                 var chooser = combatManager.GetChooser();
                 if (chooser != null)
                 {
-                    GUI.Label(new Rect(panelX + 10, y, panelW - 20, 20), $"Turno de {chooser.Name}:");
+                    GUI.Label(new Rect(panelX + 10, y, panelW - 130, 20), $"Turno de {chooser.Name}:");
+                    GUI.enabled = combatManager.CanGoBack;
+                    if (GUI.Button(new Rect(panelX + panelW - 120, y - 2, 120, 22), "◄ Volver"))
+                    {
+                        combatManager.GoToPreviousChooser();
+                        _pendingType = null;
+                        _showingAbilities = false;
+                    }
+                    GUI.enabled = true;
                     y += 24;
 
                     if (_showingAbilities)
@@ -146,17 +154,7 @@ namespace Gameplay
                             _pendingType = null;
                         }
 
-                        if (chooser.CanProtectAll)
-                        {
-                            string protectLabel = $"Proteger a todos ({CombatEngine.ProtectAllTpCost} TP)";
-                            if (GUI.Button(new Rect(panelX + 440, y, 190, 26), protectLabel))
-                            {
-                                combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.ProtectAll });
-                                _pendingType = null;
-                            }
-                        }
-
-                        if (GUI.Button(new Rect(panelX + 640, y, 170, 26), "Auto (todos atacan)"))
+                        if (GUI.Button(new Rect(panelX + 440, y, 170, 26), "Auto (todos atacan)"))
                         {
                             combatManager.AutoAttackRemaining();
                             _pendingType = null;
@@ -261,19 +259,36 @@ namespace Gameplay
                 string desc = member.IsHealSkill
                     ? $"{member.Name}: {member.SkillName} - cura {member.HealAmount} HP ({member.SkillTpCost} TP)"
                     : $"{member.Name}: {member.SkillName} - {ElementLabel(member.SkillElement)}, x{member.SkillPower:F1} de ataque ({member.SkillTpCost} TP)";
-                if (member.CanProtectAll)
-                    desc += $"  |  Proteger a todos ({CombatEngine.ProtectAllTpCost} TP)";
-                GUI.Label(new Rect(panelX + 30, y, panelW - 220, 20), desc);
+                GUI.Label(new Rect(panelX + 30, y, 420, 20), desc);
 
                 if (member == chooser)
                 {
-                    if (GUI.Button(new Rect(panelX + panelW - 180, y - 2, 150, 22), $"Usar {member.SkillName}"))
+                    if (GUI.Button(new Rect(panelX + 460, y - 2, 150, 22), $"Usar {member.SkillName}"))
                     {
                         _pendingType = ActionType.Skill;
                         _showingAbilities = false;
                     }
                 }
                 y += 20;
+
+                // Proteger a todos (solo el Protector) es OTRA habilidad, no una skill de dano/cura:
+                // se muestra ademas de la de arriba, con su propio costo de TP y su propio boton.
+                if (member.CanProtectAll)
+                {
+                    string protectDesc = $"{member.Name}: Proteger a todos - recibe todo el dano del grupo esta ronda ({CombatEngine.ProtectAllTpCost} TP)";
+                    GUI.Label(new Rect(panelX + 30, y, 420, 20), protectDesc);
+
+                    if (member == chooser)
+                    {
+                        if (GUI.Button(new Rect(panelX + 460, y - 2, 150, 22), "Usar Proteger a todos"))
+                        {
+                            combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.ProtectAll });
+                            _pendingType = null;
+                            _showingAbilities = false;
+                        }
+                    }
+                    y += 20;
+                }
             }
 
             y += 8;

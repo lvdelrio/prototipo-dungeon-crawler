@@ -104,6 +104,24 @@ namespace Gameplay
             AdvanceChooser();
         }
 
+        // Boton "Volver": deshace la accion ya elegida del ultimo personaje que la eligio esta
+        // ronda (el jugador se arrepintio) y vuelve a dejarlo elegir de nuevo. Solo funciona
+        // mientras se estan eligiendo acciones (no una vez que la ronda ya se esta resolviendo).
+        public bool CanGoBack => IsActive && !IsResolvingRound && _queuedActions.Count > 0;
+
+        public void GoToPreviousChooser()
+        {
+            if (!CanGoBack) return;
+
+            int idx = _chooserIndex - 1;
+            while (idx >= 0 && (!Party[idx].IsAlive || !_queuedActions.ContainsKey(Party[idx])))
+                idx--;
+            if (idx < 0) return;
+
+            _queuedActions.Remove(Party[idx]);
+            _chooserIndex = idx;
+        }
+
         // Boton "Rendirse": termina el combate de inmediato como derrota, sin jugar mas rondas.
         public void Surrender()
         {
