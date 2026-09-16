@@ -49,7 +49,12 @@ namespace Gameplay
                 _wasActive = true;
             }
 
-            const int panelX = 10, panelY = 180, panelW = 940, panelH = 500;
+            // El panel se ancla abajo (deja el resto de la pantalla, arriba, libre para que se vea
+            // la escena de batalla 3D con los enemigos al fondo, en vez de tapar toda la pantalla).
+            float panelH = 500f;
+            float panelY = Screen.height - panelH - 10f;
+            float panelX = 10f;
+            float panelW = Screen.width - 20f;
             GUI.Box(new Rect(panelX, panelY, panelW, panelH), "");
             GUI.Label(new Rect(panelX + 10, panelY + 5, panelW - 240, 24), combatManager.IsBossFight ? "COMBATE DE JEFE" : "COMBATE");
 

@@ -55,6 +55,8 @@ public static class DungeonSceneBuilder
         var qteManager = qteGo.AddComponent<QteManager>();
         var metaShopGo = new GameObject("MetaShopHUD");
         var metaShopHud = metaShopGo.AddComponent<MetaShopHUD>();
+        var battleStageGo = new GameObject("BattleStageController");
+        var battleStage = battleStageGo.AddComponent<BattleStageController>();
 
         manager.settings = settings;
         manager.eventTable = eventTable;
@@ -73,6 +75,11 @@ public static class DungeonSceneBuilder
         combatManager.feedback = combatFeedback;
         metaShopHud.dungeonManager = manager;
         metaShopHud.combatManager = combatManager;
+        battleStage.combatManager = combatManager;
+        battleStage.dungeonCamera = cam;
+        battleStage.dungeonAudioListener = cameraGo.GetComponent<AudioListener>();
+        battleStage.dissolveMaterial = GetOrCreateDissolveMaterial();
+        battleStage.battleSceneName = BattleSceneBuilder.SceneName;
 
         if (!AssetDatabase.IsValidFolder("Assets/Scenes"))
             AssetDatabase.CreateFolder("Assets", "Scenes");
@@ -103,6 +110,21 @@ public static class DungeonSceneBuilder
         settings.wallThickness = 0.2f;
         AssetDatabase.CreateAsset(settings, path);
         return settings;
+    }
+
+    private static Material GetOrCreateDissolveMaterial()
+    {
+        const string path = "Assets/Data/EnemyDissolveMaterial.mat";
+        var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
+        if (existing != null) return existing;
+
+        if (!AssetDatabase.IsValidFolder("Assets/Data"))
+            AssetDatabase.CreateFolder("Assets", "Data");
+
+        var shader = Shader.Find("Custom/Dissolve");
+        var material = new Material(shader);
+        AssetDatabase.CreateAsset(material, path);
+        return material;
     }
 
     private static EventTableAsset GetOrCreateEventTable()

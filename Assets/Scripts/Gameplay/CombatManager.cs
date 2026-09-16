@@ -38,6 +38,10 @@ namespace Gameplay
 
         // (victoria, era jefe)
         public event Action<bool, bool> OnCombatFinished;
+        public event Action OnCombatStarted;
+        // Indice dentro de Enemies del enemigo que recibio dano / que acaba de caer.
+        public event Action<int> OnEnemyDamaged;
+        public event Action<int> OnEnemyDefeated;
 
         private CombatEngine _engine;
         private readonly System.Random _rng = new System.Random();
@@ -67,6 +71,7 @@ namespace Gameplay
 
             Log.Clear();
             Log.Add(isBoss ? "¡Aparece el Guardián de Piedra!" : "¡Un grupo de enemigos aparece!");
+            OnCombatStarted?.Invoke();
             AdvanceChooser();
         }
 
@@ -160,6 +165,9 @@ namespace Gameplay
             if (_engine.AllEnemiesDefeated())
             {
                 Log.Add(IsBossFight ? "¡Venciste al Guardián de Piedra!" : "¡Victoria!");
+                // Le da tiempo a la animacion de disolucion del ultimo enemigo caido antes de
+                // cerrar el combate y descargar la escena de batalla.
+                yield return new WaitForSeconds(1f);
                 EndCombat(victory: true);
             }
             else if (_engine.AllPartyDefeated())
@@ -187,21 +195,26 @@ namespace Gameplay
             action.QteSuccess = result.Value;
         }
 
-        // Compara el HP de todos antes/despues del turno que se acaba de ejecutar y dispara el
-        // flash/sacudida de camara correspondiente si alguien recibio dano de verdad (no cura).
+        // Compara el HP de todos antes/despues del turno que se acaba de ejecutar: dispara el
+        // flash/sacudida de camara y avisa (por indice) que enemigo recibio dano o cayo, para que
+        // la escena de batalla (BattleStageController/EnemyView) anime el golpe o la disolucion
+        // de muerte. El motor de combate puro no sabe nada de esto.
         private void ReportHitFeedback(int[] partyHpBefore, int[] enemyHpBefore)
         {
-            if (feedback == null) return;
-
             for (int i = 0; i < Party.Count; i++)
             {
                 int dmg = partyHpBefore[i] - Party[i].HP;
-                if (dmg > 0) feedback.OnPartyHit(dmg);
+                if (dmg > 0) feedback?.OnPartyHit(dmg);
             }
             for (int i = 0; i < Enemies.Count; i++)
             {
                 int dmg = enemyHpBefore[i] - Enemies[i].HP;
-                if (dmg > 0) feedback.OnEnemyHit(dmg);
+                if (dmg <= 0) continue;
+
+                feedback?.OnEnemyHit(dmg);
+                OnEnemyDamaged?.Invoke(i);
+                if (enemyHpBefore[i] > 0 && Enemies[i].HP <= 0)
+                    OnEnemyDefeated?.Invoke(i);
             }
         }
 
