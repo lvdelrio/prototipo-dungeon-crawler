@@ -17,6 +17,10 @@ namespace Gameplay
         public Material dissolveMaterial;
         public string battleSceneName = "BattleScene";
 
+        [Header("Efecto de impacto de habilidad (sprite)")]
+        [Tooltip("Las 6 frames de HitImpact.png, en orden de animacion (las asigna DungeonSceneBuilder via HitEffectImporter.LoadFrames()).")]
+        public Sprite[] hitImpactFrames;
+
         private Camera _battleCamera;
         private AudioListener _battleAudioListener;
         private readonly List<Transform> _stands = new List<Transform>();
@@ -29,6 +33,7 @@ namespace Gameplay
             combatManager.OnCombatFinished += HandleCombatFinished;
             combatManager.OnEnemyDamaged += HandleEnemyDamaged;
             combatManager.OnEnemyDefeated += HandleEnemyDefeated;
+            combatManager.OnEnemySkillHit += HandleEnemySkillHit;
         }
 
         private void HandleCombatStarted()
@@ -140,6 +145,34 @@ namespace Gameplay
         private void HandleEnemyDamaged(int index)
         {
             if (index >= 0 && index < _activeViews.Count) _activeViews[index]?.PlayHitPulse();
+        }
+
+        // Golpe de habilidad: ademas del pulso de disolucion, aparece el efecto de impacto (sprite
+        // HitImpact.png) sobre el enemigo, teñido segun el elemento para que se note la diferencia
+        // entre habilidades. El tinte se mezcla al 55% para no perder el dibujo original.
+        private void HandleEnemySkillHit(int index, Element element)
+        {
+            if (index < 0 || index >= _activeViews.Count) return;
+            var view = _activeViews[index];
+            if (view == null || hitImpactFrames == null || hitImpactFrames.Length == 0) return;
+
+            Color tint = Color.Lerp(Color.white, ElementColor(element), 0.55f);
+            Quaternion facing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
+            HitImpactEffect.Spawn(hitImpactFrames, view.transform.position, tint, facing);
+        }
+
+        private static Color ElementColor(Element element)
+        {
+            switch (element)
+            {
+                case Element.Fire: return new Color(1f, 0.35f, 0.12f);
+                case Element.Ice: return new Color(0.4f, 0.85f, 1f);
+                case Element.Volt: return new Color(1f, 0.92f, 0.2f);
+                case Element.Slash: return new Color(0.85f, 0.9f, 1f);
+                case Element.Strike: return new Color(1f, 0.75f, 0.4f);
+                case Element.Pierce: return new Color(0.8f, 1f, 0.7f);
+                default: return Color.white;
+            }
         }
 
         private void HandleEnemyDefeated(int index)

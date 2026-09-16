@@ -108,10 +108,17 @@ public static class BattleBatchValidator
                     var battleCam = battleCamGo != null ? battleCamGo.GetComponent<Camera>() : null;
                     Check("La camara de batalla quedo activa", battleCam != null && battleCam.enabled);
                     Check("La camara de la mazmorra quedo apagada durante el combate", _battleStage.dungeonCamera != null && !_battleStage.dungeonCamera.enabled);
+                    Check("Los 6 frames del efecto de impacto quedaron asignados", _battleStage.hitImpactFrames != null && _battleStage.hitImpactFrames.Length == 6 && _battleStage.hitImpactFrames[0] != null);
 
                     // Dispara la disolucion real de un enemigo (mismo codigo que usa una muerte de
-                    // verdad) para poder fotografiar el efecto a mitad de camino.
+                    // verdad) y el efecto de impacto de habilidad (mismo codigo que un golpe real
+                    // de habilidad) para poder fotografiar ambos a mitad de camino.
                     views[0].PlayDeathDissolve(null);
+                    if (_battleStage.hitImpactFrames != null && _battleStage.hitImpactFrames.Length > 0)
+                    {
+                        var pos = views[0].transform.position + (views.Length > 1 ? Vector3.zero : new Vector3(1.6f, 0.3f, -0.5f));
+                        HitImpactEffect.Spawn(_battleStage.hitImpactFrames, pos, new Color(1f, 0.6f, 0.3f), battleCam != null ? battleCam.transform.rotation : Quaternion.identity);
+                    }
                     SetPhase(2);
                 }
                 break;

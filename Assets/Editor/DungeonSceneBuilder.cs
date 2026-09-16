@@ -80,6 +80,8 @@ public static class DungeonSceneBuilder
         battleStage.dungeonAudioListener = cameraGo.GetComponent<AudioListener>();
         battleStage.dissolveMaterial = GetOrCreateDissolveMaterial();
         battleStage.battleSceneName = BattleSceneBuilder.SceneName;
+        HitEffectImporter.EnsureSliced();
+        battleStage.hitImpactFrames = HitEffectImporter.LoadFrames();
 
         if (!AssetDatabase.IsValidFolder("Assets/Scenes"))
             AssetDatabase.CreateFolder("Assets", "Scenes");

@@ -42,6 +42,8 @@ namespace Gameplay
         // Indice dentro de Enemies del enemigo que recibio dano / que acaba de caer.
         public event Action<int> OnEnemyDamaged;
         public event Action<int> OnEnemyDefeated;
+        // Golpe de HABILIDAD (no ataque basico) contra un enemigo: indice + elemento de la habilidad.
+        public event Action<int, Element> OnEnemySkillHit;
 
         private CombatEngine _engine;
         private readonly System.Random _rng = new System.Random();
@@ -138,10 +140,13 @@ namespace Gameplay
                 CurrentTurnActorName = isParty ? Party[idx].Name : Enemies[idx].Name;
                 yield return new WaitForSeconds(turnRevealDelay);
 
+                PartyAction currentPartyAction = null;
+                if (isParty) _queuedActions.TryGetValue(Party[idx], out currentPartyAction);
+
                 // Si a este personaje le toca ejecutar una habilidad, el QTE se juega justo ahora
                 // (en el momento real de su turno), no cuando se elige el objetivo.
-                if (isParty && qteManager != null && Party[idx].IsAlive && _queuedActions.TryGetValue(Party[idx], out var action) && action.Type == ActionType.Skill)
-                    yield return RunSkillQte(Party[idx], action);
+                if (isParty && qteManager != null && Party[idx].IsAlive && currentPartyAction != null && currentPartyAction.Type == ActionType.Skill)
+                    yield return RunSkillQte(Party[idx], currentPartyAction);
 
                 int[] partyHpBefore = Party.Select(p => p.HP).ToArray();
                 int[] enemyHpBefore = Enemies.Select(e => e.HP).ToArray();
@@ -149,7 +154,11 @@ namespace Gameplay
                 var turnLog = _engine.ExecuteTurn(isParty, idx, _queuedActions);
                 Log.AddRange(turnLog);
 
-                ReportHitFeedback(partyHpBefore, enemyHpBefore);
+                // Golpe de habilidad (no ataque basico, no curacion) contra un enemigo: dispara el
+                // efecto de impacto especial ademas del feedback normal.
+                bool isSkillHit = isParty && currentPartyAction != null && currentPartyAction.Type == ActionType.Skill && !Party[idx].IsHealSkill;
+                Element skillElement = isSkillHit ? Party[idx].SkillElement : Element.None;
+                ReportHitFeedback(partyHpBefore, enemyHpBefore, isSkillHit, skillElement);
 
                 // En cuanto la pelea queda decidida no se esperan mas turnos ni personajes: se corta
                 // la ronda ahi mismo en vez de seguir resolviendo al resto del orden de turnos.
@@ -199,7 +208,7 @@ namespace Gameplay
         // flash/sacudida de camara y avisa (por indice) que enemigo recibio dano o cayo, para que
         // la escena de batalla (BattleStageController/EnemyView) anime el golpe o la disolucion
         // de muerte. El motor de combate puro no sabe nada de esto.
-        private void ReportHitFeedback(int[] partyHpBefore, int[] enemyHpBefore)
+        private void ReportHitFeedback(int[] partyHpBefore, int[] enemyHpBefore, bool isSkillHit, Element skillElement)
         {
             for (int i = 0; i < Party.Count; i++)
             {
@@ -213,6 +222,7 @@ namespace Gameplay
 
                 feedback?.OnEnemyHit(dmg);
                 OnEnemyDamaged?.Invoke(i);
+                if (isSkillHit) OnEnemySkillHit?.Invoke(i, skillElement);
                 if (enemyHpBefore[i] > 0 && Enemies[i].HP <= 0)
                     OnEnemyDefeated?.Invoke(i);
             }
