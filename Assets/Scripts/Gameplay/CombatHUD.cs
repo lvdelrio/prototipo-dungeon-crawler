@@ -53,8 +53,9 @@ namespace Gameplay
             }
 
             // El panel se ancla abajo (deja el resto de la pantalla, arriba, libre para que se vea
-            // la escena de batalla 3D con los enemigos al fondo, en vez de tapar toda la pantalla).
-            float panelH = 500f;
+            // la escena de batalla 3D con los enemigos al fondo, en vez de tapar toda la pantalla),
+            // pero nunca mas chico que el contenido minimo ni mas grande de lo necesario.
+            float panelH = Mathf.Clamp(Screen.height - 40f, 440f, 560f);
             float panelY = Screen.height - panelH - 10f;
             float panelX = 10f;
             float panelW = Screen.width - 20f;
@@ -62,7 +63,7 @@ namespace Gameplay
             GUI.Label(new Rect(panelX + 10, panelY + 5, panelW - 350, 24), combatManager.IsBossFight ? "COMBATE DE JEFE" : "COMBATE");
 
             GUI.enabled = !combatManager.IsBossFight;
-            if (GUI.Button(new Rect(panelX + panelW - 330, panelY + 4, 100, 24), $"Huir ({combatManager.fleeChancePercent:F0}%)"))
+            if (GUI.Button(new Rect(panelX + panelW - 330, panelY + 4, 100, 24), $"Huir ({combatManager.FleeChancePercent:F0}%)"))
                 combatManager.TryFlee();
             GUI.enabled = true;
             if (GUI.Button(new Rect(panelX + panelW - 220, panelY + 4, 100, 24), "Rendirse"))
@@ -124,25 +125,22 @@ namespace Gameplay
                 var chooser = combatManager.GetChooser();
                 if (chooser != null)
                 {
-                    GUI.Label(new Rect(panelX + 10, y, panelW - 180, 20), $"Turno de {chooser.Name}:");
-                    if (GUI.Button(new Rect(panelX + panelW - 160, y - 2, 150, 22), _showingAbilities ? "Cerrar" : "Habilidades"))
-                        _showingAbilities = !_showingAbilities;
+                    GUI.Label(new Rect(panelX + 10, y, panelW - 20, 20), $"Turno de {chooser.Name}:");
                     y += 24;
 
                     if (_showingAbilities)
                     {
-                        DrawAbilitiesPanel(panelX, y, panelW);
+                        DrawAbilitiesPanel(panelX, y, panelW, chooser);
                     }
                     else if (_pendingType == null)
                     {
                         if (GUI.Button(new Rect(panelX + 20, y, 120, 26), "Atacar"))
                             _pendingType = ActionType.Attack;
 
-                        string skillLabel = $"{chooser.SkillName} ({chooser.SkillTpCost} TP)";
-                        if (GUI.Button(new Rect(panelX + 150, y, 200, 26), skillLabel))
-                            _pendingType = ActionType.Skill;
+                        if (GUI.Button(new Rect(panelX + 150, y, 150, 26), "Habilidades"))
+                            _showingAbilities = true;
 
-                        if (GUI.Button(new Rect(panelX + 360, y, 120, 26), "Guardia"))
+                        if (GUI.Button(new Rect(panelX + 310, y, 120, 26), "Guardia"))
                         {
                             combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.Guard });
                             _pendingType = null;
@@ -151,14 +149,14 @@ namespace Gameplay
                         if (chooser.CanProtectAll)
                         {
                             string protectLabel = $"Proteger a todos ({CombatEngine.ProtectAllTpCost} TP)";
-                            if (GUI.Button(new Rect(panelX + 490, y, 190, 26), protectLabel))
+                            if (GUI.Button(new Rect(panelX + 440, y, 190, 26), protectLabel))
                             {
                                 combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.ProtectAll });
                                 _pendingType = null;
                             }
                         }
 
-                        if (GUI.Button(new Rect(panelX + 690, y, 170, 26), "Auto (todos atacan)"))
+                        if (GUI.Button(new Rect(panelX + 640, y, 170, 26), "Auto (todos atacan)"))
                         {
                             combatManager.AutoAttackRemaining();
                             _pendingType = null;
@@ -206,10 +204,11 @@ namespace Gameplay
                 }
             }
 
-            // --- Log de combate (ultimas lineas) ---
-            float logY = panelY + panelH - 130;
-            GUI.Box(new Rect(panelX + 10, logY, panelW - 20, 110), "");
-            var lastLines = combatManager.Log.Skip(Mathf.Max(0, combatManager.Log.Count - 6));
+            // --- Log de combate (ultimas lineas; un poco mas grande que antes) ---
+            const float logH = 140f;
+            float logY = panelY + panelH - logH;
+            GUI.Box(new Rect(panelX + 10, logY, panelW - 20, logH), "");
+            var lastLines = combatManager.Log.Skip(Mathf.Max(0, combatManager.Log.Count - 7));
             float ly = logY + 6;
             foreach (var line in lastLines)
             {
@@ -250,9 +249,10 @@ namespace Gameplay
             }
         }
 
-        // Resumen de las habilidades de los 6 personajes (elemento, poder/curacion, costo de TP),
-        // para no tener que adivinar que hace cada boton de habilidad antes de usarlo.
-        private void DrawAbilitiesPanel(float panelX, float y, float panelW)
+        // Resumen de las habilidades de los 6 personajes (elemento, poder/curacion, costo de TP);
+        // la fila del personaje en turno tiene ademas el boton para usarla de verdad, asi este
+        // panel no es solo informativo sino tambien "detras" de donde se elige la habilidad.
+        private void DrawAbilitiesPanel(float panelX, float y, float panelW, CharacterStats chooser)
         {
             GUI.Label(new Rect(panelX + 20, y, panelW - 40, 20), "Habilidades de la party:");
             y += 22;
@@ -263,9 +263,21 @@ namespace Gameplay
                     : $"{member.Name}: {member.SkillName} - {ElementLabel(member.SkillElement)}, x{member.SkillPower:F1} de ataque ({member.SkillTpCost} TP)";
                 if (member.CanProtectAll)
                     desc += $"  |  Proteger a todos ({CombatEngine.ProtectAllTpCost} TP)";
-                GUI.Label(new Rect(panelX + 30, y, panelW - 60, 20), desc);
+                GUI.Label(new Rect(panelX + 30, y, panelW - 220, 20), desc);
+
+                if (member == chooser)
+                {
+                    if (GUI.Button(new Rect(panelX + panelW - 180, y - 2, 150, 22), $"Usar {member.SkillName}"))
+                    {
+                        _pendingType = ActionType.Skill;
+                        _showingAbilities = false;
+                    }
+                }
                 y += 20;
             }
+
+            y += 8;
+            if (GUI.Button(new Rect(panelX + 20, y, 100, 24), "Cerrar")) _showingAbilities = false;
         }
 
         private string ElementLabel(Element element)

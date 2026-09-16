@@ -27,9 +27,13 @@ namespace Gameplay
         public CombatFeedback feedback;
 
         [Header("Huir del combate")]
-        [Tooltip("Chance (0-100) de escapar con exito al usar 'Huir'. No se puede huir de un jefe.")]
+        [Tooltip("Chance (0-100) que aporta CADA personaje vivo al intentar huir (6 personajes vivos x 10% = 60%). No se puede huir de un jefe.")]
         [Range(0f, 100f)]
-        public float fleeChancePercent = 55f;
+        public float fleeChancePerCharacter = 10f;
+
+        // Chance total de huir: la suma de lo que aporta cada personaje vivo (menos personajes
+        // vivos = mas dificil escapar), nunca mas de 100%.
+        public float FleeChancePercent => Mathf.Min(100f, (Party?.Count(p => p.IsAlive) ?? 0) * fleeChancePerCharacter);
 
         public List<CharacterStats> Party { get; private set; }
         public List<EnemyStats> Enemies { get; private set; }
@@ -120,7 +124,7 @@ namespace Gameplay
             }
 
             _queuedActions.Clear();
-            bool success = UnityEngine.Random.value < fleeChancePercent / 100f;
+            bool success = UnityEngine.Random.value < FleeChancePercent / 100f;
             if (success)
             {
                 Log.Add("¡La party escapa del combate!");
@@ -249,6 +253,7 @@ namespace Gameplay
             {
                 int dmg = partyHpBefore[i] - Party[i].HP;
                 if (dmg > 0) feedback?.OnPartyHit(dmg);
+                else if (dmg < 0) feedback?.OnHeal(-dmg);
             }
 
             // Solo se recorren los indices que YA existian antes de este turno: si un Slime se

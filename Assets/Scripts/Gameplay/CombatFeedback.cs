@@ -24,6 +24,10 @@ namespace Gameplay
         public float partyHitShakeDuration = 0.22f;
         public float partyHitShakeMagnitude = 0.12f;
 
+        [Header("Flash al curar (sin sacudida: curar no es un golpe)")]
+        public Color healFlashColor = new Color(0.35f, 1f, 0.55f, 0.3f);
+        public float healFlashDuration = 0.3f;
+
         private Material _flashMat;
         private float _flashIntensity;
         private Color _flashColor = Color.white;
@@ -42,6 +46,8 @@ namespace Gameplay
         public void OnEnemyHit(int damage) => Impact(enemyHitFlashColor, enemyHitFlashDuration, enemyHitShakeDuration, enemyHitShakeMagnitude);
 
         public void OnPartyHit(int damage) => Impact(partyHitFlashColor, partyHitFlashDuration, partyHitShakeDuration, partyHitShakeMagnitude);
+
+        public void OnHeal(int amount) => Flash(healFlashColor, healFlashDuration);
 
         private void Impact(Color flashColor, float flashDuration, float shakeDuration, float shakeMagnitude)
         {

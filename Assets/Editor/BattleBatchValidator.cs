@@ -151,7 +151,7 @@ public static class BattleBatchValidator
                     // Segunda pelea: probar "Huir" (forzado al 100% para que el resultado sea
                     // determinista) y confirmar que se limpia igual que un combate normal, pero
                     // sin contar como derrota (no abre la tienda/mejoras post-run).
-                    _combatManager.fleeChancePercent = 100f;
+                    _combatManager.fleeChancePerCharacter = 100f; // asi FleeChancePercent (por personaje vivo) queda en 100%
                     _combatManager.StartEncounter(false);
                     SetPhase(4);
                 }

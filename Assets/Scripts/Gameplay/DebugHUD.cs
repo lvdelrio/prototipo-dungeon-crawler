@@ -15,6 +15,7 @@ namespace Gameplay
         void OnGUI()
         {
             if (dungeonManager == null || player == null) return;
+            if (dungeonManager.IsCombatActive) return; // se esconde detras del combate, no tapa nada
 
             GUI.Box(new Rect(10, 10, 460, 190), "");
             GUI.Label(new Rect(20, 15, 440, 20),

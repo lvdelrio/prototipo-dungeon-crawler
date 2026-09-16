@@ -28,6 +28,7 @@ namespace Gameplay
         void OnGUI()
         {
             if (dungeonManager == null || player == null) return;
+            if (dungeonManager.IsCombatActive) return; // el mapa desaparece durante el combate
             var floor = dungeonManager.CurrentFloor;
             if (floor == null) return;
 

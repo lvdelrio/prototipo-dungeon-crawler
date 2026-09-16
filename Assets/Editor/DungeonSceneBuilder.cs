@@ -28,6 +28,22 @@ public static class DungeonSceneBuilder
         light.intensity = 1f;
         lightGo.transform.rotation = Quaternion.Euler(50, -30, 0);
 
+        // Segunda luz de relleno, mas debil y desde el angulo casi opuesto: con una sola luz
+        // direccional, las paredes que quedan de espaldas a ella se ven casi negras mientras las
+        // de frente quedan muy claras aunque sean exactamente el mismo material (confirmado con
+        // raycasts: mismo GameObject "Wall", mismo color base, se veian muy distintas igual). Solo
+        // ambient no alcanzaba a corregirlo; con esta segunda luz ninguna pared queda totalmente
+        // a oscuras sin importar hacia donde mire.
+        var fillLightGo = new GameObject("Fill Light");
+        var fillLight = fillLightGo.AddComponent<Light>();
+        fillLight.type = LightType.Directional;
+        fillLight.intensity = 0.55f;
+        fillLight.color = new Color(0.85f, 0.9f, 1f);
+        fillLightGo.transform.rotation = Quaternion.Euler(35, 155, 0);
+
+        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+        RenderSettings.ambientLight = new Color(0.5f, 0.5f, 0.55f);
+
         var managerGo = new GameObject("DungeonManager");
         var manager = managerGo.AddComponent<DungeonManager>();
         var builder = managerGo.AddComponent<DungeonLevelBuilder>();
