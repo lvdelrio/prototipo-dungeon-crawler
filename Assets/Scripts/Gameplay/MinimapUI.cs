@@ -13,10 +13,10 @@ namespace Gameplay
         public bool playerMode = true;
         public KeyCode toggleModeKey = KeyCode.Tab;
 
-        public int panelX = 500;
         public int panelY = 10;
         public int cellPixelSize = 16;
         public int wallPixelThickness = 2;
+        public int rightMargin = 10;
 
         private static Texture2D _whiteTex;
 
@@ -28,12 +28,17 @@ namespace Gameplay
         void OnGUI()
         {
             if (dungeonManager == null || player == null) return;
-            if (dungeonManager.IsCombatActive) return; // el mapa desaparece durante el combate
+            // El mapa desaparece durante el combate y en la pantalla de tienda/mejoras post-run:
+            // en ambos casos hay otro panel mas importante que no debe quedar tapado.
+            if (dungeonManager.IsCombatActive || dungeonManager.IsGameOverShopActive) return;
             var floor = dungeonManager.CurrentFloor;
             if (floor == null) return;
 
             int w = floor.Width;
             int h = floor.Height;
+            // Anclado arriba a la derecha, ajustado al tamano real del mapa, en vez de una
+            // posicion X fija que en pantallas angostas podia salirse o superponerse con otra UI.
+            int panelX = Screen.width - (w * cellPixelSize + 20) - rightMargin;
             float top = panelY + 24;
 
             GUI.Box(new Rect(panelX - 10, panelY - 10, w * cellPixelSize + 20, h * cellPixelSize + 44), "");

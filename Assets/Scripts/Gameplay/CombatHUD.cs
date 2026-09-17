@@ -138,7 +138,29 @@ namespace Gameplay
 
                     if (_showingAbilities)
                     {
-                        DrawAbilitiesPanel(panelX, y, panelW, chooser);
+                        // Mismo lugar que el boton "Habilidades" (mover lo menos posible): solo las
+                        // habilidades de ESTE personaje, cada una con su costo de TP y su boton.
+                        string skillLabel = chooser.IsHealSkill
+                            ? $"{chooser.SkillName} - cura {chooser.HealAmount} HP ({chooser.SkillTpCost} TP)"
+                            : $"{chooser.SkillName} - {ElementLabel(chooser.SkillElement)} x{chooser.SkillPower:F1} ({chooser.SkillTpCost} TP)";
+                        if (GUI.Button(new Rect(panelX + 20, y, 340, 26), skillLabel))
+                        {
+                            _pendingType = ActionType.Skill;
+                            _showingAbilities = false;
+                        }
+
+                        if (chooser.CanProtectAll)
+                        {
+                            string protectLabel = $"Proteger a todos ({CombatEngine.ProtectAllTpCost} TP)";
+                            if (GUI.Button(new Rect(panelX + 370, y, 220, 26), protectLabel))
+                            {
+                                combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.ProtectAll });
+                                _showingAbilities = false;
+                            }
+                        }
+
+                        if (GUI.Button(new Rect(panelX + 600, y, 100, 26), "Cerrar"))
+                            _showingAbilities = false;
                     }
                     else if (_pendingType == null)
                     {
@@ -245,54 +267,6 @@ namespace Gameplay
                 GUI.Label(new Rect(popup.X, popup.Y - frac * 24f, 60, 20), popup.Text);
                 GUI.color = oldColor;
             }
-        }
-
-        // Resumen de las habilidades de los 6 personajes (elemento, poder/curacion, costo de TP);
-        // la fila del personaje en turno tiene ademas el boton para usarla de verdad, asi este
-        // panel no es solo informativo sino tambien "detras" de donde se elige la habilidad.
-        private void DrawAbilitiesPanel(float panelX, float y, float panelW, CharacterStats chooser)
-        {
-            GUI.Label(new Rect(panelX + 20, y, panelW - 40, 20), "Habilidades de la party:");
-            y += 22;
-            foreach (var member in combatManager.Party)
-            {
-                string desc = member.IsHealSkill
-                    ? $"{member.Name}: {member.SkillName} - cura {member.HealAmount} HP ({member.SkillTpCost} TP)"
-                    : $"{member.Name}: {member.SkillName} - {ElementLabel(member.SkillElement)}, x{member.SkillPower:F1} de ataque ({member.SkillTpCost} TP)";
-                GUI.Label(new Rect(panelX + 30, y, 420, 20), desc);
-
-                if (member == chooser)
-                {
-                    if (GUI.Button(new Rect(panelX + 460, y - 2, 150, 22), $"Usar {member.SkillName}"))
-                    {
-                        _pendingType = ActionType.Skill;
-                        _showingAbilities = false;
-                    }
-                }
-                y += 20;
-
-                // Proteger a todos (solo el Protector) es OTRA habilidad, no una skill de dano/cura:
-                // se muestra ademas de la de arriba, con su propio costo de TP y su propio boton.
-                if (member.CanProtectAll)
-                {
-                    string protectDesc = $"{member.Name}: Proteger a todos - recibe todo el dano del grupo esta ronda ({CombatEngine.ProtectAllTpCost} TP)";
-                    GUI.Label(new Rect(panelX + 30, y, 420, 20), protectDesc);
-
-                    if (member == chooser)
-                    {
-                        if (GUI.Button(new Rect(panelX + 460, y - 2, 150, 22), "Usar Proteger a todos"))
-                        {
-                            combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.ProtectAll });
-                            _pendingType = null;
-                            _showingAbilities = false;
-                        }
-                    }
-                    y += 20;
-                }
-            }
-
-            y += 8;
-            if (GUI.Button(new Rect(panelX + 20, y, 100, 24), "Cerrar")) _showingAbilities = false;
         }
 
         private string ElementLabel(Element element)

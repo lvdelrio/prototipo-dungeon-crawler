@@ -15,7 +15,9 @@ namespace Gameplay
         void OnGUI()
         {
             if (dungeonManager == null || player == null) return;
-            if (dungeonManager.IsCombatActive) return; // se esconde detras del combate, no tapa nada
+            // Se esconde durante el combate y en la pantalla de tienda/mejoras post-run: en ambos
+            // casos hay otro panel mas importante que no debe quedar tapado.
+            if (dungeonManager.IsCombatActive || dungeonManager.IsGameOverShopActive) return;
 
             GUI.Box(new Rect(10, 10, 460, 190), "");
             GUI.Label(new Rect(20, 15, 440, 20),
