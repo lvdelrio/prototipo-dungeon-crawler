@@ -57,6 +57,9 @@ namespace Gameplay
         public event Action<int> OnEnemyAdded;
         // Golpe de HABILIDAD (no ataque basico) contra un enemigo: indice + elemento de la habilidad.
         public event Action<int, Element> OnEnemySkillHit;
+        // CUALQUIER golpe contra un enemigo (ataque basico o habilidad, no curacion): indice +
+        // elemento de ese golpe. Para el efecto de shader elemental, que se ve en todos los golpes.
+        public event Action<int, Element> OnEnemyElementalHit;
 
         private CombatEngine _engine;
         private readonly System.Random _rng = new System.Random();
@@ -212,10 +215,14 @@ namespace Gameplay
                 Log.AddRange(turnLog);
 
                 // Golpe de habilidad (no ataque basico, no curacion) contra un enemigo: dispara el
-                // efecto de impacto especial ademas del feedback normal.
+                // efecto de impacto especial ademas del feedback normal. El elemento del golpe (de
+                // la habilidad, o del ataque basico) se usa ademas para el efecto de shader, que se
+                // ve en CUALQUIER golpe, no solo en habilidades.
                 bool isSkillHit = isParty && currentPartyAction != null && currentPartyAction.Type == ActionType.Skill && !Party[idx].IsHealSkill;
-                Element skillElement = isSkillHit ? Party[idx].SkillElement : Element.None;
-                ReportHitFeedback(partyHpBefore, enemyHpBefore, isSkillHit, skillElement);
+                Element hitElement = Element.None;
+                if (isSkillHit) hitElement = Party[idx].SkillElement;
+                else if (isParty && currentPartyAction != null && currentPartyAction.Type == ActionType.Attack) hitElement = Party[idx].AttackElement;
+                ReportHitFeedback(partyHpBefore, enemyHpBefore, isSkillHit, hitElement);
 
                 // En cuanto la pelea queda decidida no se esperan mas turnos ni personajes: se corta
                 // la ronda ahi mismo en vez de seguir resolviendo al resto del orden de turnos.
@@ -265,7 +272,7 @@ namespace Gameplay
         // flash/sacudida de camara y avisa (por indice) que enemigo recibio dano o cayo, para que
         // la escena de batalla (BattleStageController/EnemyView) anime el golpe o la disolucion
         // de muerte. El motor de combate puro no sabe nada de esto.
-        private void ReportHitFeedback(int[] partyHpBefore, int[] enemyHpBefore, bool isSkillHit, Element skillElement)
+        private void ReportHitFeedback(int[] partyHpBefore, int[] enemyHpBefore, bool isSkillHit, Element hitElement)
         {
             for (int i = 0; i < Party.Count; i++)
             {
@@ -285,7 +292,8 @@ namespace Gameplay
 
                 feedback?.OnEnemyHit(dmg);
                 OnEnemyDamaged?.Invoke(i);
-                if (isSkillHit) OnEnemySkillHit?.Invoke(i, skillElement);
+                OnEnemyElementalHit?.Invoke(i, hitElement);
+                if (isSkillHit) OnEnemySkillHit?.Invoke(i, hitElement);
                 if (enemyHpBefore[i] > 0 && Enemies[i].HP <= 0)
                     OnEnemyDefeated?.Invoke(i);
             }

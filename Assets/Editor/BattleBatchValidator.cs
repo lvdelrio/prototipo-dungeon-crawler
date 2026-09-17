@@ -87,6 +87,7 @@ public static class BattleBatchValidator
                     Finish();
                     return;
                 }
+                TestDialogue();
                 _combatManager.StartEncounter(false);
                 TestGoBack();
                 SetPhase(1);
@@ -110,15 +111,22 @@ public static class BattleBatchValidator
                     Check("La camara de batalla quedo activa", battleCam != null && battleCam.enabled);
                     Check("La camara de la mazmorra quedo apagada durante el combate", _battleStage.dungeonCamera != null && !_battleStage.dungeonCamera.enabled);
                     Check("Los 6 frames del efecto de impacto quedaron asignados", _battleStage.hitImpactFrames != null && _battleStage.hitImpactFrames.Length == 6 && _battleStage.hitImpactFrames[0] != null);
+                    Check("El material del efecto elemental (shader) quedo asignado", _battleStage.elementalBurstMaterial != null);
 
                     // Dispara la disolucion real de un enemigo (mismo codigo que usa una muerte de
-                    // verdad) y el efecto de impacto de habilidad (mismo codigo que un golpe real
-                    // de habilidad) para poder fotografiar ambos a mitad de camino.
+                    // verdad), el efecto de impacto de habilidad (sprite) y el efecto elemental
+                    // (shader) -- mismo codigo que un golpe real -- para poder fotografiar los tres
+                    // a mitad de camino.
                     views[0].PlayDeathDissolve(null);
+                    Quaternion camRot = battleCam != null ? battleCam.transform.rotation : Quaternion.identity;
                     if (_battleStage.hitImpactFrames != null && _battleStage.hitImpactFrames.Length > 0)
                     {
                         var pos = views[0].transform.position + (views.Length > 1 ? Vector3.zero : new Vector3(1.6f, 0.3f, -0.5f));
-                        HitImpactEffect.Spawn(_battleStage.hitImpactFrames, pos, new Color(1f, 0.6f, 0.3f), battleCam != null ? battleCam.transform.rotation : Quaternion.identity);
+                        HitImpactEffect.Spawn(_battleStage.hitImpactFrames, pos, new Color(1f, 0.6f, 0.3f), camRot);
+                    }
+                    if (_battleStage.elementalBurstMaterial != null && views.Length > 1)
+                    {
+                        ElementalBurstEffect.Spawn(_battleStage.elementalBurstMaterial, views[1].transform.position, new Color(1f, 0.35f, 0.12f), camRot);
                     }
                     SetPhase(2);
                 }
@@ -190,6 +198,32 @@ public static class BattleBatchValidator
                 }
                 break;
         }
+    }
+
+    // Prueba el sistema de dialogo de punta a punta: muestra una linea con 2 opciones, confirma
+    // que IsActive/Choices se llenan bien, elige una opcion, y confirma que ejecuta su callback y
+    // se cierra. Tambien confirma que GridPlayerController tiene la referencia cableada.
+    private static void TestDialogue()
+    {
+        var dialogueManager = Object.FindObjectOfType<DialogueManager>();
+        var player = Object.FindObjectOfType<GridPlayerController>();
+        if (!Check("DialogueManager presente en Play Mode", dialogueManager != null)) return;
+
+        bool chosenCallbackRan = false;
+        dialogueManager.ShowChoices("Tabernero (test)", "¿Aceptas la mision?", new System.Collections.Generic.List<DialogueChoice>
+        {
+            new DialogueChoice("Aceptar", () => chosenCallbackRan = true),
+            new DialogueChoice("Rechazar", () => { }),
+        });
+
+        Check("ShowChoices deja el dialogo activo", dialogueManager.IsActive);
+        Check("ShowChoices carga las 2 opciones", dialogueManager.Choices != null && dialogueManager.Choices.Count == 2);
+
+        dialogueManager.Choose(dialogueManager.Choices[0]);
+        Check("Elegir una opcion ejecuta su callback", chosenCallbackRan);
+        Check("Elegir una opcion cierra el dialogo", !dialogueManager.IsActive);
+
+        Check("GridPlayerController tiene el DialogueManager cableado", player != null && player.dialogueManager == dialogueManager);
     }
 
     // Prueba el boton "Volver": elige una accion para el primer personaje, retrocede, y confirma

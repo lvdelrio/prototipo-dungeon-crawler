@@ -7,6 +7,7 @@ namespace Gameplay
     public class GridPlayerController : MonoBehaviour
     {
         public DungeonManager dungeonManager;
+        public DialogueManager dialogueManager;
         public float moveDuration = 0.18f;
         public float turnDuration = 0.12f;
 
@@ -50,9 +51,23 @@ namespace Gameplay
         {
             if (_busy || dungeonManager == null) return;
             if (dungeonManager.IsCombatActive || dungeonManager.IsGameOverShopActive) return; // congelado en combate o en la tienda post-derrota
+            if (dialogueManager != null && dialogueManager.IsActive) return; // congelado mientras hay un dialogo en pantalla
 
             if (Input.GetKeyDown(KeyCode.M)) { dungeonManager.TryUseMap(); return; }
             if (Input.GetKeyDown(KeyCode.P)) { dungeonManager.TryUseDrill(_x, _y, _facing); return; }
+
+            // DEMO del sistema de dialogo (tecla T): reemplazar este trigger por uno real (un NPC,
+            // una celda de taberna, etc.) cuando se construya el bazar/taberna de verdad.
+            if (dialogueManager != null && Input.GetKeyDown(KeyCode.T))
+            {
+                dialogueManager.ShowChoices("Tabernero", "Bienvenido a la taberna. Tengo un trabajo si te interesa: despejar la sala de al lado.",
+                    new System.Collections.Generic.List<DialogueChoice>
+                    {
+                        new DialogueChoice("Aceptar mision", () => dungeonManager.hud?.SetLastMessage("Mision aceptada (demo).")),
+                        new DialogueChoice("Rechazar", () => dungeonManager.hud?.SetLastMessage("Rechazaste la mision (demo).")),
+                    });
+                return;
+            }
 
             if (Input.GetKeyDown(KeyCode.LeftArrow)) { StartCoroutine(Turn(-1)); return; }
             if (Input.GetKeyDown(KeyCode.RightArrow)) { StartCoroutine(Turn(1)); return; }

@@ -21,6 +21,9 @@ namespace Gameplay
         [Tooltip("Las 6 frames de HitImpact.png, en orden de animacion (las asigna DungeonSceneBuilder via HitEffectImporter.LoadFrames()).")]
         public Sprite[] hitImpactFrames;
 
+        [Header("Efecto de impacto elemental (shader, en todos los golpes)")]
+        public Material elementalBurstMaterial;
+
         private Camera _battleCamera;
         private AudioListener _battleAudioListener;
         private readonly List<Transform> _stands = new List<Transform>();
@@ -38,6 +41,7 @@ namespace Gameplay
             combatManager.OnEnemyDefeated += HandleEnemyDefeated;
             combatManager.OnEnemyAdded += HandleEnemyAdded;
             combatManager.OnEnemySkillHit += HandleEnemySkillHit;
+            combatManager.OnEnemyElementalHit += HandleEnemyElementalHit;
         }
 
         private void HandleCombatStarted()
@@ -201,6 +205,19 @@ namespace Gameplay
             Color tint = Color.Lerp(Color.white, ElementColor(element), 0.55f);
             Quaternion facing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
             HitImpactEffect.Spawn(hitImpactFrames, view.transform.position, tint, facing);
+        }
+
+        // Efecto de shader (sin sprite) que se ve en CUALQUIER golpe -- basico o de habilidad --
+        // para que el elemento del ataque siempre tenga algun feedback visual, no solo las
+        // habilidades (que ademas tienen el sprite de HitImpactEffect).
+        private void HandleEnemyElementalHit(int index, Element element)
+        {
+            if (index < 0 || index >= _activeViews.Count || elementalBurstMaterial == null) return;
+            var view = _activeViews[index];
+            if (view == null) return;
+
+            Quaternion facing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
+            ElementalBurstEffect.Spawn(elementalBurstMaterial, view.transform.position, ElementColor(element), facing);
         }
 
         private static Color ElementColor(Element element)

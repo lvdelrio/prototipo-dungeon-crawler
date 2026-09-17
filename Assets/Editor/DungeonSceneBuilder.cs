@@ -73,6 +73,10 @@ public static class DungeonSceneBuilder
         var metaShopHud = metaShopGo.AddComponent<MetaShopHUD>();
         var battleStageGo = new GameObject("BattleStageController");
         var battleStage = battleStageGo.AddComponent<BattleStageController>();
+        var dialogueGo = new GameObject("DialogueManager");
+        var dialogueManager = dialogueGo.AddComponent<DialogueManager>();
+        var dialogueHudGo = new GameObject("DialogueHUD");
+        var dialogueHud = dialogueHudGo.AddComponent<DialogueHUD>();
 
         manager.settings = settings;
         manager.eventTable = eventTable;
@@ -98,6 +102,9 @@ public static class DungeonSceneBuilder
         battleStage.battleSceneName = BattleSceneBuilder.SceneName;
         HitEffectImporter.EnsureSliced();
         battleStage.hitImpactFrames = HitEffectImporter.LoadFrames();
+        battleStage.elementalBurstMaterial = GetOrCreateElementalBurstMaterial();
+        playerController.dialogueManager = dialogueManager;
+        dialogueHud.dialogueManager = dialogueManager;
 
         if (!AssetDatabase.IsValidFolder("Assets/Scenes"))
             AssetDatabase.CreateFolder("Assets", "Scenes");
@@ -147,6 +154,21 @@ public static class DungeonSceneBuilder
             AssetDatabase.CreateFolder("Assets", "Data");
 
         var shader = Shader.Find("Custom/Dissolve");
+        var material = new Material(shader);
+        AssetDatabase.CreateAsset(material, path);
+        return material;
+    }
+
+    private static Material GetOrCreateElementalBurstMaterial()
+    {
+        const string path = "Assets/Data/ElementalBurstMaterial.mat";
+        var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
+        if (existing != null) return existing;
+
+        if (!AssetDatabase.IsValidFolder("Assets/Data"))
+            AssetDatabase.CreateFolder("Assets", "Data");
+
+        var shader = Shader.Find("Custom/ElementalBurst");
         var material = new Material(shader);
         AssetDatabase.CreateAsset(material, path);
         return material;
