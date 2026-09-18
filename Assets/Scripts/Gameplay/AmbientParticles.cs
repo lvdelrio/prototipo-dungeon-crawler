@@ -77,6 +77,7 @@ namespace Gameplay
                     main.gravityModifier = 0.06f;
                     emission.rateOverTime = 5f;
                     vel.x = new ParticleSystem.MinMaxCurve(-0.15f, 0.15f);
+                    vel.y = new ParticleSystem.MinMaxCurve(0f, 0f);
                     vel.z = new ParticleSystem.MinMaxCurve(-0.15f, 0.15f);
                     break;
 
@@ -88,6 +89,7 @@ namespace Gameplay
                     main.gravityModifier = -0.04f; // suben, como brasas
                     emission.rateOverTime = intense ? 26f : 12f;
                     vel.x = new ParticleSystem.MinMaxCurve(-0.1f, 0.1f);
+                    vel.y = new ParticleSystem.MinMaxCurve(0f, 0f);
                     vel.z = new ParticleSystem.MinMaxCurve(-0.1f, 0.1f);
                     break;
 
@@ -99,6 +101,7 @@ namespace Gameplay
                     main.gravityModifier = 0f;
                     emission.rateOverTime = 6f;
                     vel.x = new ParticleSystem.MinMaxCurve(-0.05f, 0.05f);
+                    vel.y = new ParticleSystem.MinMaxCurve(0f, 0f);
                     vel.z = new ParticleSystem.MinMaxCurve(-0.05f, 0.05f);
                     break;
             }
