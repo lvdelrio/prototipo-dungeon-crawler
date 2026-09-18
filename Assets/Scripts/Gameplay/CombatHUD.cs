@@ -14,6 +14,7 @@ namespace Gameplay
         private bool _wasActive;
         private bool _inspecting;
         private bool _showingAbilities;
+        private bool _showingFormation;
 
         // Numeros de dano/curacion flotantes: se detectan comparando el HP visto en el frame
         // anterior contra el actual (asi el motor de combate puro no necesita saber nada de UI).
@@ -48,6 +49,7 @@ namespace Gameplay
                 _pendingType = null;
                 _wasActive = false;
                 _showingAbilities = false;
+                _showingFormation = false;
                 return;
             }
 
@@ -108,7 +110,8 @@ namespace Gameplay
             {
                 bool isTurn = combatManager.IsResolvingRound && combatManager.CurrentTurnIsParty && combatManager.CurrentTurnActorName == member.Name;
                 string status = !member.IsAlive ? "caído" : member.IsProtectingAll ? "protegiendo al grupo" : member.IsGuarding ? "en guardia" : "listo";
-                DrawTurnLine(panelX + 20, y, panelW - 40, $"{member.Name} ({member.Class}) - HP {member.HP}/{member.MaxHP}  TP {member.TP}/{member.MaxTP}  [{status}]", isTurn, isEnemyTurn: false);
+                string row = member.IsFrontRow ? "frente" : "fondo";
+                DrawTurnLine(panelX + 20, y, panelW - 40, $"{member.Name} ({member.Class}, {row}) - HP {member.HP}/{member.MaxHP}  TP {member.TP}/{member.MaxTP}  [{status}]", isTurn, isEnemyTurn: false);
                 TrackHpChange(_lastPartyHp, member, member.HP, panelX + panelW - 60, y);
                 y += 20;
             }
@@ -146,11 +149,27 @@ namespace Gameplay
                         combatManager.GoToPreviousChooser();
                         _pendingType = null;
                         _showingAbilities = false;
+                        _showingFormation = false;
                     }
                     GUI.enabled = true;
                     y += 24;
 
-                    if (_showingAbilities)
+                    if (_showingFormation)
+                    {
+                        GUI.Label(new Rect(panelX + 20, y, 500, 20), "Formación (3 y 3): elegí quién va al frente o al fondo.");
+                        y += 22;
+                        float fx = panelX + 20;
+                        foreach (var member in combatManager.Party)
+                        {
+                            string label = $"{member.Name}\n[{(member.IsFrontRow ? "FRENTE" : "fondo")}]";
+                            if (GUI.Button(new Rect(fx, y, 110, 40), label))
+                                combatManager.SetFrontRow(member, !member.IsFrontRow);
+                            fx += 116;
+                        }
+                        if (GUI.Button(new Rect(panelX + 20, y + 46, 100, 24), "Cerrar"))
+                            _showingFormation = false;
+                    }
+                    else if (_showingAbilities)
                     {
                         // Mismo lugar que el boton "Habilidades" (mover lo menos posible): solo las
                         // habilidades de ESTE personaje, cada una con su costo de TP y su boton.
@@ -195,6 +214,9 @@ namespace Gameplay
                             combatManager.AutoAttackRemaining();
                             _pendingType = null;
                         }
+
+                        if (GUI.Button(new Rect(panelX + 620, y, 120, 26), "Formación"))
+                            _showingFormation = true;
                     }
                     else if (_pendingType == ActionType.Skill && chooser.IsHealSkill)
                     {
@@ -302,8 +324,12 @@ namespace Gameplay
         // lanzar el golpe de equipo antes de que se acabe el tiempo.
         private void DrawAllOutAttackBanner(float panelX, float y, float panelW)
         {
-            float pulse = 0.5f + 0.5f * Mathf.Sin(Time.time * 8f);
-            Color glow = Color.Lerp(new Color(0.85f, 0.65f, 0.1f), new Color(1f, 0.95f, 0.55f), pulse);
+            int mashCount = combatManager.AllOutAttackMashCount;
+            // Cuanto mas se "machaca" el boton, mas intenso el pulso -- feedback inmediato de que
+            // cada apretada suma (hasta el tope, donde se queda brillando a full).
+            float mashFrac = Mathf.Clamp01(mashCount / (float)CombatEngine.AllOutMaxPresses);
+            float pulse = 0.5f + 0.5f * Mathf.Sin(Time.time * (8f + mashFrac * 10f));
+            Color glow = Color.Lerp(new Color(0.85f, 0.65f, 0.1f), new Color(1f, 0.95f, 0.55f), Mathf.Max(pulse, mashFrac));
 
             DrawRect(new Rect(panelX + 10, y, panelW - 20, 80), new Color(0.08f, 0.06f, 0.02f, 0.9f));
             DrawRect(new Rect(panelX + 10, y, panelW - 20, 4), glow);
@@ -315,12 +341,14 @@ namespace Gameplay
             GUI.Label(new Rect(panelX + 10, y + 6, panelW - 20, 28), "¡TODOS LOS ENEMIGOS ATURDIDOS!", bigStyle);
             GUI.color = oldColor;
 
-            GUI.Label(new Rect(panelX + 20, y + 34, panelW - 260, 24), "La party puede lanzar un golpe en conjunto ahora mismo.");
+            string countLabel = mashCount > 0 ? $"¡Golpes acumulados: x{mashCount}! Mientras más machacás, más daño." : "¡MACHACÁ el botón (o Espacio) para el Ataque en Conjunto!";
+            GUI.Label(new Rect(panelX + 20, y + 34, panelW - 260, 24), countLabel);
 
             var buttonStyle = new GUIStyle(GUI.skin.button) { fontStyle = FontStyle.Bold };
             var oldBg = GUI.backgroundColor;
             GUI.backgroundColor = glow;
-            if (GUI.Button(new Rect(panelX + panelW - 230, y + 30, 210, 32), "¡ATAQUE EN CONJUNTO! (Espacio)", buttonStyle))
+            string buttonLabel = mashCount > 0 ? $"¡SEGUÍ MACHACANDO! x{mashCount} (Espacio)" : "¡ATAQUE EN CONJUNTO! (Espacio)";
+            if (GUI.Button(new Rect(panelX + panelW - 260, y + 30, 240, 32), buttonLabel, buttonStyle))
                 combatManager.TriggerAllOutAttack();
             GUI.backgroundColor = oldBg;
         }

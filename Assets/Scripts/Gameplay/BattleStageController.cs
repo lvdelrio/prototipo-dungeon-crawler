@@ -274,6 +274,12 @@ namespace Gameplay
             view.PlayDeathDissolve(() =>
             {
                 if (view != null) Destroy(view.gameObject);
+                // Libera el parante que ocupaba este enemigo: sin esto, FirstFreeStandIndex()
+                // seguia contandolo como "ocupado" para siempre despues de morir, y una cria de
+                // Slime que necesitaba ese lugar (HandleEnemyAdded) se quedaba sin representacion
+                // visual aunque el motor de combate SI la haya agregado a Enemies.
+                if (index < _viewStandIndex.Count) _viewStandIndex[index] = -1;
+                if (index < _activeViews.Count) _activeViews[index] = null;
             });
         }
 

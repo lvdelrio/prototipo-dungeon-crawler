@@ -46,12 +46,16 @@ namespace Gameplay
         public bool CurrentTurnIsParty { get; private set; }
 
         [Header("Ataque en Conjunto (se habilita si se rompe el aguante de TODOS los enemigos a la vez)")]
-        [Tooltip("Segundos que se espera a que el jugador presione el boton antes de que se pierda la oportunidad esta ronda.")]
-        public float allOutAttackDecisionTimeout = 6f;
+        [Tooltip("Segundos que dura la ventana para 'machacar' el boton: cada pulsacion suma mas dano (ver CombatEngine.ExecuteAllOutAttack). Si nadie aprieta nada, se pierde la oportunidad esta ronda.")]
+        public float allOutAttackMashWindow = 3f;
 
-        // True mientras el juego esta esperando que el jugador decida usar (o no) el Ataque en
-        // Conjunto. La UI (CombatHUD) muestra el boton/aviso especial solo mientras esto es true.
+        // True mientras dura la ventana de "machacado" del Ataque en Conjunto. La UI (CombatHUD)
+        // muestra el boton/aviso especial solo mientras esto es true.
         public bool AllOutAttackReady { get; private set; }
+
+        // Cuantas veces se apreto el boton/Espacio durante la ventana actual (0 mientras nadie
+        // apreto nada todavia). Mas pulsaciones = mas dano al ejecutar el golpe.
+        public int AllOutAttackMashCount { get; private set; }
 
         // (victoria, era jefe)
         public event Action<bool, bool> OnCombatFinished;
@@ -80,8 +84,6 @@ namespace Gameplay
         private readonly Dictionary<CharacterStats, PartyAction> _queuedActions = new Dictionary<CharacterStats, PartyAction>();
         private int _chooserIndex;
         private bool _allOutOfferedThisRound;
-        private bool _allOutTriggered;
-        private bool _allOutDeclined;
 
         // Crea una party nueva con las stats base y le aplica los niveles de mejora permanentes
         // comprados en runs anteriores. La llama DungeonManager al arrancar y cada vez que empieza
@@ -197,20 +199,30 @@ namespace Gameplay
             AdvanceChooser();
         }
 
-        // Boton "Ataque en Conjunto": solo tiene efecto mientras AllOutAttackReady es true (el
-        // aguante de TODOS los enemigos se acaba de romper a la vez). Ver OfferAllOutAttack().
+        // Boton/Espacio "Ataque en Conjunto": cada pulsacion durante la ventana de "machacado"
+        // suma una mas al conteo (hasta CombatEngine.AllOutMaxPresses); no dispara nada por si
+        // sola, es OfferAllOutAttack() quien ejecuta el golpe (con mas dano cuantas mas veces se
+        // haya apretado) al terminar la ventana. Solo tiene efecto mientras AllOutAttackReady.
         public void TriggerAllOutAttack()
         {
             if (!AllOutAttackReady) return;
-            _allOutTriggered = true;
+            AllOutAttackMashCount = Mathf.Min(AllOutAttackMashCount + 1, CombatEngine.AllOutMaxPresses);
         }
 
-        // El jugador ignora la oportunidad (o se deja pasar el tiempo): la ronda sigue normal, y
-        // los enemigos rotos van perdiendo su turno cuando les toque, como siempre.
-        public void DeclineAllOutAttack()
+        // Formacion: cambiarla solo tiene sentido mientras se estan eligiendo acciones, no a
+        // mitad de que se resuelve una ronda.
+        public bool CanChangeFormation => IsActive && !IsResolvingRound;
+
+        // Pone a "target" al frente o al fondo. Para mantener siempre 3 y 3 (ver
+        // CombatEngine.FrontRowAggroWeight), si el cambio desbalancea la formacion se intercambia
+        // automaticamente con el primero que encuentre del lado que queda de mas: asi el jugador
+        // solo elige "quiero a este adelante/atras" sin tener que armar el par a mano.
+        public void SetFrontRow(CharacterStats target, bool front)
         {
-            if (!AllOutAttackReady) return;
-            _allOutDeclined = true;
+            if (!CanChangeFormation || target == null || target.IsFrontRow == front) return;
+            var partner = Party.FirstOrDefault(p => p != target && p.IsFrontRow == front);
+            target.IsFrontRow = front;
+            if (partner != null) partner.IsFrontRow = !front;
         }
 
         private void AdvanceChooser()
@@ -270,7 +282,7 @@ namespace Gameplay
                 {
                     _allOutOfferedThisRound = true;
                     yield return OfferAllOutAttack();
-                    if (_allOutTriggered)
+                    if (AllOutAttackMashCount > 0)
                         break; // el golpe en conjunto consume el resto de la ronda
                 }
             }
@@ -313,31 +325,31 @@ namespace Gameplay
             action.QteSuccess = result.Value;
         }
 
-        // Pausa la ronda para ofrecer el Ataque en Conjunto: espera a que el jugador lo dispare (o
-        // lo ignore) o a que se acabe el tiempo, y si se usa aplica el golpe en conjunto a todos
-        // los enemigos vivos con el mismo feedback visual (pulso/dissolve/VFX) que un golpe normal.
+        // Pausa la ronda para ofrecer el Ataque en Conjunto: durante allOutAttackMashWindow
+        // segundos cuenta cuantas veces se aprieta el boton/Espacio, y al terminar la ventana
+        // ejecuta el golpe (con mas dano cuantas mas pulsaciones hubo) -- o no hace nada si nadie
+        // apreto ni una vez, perdiendo la oportunidad esta ronda.
         private IEnumerator OfferAllOutAttack()
         {
-            _allOutTriggered = false;
-            _allOutDeclined = false;
+            AllOutAttackMashCount = 0;
             AllOutAttackReady = true;
-            Log.Add("¡Se rompe el aguante de TODOS los enemigos a la vez! Ataque en Conjunto disponible.");
+            Log.Add("¡Se rompe el aguante de TODOS los enemigos a la vez! ¡Machacá el botón para el Ataque en Conjunto!");
             OnAllOutAttackReady?.Invoke();
 
             float t = 0f;
-            while (!_allOutTriggered && !_allOutDeclined && t < allOutAttackDecisionTimeout)
+            while (t < allOutAttackMashWindow)
             {
                 t += Time.deltaTime;
                 yield return null;
             }
             AllOutAttackReady = false;
 
-            if (!_allOutTriggered) yield break;
+            if (AllOutAttackMashCount <= 0) yield break;
 
             int[] enemyHpBeforeBurst = Enemies.Select(e => e.HP).ToArray();
             int previousCount = enemyHpBeforeBurst.Length;
 
-            var burstLog = _engine.ExecuteAllOutAttack();
+            var burstLog = _engine.ExecuteAllOutAttack(AllOutAttackMashCount);
             Log.AddRange(burstLog);
             feedback?.OnAllOutAttack();
 

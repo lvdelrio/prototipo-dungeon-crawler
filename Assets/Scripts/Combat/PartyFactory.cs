@@ -18,6 +18,7 @@ namespace Combat
                     SkillName = "Corte Poderoso", SkillTpCost = 4, SkillPower = 1.6f, SkillElement = Element.Slash,
                     SkillSequenceA = new[] { QteKey.Up, QteKey.Left, QteKey.Down },
                     SkillSequenceB = new[] { QteKey.Right, QteKey.Up, QteKey.Right },
+                    IsFrontRow = true,
                 },
                 new CharacterStats
                 {
@@ -29,6 +30,7 @@ namespace Combat
                     SkillSequenceA = new[] { QteKey.Down, QteKey.Down, QteKey.Up },
                     SkillSequenceB = new[] { QteKey.Left, QteKey.Left, QteKey.Right },
                     CanProtectAll = true,
+                    IsFrontRow = true,
                 },
                 new CharacterStats
                 {
@@ -39,6 +41,7 @@ namespace Combat
                     SkillName = "Tiro Certero", SkillTpCost = 5, SkillPower = 1.7f, SkillElement = Element.Pierce,
                     SkillSequenceA = new[] { QteKey.Left, QteKey.Right, QteKey.Up },
                     SkillSequenceB = new[] { QteKey.Down, QteKey.Down, QteKey.Up },
+                    IsFrontRow = true,
                 },
                 new CharacterStats
                 {

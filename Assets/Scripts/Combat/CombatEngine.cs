@@ -44,6 +44,16 @@ namespace Combat
         // party viva, y ese numero le pega IGUAL a cada enemigo -- como un golpe final de equipo).
         public const float AllOutAttackMultiplier = 1.5f;
 
+        // El golpe en conjunto se "machacando el boton": la primera pulsacion ya lo dispara, y
+        // cada pulsacion EXTRA (hasta un tope) suma mas dano, para que "smashear" tenga sentido.
+        public const float AllOutDamagePerExtraPress = 0.12f;
+        public const int AllOutMaxPresses = 12;
+
+        // Formula de agro: los personajes del frente concentran mas probabilidad de ser el
+        // blanco de los enemigos que los de atras (ver CharacterStats.IsFrontRow).
+        public const float FrontRowAggroWeight = 3f;
+        public const float BackRowAggroWeight = 1f;
+
         public readonly List<CharacterStats> Party;
         public readonly List<EnemyStats> Enemies;
         private readonly Random _rng;
@@ -121,18 +131,23 @@ namespace Combat
         }
 
         // Toda la party viva golpea junta a CADA enemigo vivo por el mismo monto de dano (suma de
-        // ATK*AllOutAttackMultiplier de la party). Pensado para dispararse solo cuando
-        // AllEnemiesBroken() es true; al usarse, todos los enemigos golpeados recuperan su aguante
-        // (dejan de estar rotos) y siguen combatiendo normal desde la ronda siguiente.
-        public List<string> ExecuteAllOutAttack()
+        // ATK*AllOutAttackMultiplier de la party, escalada por cuantas veces se "machaco" el
+        // boton: mashCount=1 es el minimo -- ya dispara el golpe -- y cada pulsacion extra (hasta
+        // AllOutMaxPresses) suma AllOutDamagePerExtraPress mas dano). Pensado para dispararse solo
+        // cuando AllEnemiesBroken() es true; al usarse, todos los enemigos golpeados recuperan su
+        // aguante (dejan de estar rotos) y siguen combatiendo normal desde la ronda siguiente.
+        public List<string> ExecuteAllOutAttack(int mashCount)
         {
             var log = new List<string>();
             var aliveParty = Party.Where(p => p.IsAlive).ToList();
             if (aliveParty.Count == 0) return log;
 
+            int clampedMash = Math.Max(1, Math.Min(mashCount, AllOutMaxPresses));
+            float mashMultiplier = 1f + AllOutDamagePerExtraPress * (clampedMash - 1);
+
             int totalDamage = 0;
             foreach (var p in aliveParty)
-                totalDamage += (int)Math.Round(p.Attack * AllOutAttackMultiplier);
+                totalDamage += (int)Math.Round(p.Attack * AllOutAttackMultiplier * mashMultiplier);
             totalDamage = Math.Max(1, totalDamage);
 
             foreach (var enemy in Enemies.Where(e => e.IsAlive).ToList())
@@ -144,7 +159,7 @@ namespace Combat
                     enemy.Poise = enemy.MaxPoise;
                 }
             }
-            log.Add($"¡Ataque en conjunto! Toda la party golpea a la vez por {totalDamage} de daño a cada enemigo.");
+            log.Add($"¡Ataque en conjunto! Toda la party golpea a la vez por {totalDamage} de daño a cada enemigo (x{clampedMash} golpes de boton).");
             return log;
         }
 
@@ -250,15 +265,31 @@ namespace Combat
             if (aliveParty.Count == 0) return;
 
             // Si alguien esta protegiendo a todo el grupo, todo el dano enemigo de esta ronda se
-            // le redirige a el/ella (a su propio costo), en vez de elegir un objetivo al azar.
+            // le redirige a el/ella (a su propio costo), sin importar la formacion.
             var protector = aliveParty.FirstOrDefault(p => p.IsProtectingAll);
-            var target = protector ?? aliveParty[_rng.Next(aliveParty.Count)];
+            var target = protector ?? PickAggroTarget(aliveParty);
 
             int dmg = Math.Max(1, enemy.Attack - target.Defense / 2);
             bool wasGuarding = target.IsGuarding;
             if (wasGuarding) dmg = Math.Max(1, dmg / 2);
             target.HP = Math.Max(0, target.HP - dmg);
             log.Add($"{enemy.Name} ataca a {target.Name}: {dmg} de daño.{(wasGuarding ? " (bloqueado con guardia)" : "")}");
+        }
+
+        // Elige a quien ataca un enemigo: cada personaje del frente pesa FrontRowAggroWeight y
+        // cada uno de atras BackRowAggroWeight, asi que el frente concentra mas probabilidad de
+        // ser el blanco pero el de atras nunca queda en 0% (formula de agro por formacion).
+        private CharacterStats PickAggroTarget(List<CharacterStats> aliveParty)
+        {
+            float totalWeight = aliveParty.Sum(p => p.IsFrontRow ? FrontRowAggroWeight : BackRowAggroWeight);
+            double roll = _rng.NextDouble() * totalWeight;
+            double acc = 0;
+            foreach (var p in aliveParty)
+            {
+                acc += p.IsFrontRow ? FrontRowAggroWeight : BackRowAggroWeight;
+                if (roll < acc) return p;
+            }
+            return aliveParty[aliveParty.Count - 1];
         }
 
         // Aplica dano a un enemigo (a su vida y, si esta vivo y no estaba ya roto, a su aguante) y,
@@ -288,13 +319,12 @@ namespace Combat
                 var split = target.OnDeathSplit;
                 target.OnDeathSplit = null; // que los reemplazos no vuelvan a dividirse en cadena
                 var replacements = split();
-                if (replacements != null)
+                // Todo o nada: si no hay lugar para TODOS los reemplazos, no se agrega ninguno (un
+                // Slime partiendose en un solo hijo, a medias, se veia como un bug en vez de una
+                // decision de diseño). Con lugar de sobra, entran todos los que devuelva el split.
+                if (replacements != null && Enemies.Count + replacements.Count <= MaxEnemies)
                 {
-                    foreach (var r in replacements)
-                    {
-                        if (Enemies.Count >= MaxEnemies) break;
-                        Enemies.Add(r);
-                    }
+                    Enemies.AddRange(replacements);
                 }
             }
         }

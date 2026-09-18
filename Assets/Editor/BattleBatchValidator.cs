@@ -28,6 +28,7 @@ public static class BattleBatchValidator
     private static EnterPlayModeOptions _prevEnterPlayModeOptions;
     private static double _globalStart;
     private const double GlobalTimeout = 40.0;
+    private const int TestMashPresses = 4;
 
     [MenuItem("Dungeon/Validate Battle Scene (Play Mode Batch)")]
     public static void ValidateFromBatch()
@@ -91,6 +92,7 @@ public static class BattleBatchValidator
                 TestDialogue();
                 _combatManager.StartEncounter(false);
                 TestGoBack();
+                TestFormation();
                 SetPhase(1);
                 break;
 
@@ -132,7 +134,12 @@ public static class BattleBatchValidator
                 if (_combatManager.AllOutAttackReady)
                 {
                     Check("AllOutAttackReady se activa cuando todos los enemigos quedan rotos a la vez", true);
-                    _combatManager.TriggerAllOutAttack();
+                    // "Machacar" el boton varias veces: cada pulsacion deberia sumar al conteo (y
+                    // despues, mas dano) -- no alcanza con apretarlo una sola vez.
+                    for (int i = 0; i < TestMashPresses; i++)
+                        _combatManager.TriggerAllOutAttack();
+                    Check($"Machacar {TestMashPresses} veces suma {TestMashPresses} al conteo de mash",
+                        _combatManager.AllOutAttackMashCount == TestMashPresses, $"real={_combatManager.AllOutAttackMashCount}");
                     SetPhase(11);
                 }
                 break;
@@ -155,6 +162,16 @@ public static class BattleBatchValidator
                         _combatManager.Enemies.All(e => e.HP < e.MaxHP), string.Join(",", _combatManager.Enemies.Select(e => $"{e.Name}={e.HP}/{e.MaxHP}")));
                     Check("El log de combate registra el Ataque en Conjunto",
                         _combatManager.Log.Any(l => l.Contains("Ataque en conjunto")));
+
+                    // El dano real tiene que coincidir con la formula exacta para TestMashPresses
+                    // pulsaciones (no solo "recibio algo de dano"): confirma que mashear de verdad
+                    // escala el golpe, no que quedo pegado en el minimo de 1 pulsacion.
+                    float mashMultiplier = 1f + Combat.CombatEngine.AllOutDamagePerExtraPress * (TestMashPresses - 1);
+                    int expectedDmg = _combatManager.Party.Where(p => p.IsAlive)
+                        .Sum(p => (int)System.Math.Round(p.Attack * Combat.CombatEngine.AllOutAttackMultiplier * mashMultiplier));
+                    int actualDmg = _combatManager.Enemies[0].MaxHP - _combatManager.Enemies[0].HP;
+                    Check("el dano del Ataque en Conjunto escala segun la formula exacta de mashCount",
+                        actualDmg == expectedDmg, $"esperado={expectedDmg} real={actualDmg}");
 
                     var views2 = Object.FindObjectsOfType<EnemyView>();
                     Check("Las representaciones visuales de los enemigos siguen en pie tras el golpe en conjunto", views2.Length == _combatManager.Enemies.Count(e => e.IsAlive));
@@ -292,6 +309,24 @@ public static class BattleBatchValidator
         var backTo = _combatManager.GetChooser();
         Check("Volver deja elegir de nuevo al mismo personaje de antes", backTo == first, $"esperado={first?.Name} real={backTo?.Name}");
         Check("Volver deshace la accion elegida (CanGoBack vuelve a false)", !_combatManager.CanGoBack);
+    }
+
+    // Prueba la formacion (3 al frente / 3 al fondo): mover a alguien del fondo al frente debe
+    // mantener el balance 3/3 (bajando automaticamente a otro), y lo mismo al revertirlo.
+    private static void TestFormation()
+    {
+        var party = _combatManager.Party;
+        int frontBefore = party.Count(p => p.IsFrontRow);
+        Check("La party arranca con exactamente 3 al frente y 3 al fondo", frontBefore == 3, $"frente={frontBefore}");
+
+        var backMember = party.First(p => !p.IsFrontRow);
+        _combatManager.SetFrontRow(backMember, true);
+        Check("Mover a alguien del fondo al frente mantiene el balance 3 y 3", party.Count(p => p.IsFrontRow) == 3, $"frente={party.Count(p => p.IsFrontRow)}");
+        Check("El personaje movido queda en el frente", backMember.IsFrontRow);
+
+        _combatManager.SetFrontRow(backMember, false);
+        Check("Devolverlo al fondo tambien mantiene el balance 3 y 3", party.Count(p => p.IsFrontRow) == 3, $"frente={party.Count(p => p.IsFrontRow)}");
+        Check("El personaje vuelve a quedar en el fondo", !backMember.IsFrontRow);
     }
 
     // Fuerza el aguante roto de TODOS los enemigos activos (en vez de tener que grindear golpes

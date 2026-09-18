@@ -30,6 +30,10 @@ namespace Combat
 
         public bool IsGuarding;
 
+        // Formacion: 3 personajes adelante y 3 atras (ver CombatEngine.FrontRowAggroWeight). Los
+        // de adelante concentran mas probabilidad de ser el blanco de los enemigos.
+        public bool IsFrontRow;
+
         // Habilidad especial del Protector: mientras este activa, todos los ataques enemigos de
         // esta ronda se redirigen a el (a costa de recibir el, y solo el, todo ese dano).
         public bool CanProtectAll;
