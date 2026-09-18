@@ -15,6 +15,13 @@ namespace Gameplay
         private bool _inspecting;
         private bool _showingAbilities;
 
+        // Reveal "estiloso" del menu de accion (inspirado en Persona 5: capas apiladas, acento
+        // rojo/negro, entrada en cascada) -- se reinicia cada vez que le toca elegir a alguien nuevo.
+        private CharacterStats _actionMenuChooser;
+        private float _actionMenuRevealStart;
+        private static readonly Color P5Red = new Color(0.82f, 0.08f, 0.1f);
+        private static readonly Color P5Black = new Color(0.07f, 0.07f, 0.08f);
+
         // Numeros de dano/curacion flotantes: se detectan comparando el HP visto en el frame
         // anterior contra el actual (asi el motor de combate puro no necesita saber nada de UI).
         private readonly Dictionary<EnemyStats, int> _lastEnemyHp = new Dictionary<EnemyStats, int>();
@@ -48,6 +55,7 @@ namespace Gameplay
                 _pendingType = null;
                 _wasActive = false;
                 _showingAbilities = false;
+                _actionMenuChooser = null;
                 return;
             }
 
@@ -179,19 +187,21 @@ namespace Gameplay
                     }
                     else if (_pendingType == null)
                     {
-                        if (GUI.Button(new Rect(panelX + 20, y, 120, 26), "Atacar"))
+                        TrackActionMenuReveal(chooser);
+
+                        if (DrawP5Button(new Rect(panelX + 20, y, 120, 30), "Atacar", 0))
                             _pendingType = ActionType.Attack;
 
-                        if (GUI.Button(new Rect(panelX + 150, y, 150, 26), "Habilidades"))
+                        if (DrawP5Button(new Rect(panelX + 150, y, 150, 30), "Habilidades", 1))
                             _showingAbilities = true;
 
-                        if (GUI.Button(new Rect(panelX + 310, y, 120, 26), "Guardia"))
+                        if (DrawP5Button(new Rect(panelX + 310, y, 120, 30), "Guardia", 2))
                         {
                             combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.Guard });
                             _pendingType = null;
                         }
 
-                        if (GUI.Button(new Rect(panelX + 440, y, 170, 26), "Auto (todos atacan)"))
+                        if (DrawP5Button(new Rect(panelX + 440, y, 170, 30), "Auto", 3))
                         {
                             combatManager.AutoAttackRemaining();
                             _pendingType = null;
@@ -330,6 +340,44 @@ namespace Gameplay
             if (GUI.Button(new Rect(panelX + panelW - 260, y + 30, 240, 32), buttonLabel, buttonStyle))
                 combatManager.TriggerAllOutAttack();
             GUI.backgroundColor = oldBg;
+        }
+
+        private void TrackActionMenuReveal(CharacterStats chooser)
+        {
+            if (chooser == _actionMenuChooser) return;
+            _actionMenuChooser = chooser;
+            _actionMenuRevealStart = Time.time;
+        }
+
+        // Boton con varias capas apiladas (sombra + borde blanco + cuerpo negro + acento rojo
+        // lateral) que entra deslizandose desde la izquierda con una desaceleracion marcada, en
+        // cascada segun "order" (cada boton entra un poco despues que el anterior) -- el gesto de
+        // los menus de Persona 5, adaptado a lo que da el IMGUI de Unity (sin cortes diagonales
+        // reales, pero con el mismo espiritu de capas llamativas). No es clickeable hasta que
+        // termina de entrar, para que la animacion se note.
+        private bool DrawP5Button(Rect target, string label, int order)
+        {
+            const float perStepDelay = 0.06f;
+            const float duration = 0.22f;
+            float t = Mathf.Clamp01((Time.time - _actionMenuRevealStart - order * perStepDelay) / duration);
+            if (t <= 0f) return false;
+
+            float eased = 1f - Mathf.Pow(1f - t, 3f);
+            float slide = (1f - eased) * (target.width + 40f);
+            var r = new Rect(target.x - slide, target.y, target.width, target.height);
+
+            DrawRect(new Rect(r.x + 4, r.y + 4, r.width, r.height), new Color(0f, 0f, 0f, 0.35f));
+            DrawRect(new Rect(r.x - 2, r.y - 2, r.width + 4, r.height + 4), Color.white);
+            DrawRect(r, P5Black);
+            DrawRect(new Rect(r.x, r.y, 8, r.height), P5Red);
+
+            bool clicked = t >= 1f && GUI.Button(r, "", GUIStyle.none);
+
+            var style = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold };
+            style.normal.textColor = Color.white;
+            GUI.Label(r, label.ToUpperInvariant(), style);
+
+            return clicked;
         }
 
         private void DrawQteOverlay(float panelX, float y, float panelW)
