@@ -45,6 +45,14 @@ namespace Gameplay
         public string CurrentTurnActorName { get; private set; }
         public bool CurrentTurnIsParty { get; private set; }
 
+        [Header("Ataque en Conjunto (se habilita si se rompe el aguante de TODOS los enemigos a la vez)")]
+        [Tooltip("Segundos que se espera a que el jugador presione el boton antes de que se pierda la oportunidad esta ronda.")]
+        public float allOutAttackDecisionTimeout = 6f;
+
+        // True mientras el juego esta esperando que el jugador decida usar (o no) el Ataque en
+        // Conjunto. La UI (CombatHUD) muestra el boton/aviso especial solo mientras esto es true.
+        public bool AllOutAttackReady { get; private set; }
+
         // (victoria, era jefe)
         public event Action<bool, bool> OnCombatFinished;
         public event Action OnCombatStarted;
@@ -60,11 +68,20 @@ namespace Gameplay
         // CUALQUIER golpe contra un enemigo (ataque basico o habilidad, no curacion): indice +
         // elemento de ese golpe. Para el efecto de shader elemental, que se ve en todos los golpes.
         public event Action<int, Element> OnEnemyElementalHit;
+        // Se le acaba de romper el aguante a este enemigo (indice): pierde su proximo turno.
+        public event Action<int> OnEnemyPoiseBroken;
+        // Se rompio el aguante de TODOS los enemigos a la vez: aparece el aviso de Ataque en Conjunto.
+        public event Action OnAllOutAttackReady;
+        // El jugador uso el Ataque en Conjunto (golpe dorado a todos los enemigos vivos a la vez).
+        public event Action OnAllOutAttackUsed;
 
         private CombatEngine _engine;
         private readonly System.Random _rng = new System.Random();
         private readonly Dictionary<CharacterStats, PartyAction> _queuedActions = new Dictionary<CharacterStats, PartyAction>();
         private int _chooserIndex;
+        private bool _allOutOfferedThisRound;
+        private bool _allOutTriggered;
+        private bool _allOutDeclined;
 
         // Crea una party nueva con las stats base y le aplica los niveles de mejora permanentes
         // comprados en runs anteriores. La llama DungeonManager al arrancar y cada vez que empieza
@@ -180,6 +197,22 @@ namespace Gameplay
             AdvanceChooser();
         }
 
+        // Boton "Ataque en Conjunto": solo tiene efecto mientras AllOutAttackReady es true (el
+        // aguante de TODOS los enemigos se acaba de romper a la vez). Ver OfferAllOutAttack().
+        public void TriggerAllOutAttack()
+        {
+            if (!AllOutAttackReady) return;
+            _allOutTriggered = true;
+        }
+
+        // El jugador ignora la oportunidad (o se deja pasar el tiempo): la ronda sigue normal, y
+        // los enemigos rotos van perdiendo su turno cuando les toque, como siempre.
+        public void DeclineAllOutAttack()
+        {
+            if (!AllOutAttackReady) return;
+            _allOutDeclined = true;
+        }
+
         private void AdvanceChooser()
         {
             while (_chooserIndex < Party.Count && !Party[_chooserIndex].IsAlive)
@@ -192,6 +225,7 @@ namespace Gameplay
         private IEnumerator ResolveRoundCoroutine()
         {
             IsResolvingRound = true;
+            _allOutOfferedThisRound = false;
             var order = _engine.BuildTurnOrder(_queuedActions);
 
             foreach (var (isParty, idx) in order)
@@ -210,6 +244,7 @@ namespace Gameplay
 
                 int[] partyHpBefore = Party.Select(p => p.HP).ToArray();
                 int[] enemyHpBefore = Enemies.Select(e => e.HP).ToArray();
+                bool[] enemyBrokenBefore = Enemies.Select(e => e.IsBroken).ToArray();
 
                 var turnLog = _engine.ExecuteTurn(isParty, idx, _queuedActions);
                 Log.AddRange(turnLog);
@@ -222,12 +257,22 @@ namespace Gameplay
                 Element hitElement = Element.None;
                 if (isSkillHit) hitElement = Party[idx].SkillElement;
                 else if (isParty && currentPartyAction != null && currentPartyAction.Type == ActionType.Attack) hitElement = Party[idx].AttackElement;
-                ReportHitFeedback(partyHpBefore, enemyHpBefore, isSkillHit, hitElement);
+                ReportHitFeedback(partyHpBefore, enemyHpBefore, enemyBrokenBefore, isSkillHit, hitElement);
 
                 // En cuanto la pelea queda decidida no se esperan mas turnos ni personajes: se corta
                 // la ronda ahi mismo en vez de seguir resolviendo al resto del orden de turnos.
                 if (_engine.AllEnemiesDefeated() || _engine.AllPartyDefeated())
                     break;
+
+                // Se rompio el aguante de TODOS los enemigos vivos a la vez (una sola oferta por
+                // ronda): se pausa para dejar que el jugador decida usar el Ataque en Conjunto.
+                if (!_allOutOfferedThisRound && _engine.AllEnemiesBroken())
+                {
+                    _allOutOfferedThisRound = true;
+                    yield return OfferAllOutAttack();
+                    if (_allOutTriggered)
+                        break; // el golpe en conjunto consume el resto de la ronda
+                }
             }
 
             CurrentTurnActorName = null;
@@ -268,11 +313,55 @@ namespace Gameplay
             action.QteSuccess = result.Value;
         }
 
+        // Pausa la ronda para ofrecer el Ataque en Conjunto: espera a que el jugador lo dispare (o
+        // lo ignore) o a que se acabe el tiempo, y si se usa aplica el golpe en conjunto a todos
+        // los enemigos vivos con el mismo feedback visual (pulso/dissolve/VFX) que un golpe normal.
+        private IEnumerator OfferAllOutAttack()
+        {
+            _allOutTriggered = false;
+            _allOutDeclined = false;
+            AllOutAttackReady = true;
+            Log.Add("¡Se rompe el aguante de TODOS los enemigos a la vez! Ataque en Conjunto disponible.");
+            OnAllOutAttackReady?.Invoke();
+
+            float t = 0f;
+            while (!_allOutTriggered && !_allOutDeclined && t < allOutAttackDecisionTimeout)
+            {
+                t += Time.deltaTime;
+                yield return null;
+            }
+            AllOutAttackReady = false;
+
+            if (!_allOutTriggered) yield break;
+
+            int[] enemyHpBeforeBurst = Enemies.Select(e => e.HP).ToArray();
+            int previousCount = enemyHpBeforeBurst.Length;
+
+            var burstLog = _engine.ExecuteAllOutAttack();
+            Log.AddRange(burstLog);
+            feedback?.OnAllOutAttack();
+
+            for (int i = 0; i < previousCount; i++)
+            {
+                int dmg = enemyHpBeforeBurst[i] - Enemies[i].HP;
+                if (dmg <= 0) continue;
+                OnEnemyDamaged?.Invoke(i);
+                if (enemyHpBeforeBurst[i] > 0 && Enemies[i].HP <= 0)
+                    OnEnemyDefeated?.Invoke(i);
+            }
+            for (int i = previousCount; i < Enemies.Count; i++)
+                OnEnemyAdded?.Invoke(i);
+
+            OnAllOutAttackUsed?.Invoke();
+            yield return new WaitForSeconds(0.6f);
+        }
+
         // Compara el HP de todos antes/despues del turno que se acaba de ejecutar: dispara el
-        // flash/sacudida de camara y avisa (por indice) que enemigo recibio dano o cayo, para que
-        // la escena de batalla (BattleStageController/EnemyView) anime el golpe o la disolucion
-        // de muerte. El motor de combate puro no sabe nada de esto.
-        private void ReportHitFeedback(int[] partyHpBefore, int[] enemyHpBefore, bool isSkillHit, Element hitElement)
+        // flash/sacudida de camara y avisa (por indice) que enemigo recibio dano, cayo o se le
+        // rompio el aguante, para que la escena de batalla (BattleStageController/EnemyView) anime
+        // el golpe, la disolucion de muerte o el flash de ruptura. El motor de combate puro no sabe
+        // nada de esto.
+        private void ReportHitFeedback(int[] partyHpBefore, int[] enemyHpBefore, bool[] enemyBrokenBefore, bool isSkillHit, Element hitElement)
         {
             for (int i = 0; i < Party.Count; i++)
             {
@@ -294,6 +383,8 @@ namespace Gameplay
                 OnEnemyDamaged?.Invoke(i);
                 OnEnemyElementalHit?.Invoke(i, hitElement);
                 if (isSkillHit) OnEnemySkillHit?.Invoke(i, hitElement);
+                if (!enemyBrokenBefore[i] && Enemies[i].IsBroken)
+                    OnEnemyPoiseBroken?.Invoke(i);
                 if (enemyHpBefore[i] > 0 && Enemies[i].HP <= 0)
                     OnEnemyDefeated?.Invoke(i);
             }

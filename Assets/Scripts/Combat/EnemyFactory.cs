@@ -13,6 +13,7 @@ namespace Combat
                 Attack = 9, Defense = 3, Speed = 6,
                 AttackElement = Element.Strike,
                 Weakness = Element.Fire, Resistance = Element.Ice,
+                MaxPoise = 30, Poise = 30,
             };
         }
 
@@ -24,6 +25,7 @@ namespace Combat
                 Attack = 7, Defense = 6, Speed = 3,
                 AttackElement = Element.Strike,
                 Weakness = Element.Strike, Resistance = Element.Pierce,
+                MaxPoise = 45, Poise = 45,
             };
         }
 
@@ -38,6 +40,7 @@ namespace Combat
                 Attack = 8, Defense = 2, Speed = 4,
                 AttackElement = Element.Strike,
                 Weakness = Element.Pierce, Resistance = Element.Strike,
+                MaxPoise = 35, Poise = 35,
             };
             slime.OnDeathSplit = () => new List<EnemyStats>
             {
@@ -55,6 +58,7 @@ namespace Combat
                 Attack = 5, Defense = 1, Speed = 5,
                 AttackElement = Element.Strike,
                 Weakness = Element.Pierce, Resistance = Element.Strike,
+                MaxPoise = 16, Poise = 16,
             };
         }
 
@@ -66,6 +70,7 @@ namespace Combat
                 Attack = 14, Defense = 8, Speed = 4,
                 AttackElement = Element.Strike,
                 Weakness = Element.Volt, Resistance = Element.Strike,
+                MaxPoise = 90, Poise = 90,
             };
         }
 

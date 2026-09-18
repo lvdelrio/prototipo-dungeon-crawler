@@ -31,6 +31,14 @@ namespace Gameplay
         // Indice de parante ocupado por cada entrada de _activeViews (misma posicion = mismo enemigo).
         private readonly List<int> _viewStandIndex = new List<int>();
 
+        // Camara activa de la escena de batalla; la usa EnemyHealthBarHUD para proyectar la
+        // posicion de cada EnemyView a coordenadas de pantalla (OnGUI) y dibujar sus barras ahi.
+        public Camera ActiveBattleCamera => _battleCamera;
+
+        public EnemyView GetEnemyView(int index) => (index >= 0 && index < _activeViews.Count) ? _activeViews[index] : null;
+
+        private static readonly Color AllOutBurstColor = new Color(1f, 0.9f, 0.35f);
+
         void Awake()
         {
             if (combatManager == null) return;
@@ -42,6 +50,8 @@ namespace Gameplay
             combatManager.OnEnemyAdded += HandleEnemyAdded;
             combatManager.OnEnemySkillHit += HandleEnemySkillHit;
             combatManager.OnEnemyElementalHit += HandleEnemyElementalHit;
+            combatManager.OnEnemyPoiseBroken += HandleEnemyPoiseBroken;
+            combatManager.OnAllOutAttackUsed += HandleAllOutAttackUsed;
         }
 
         private void HandleCombatStarted()
@@ -218,6 +228,28 @@ namespace Gameplay
 
             Quaternion facing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
             ElementalBurstEffect.Spawn(elementalBurstMaterial, view.transform.position, ElementColor(element), facing);
+        }
+
+        // Se le rompio el aguante a este enemigo: pulso mas fuerte con el borde en amarillo
+        // brillante (en vez del pulso naranja normal de un golpe comun), para que se note.
+        private void HandleEnemyPoiseBroken(int index)
+        {
+            if (index < 0 || index >= _activeViews.Count) return;
+            _activeViews[index]?.PlayBreakFlash();
+        }
+
+        // El jugador uso el Ataque en Conjunto: golpe dorado (VFX + pulso) en TODOS los enemigos
+        // activos a la vez, para que se sienta como un golpe de equipo y no un golpe mas.
+        private void HandleAllOutAttackUsed()
+        {
+            if (elementalBurstMaterial == null) return;
+            Quaternion facing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
+            foreach (var view in _activeViews)
+            {
+                if (view == null) continue;
+                view.PlayHitPulse();
+                ElementalBurstEffect.Spawn(elementalBurstMaterial, view.transform.position, AllOutBurstColor, facing);
+            }
         }
 
         private static Color ElementColor(Element element)

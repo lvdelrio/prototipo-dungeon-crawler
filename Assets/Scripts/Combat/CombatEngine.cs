@@ -40,6 +40,10 @@ namespace Combat
         // Costo en TP de la habilidad de Protector de proteger a todo el grupo (antes era gratis).
         public const int ProtectAllTpCost = 6;
 
+        // Multiplicador de dano del Ataque en Conjunto (se aplica a la suma de ATK de toda la
+        // party viva, y ese numero le pega IGUAL a cada enemigo -- como un golpe final de equipo).
+        public const float AllOutAttackMultiplier = 1.5f;
+
         public readonly List<CharacterStats> Party;
         public readonly List<EnemyStats> Enemies;
         private readonly Random _rng;
@@ -53,6 +57,14 @@ namespace Combat
 
         public bool AllEnemiesDefeated() => Enemies.All(e => !e.IsAlive);
         public bool AllPartyDefeated() => Party.All(p => !p.IsAlive);
+
+        // Se rompio el aguante de TODOS los enemigos vivos a la vez -> se habilita el Ataque en
+        // Conjunto. Con 0 enemigos vivos (no deberia pasar en medio de un combate) da false.
+        public bool AllEnemiesBroken()
+        {
+            var alive = Enemies.Where(e => e.IsAlive).ToList();
+            return alive.Count > 0 && alive.All(e => e.IsBroken);
+        }
 
         // Arma el orden de turnos de la ronda (por Velocidad descendente) y resetea la guardia de
         // todos antes de empezar. Se expone por separado de la ejecucion para poder resolver la
@@ -97,13 +109,42 @@ namespace Combat
         }
 
         // Resuelve una ronda completa de una sola vez (usado por tests/simulaciones donde no hace
-        // falta pausar turno a turno). Recibe una accion por cada personaje vivo.
+        // falta pausar turno a turno, ni ofrecer el Ataque en Conjunto). Recibe una accion por cada
+        // personaje vivo.
         public List<string> ResolveRound(Dictionary<CharacterStats, PartyAction> actions)
         {
             var order = BuildTurnOrder(actions);
             var log = new List<string>();
             foreach (var (isParty, idx) in order)
                 log.AddRange(ExecuteTurn(isParty, idx, actions));
+            return log;
+        }
+
+        // Toda la party viva golpea junta a CADA enemigo vivo por el mismo monto de dano (suma de
+        // ATK*AllOutAttackMultiplier de la party). Pensado para dispararse solo cuando
+        // AllEnemiesBroken() es true; al usarse, todos los enemigos golpeados recuperan su aguante
+        // (dejan de estar rotos) y siguen combatiendo normal desde la ronda siguiente.
+        public List<string> ExecuteAllOutAttack()
+        {
+            var log = new List<string>();
+            var aliveParty = Party.Where(p => p.IsAlive).ToList();
+            if (aliveParty.Count == 0) return log;
+
+            int totalDamage = 0;
+            foreach (var p in aliveParty)
+                totalDamage += (int)Math.Round(p.Attack * AllOutAttackMultiplier);
+            totalDamage = Math.Max(1, totalDamage);
+
+            foreach (var enemy in Enemies.Where(e => e.IsAlive).ToList())
+            {
+                ApplyDamageToEnemy(enemy, totalDamage, out _);
+                if (enemy.IsAlive)
+                {
+                    enemy.IsBroken = false;
+                    enemy.Poise = enemy.MaxPoise;
+                }
+            }
+            log.Add($"¡Ataque en conjunto! Toda la party golpea a la vez por {totalDamage} de daño a cada enemigo.");
             return log;
         }
 
@@ -134,9 +175,9 @@ namespace Combat
                     var target = PickAliveEnemy(action.TargetEnemyIndex);
                     if (target == null) break;
                     int dmg = ComputeDamageVsEnemy(actor.Attack, actor.AttackElement, target, out string note);
-                    ApplyDamageToEnemy(target, dmg);
+                    ApplyDamageToEnemy(target, dmg, out bool poiseBroke);
                     int regenAtk = RegenTpOnHit(actor);
-                    log.Add($"{actor.Name} ataca a {target.Name}: {dmg} de daño.{note}{(regenAtk > 0 ? $" (+{regenAtk} TP)" : "")}");
+                    log.Add($"{actor.Name} ataca a {target.Name}: {dmg} de daño.{note}{(poiseBroke ? " ¡Guardia rota!" : "")}{(regenAtk > 0 ? $" (+{regenAtk} TP)" : "")}");
                     break;
                 }
 
@@ -178,16 +219,16 @@ namespace Combat
                                 qteNote = " ¡QTE exitoso!";
                             }
                             int dmg = ComputeDamageVsEnemy((int)Math.Round(power), actor.SkillElement, target, out string note);
-                            ApplyDamageToEnemy(target, dmg);
+                            ApplyDamageToEnemy(target, dmg, out bool poiseBroke);
                             // Las habilidades NO regeneran TP (solo los ataques basicos, ver mas abajo).
-                            log.Add($"{actor.Name} usa {actor.SkillName} en {target.Name}: {dmg} de daño.{note}{qteNote}");
+                            log.Add($"{actor.Name} usa {actor.SkillName} en {target.Name}: {dmg} de daño.{note}{(poiseBroke ? " ¡Guardia rota!" : "")}{qteNote}");
                         }
                         else
                         {
                             int dmg = ComputeDamageVsEnemy(actor.Attack, actor.AttackElement, target, out string note);
-                            ApplyDamageToEnemy(target, dmg);
+                            ApplyDamageToEnemy(target, dmg, out bool poiseBroke);
                             int regenNoTp = RegenTpOnHit(actor);
-                            log.Add($"{actor.Name} no tiene TP, ataca normal a {target.Name}: {dmg} de daño.{note}{(regenNoTp > 0 ? $" (+{regenNoTp} TP)" : "")}");
+                            log.Add($"{actor.Name} no tiene TP, ataca normal a {target.Name}: {dmg} de daño.{note}{(poiseBroke ? " ¡Guardia rota!" : "")}{(regenNoTp > 0 ? $" (+{regenNoTp} TP)" : "")}");
                         }
                     }
                     break;
@@ -196,6 +237,15 @@ namespace Combat
 
         private void ExecuteEnemyAction(EnemyStats enemy, List<string> log)
         {
+            // Si le rompieron el aguante, pierde este turno (y se recupera para el siguiente).
+            if (enemy.IsBroken)
+            {
+                log.Add($"{enemy.Name} esta aturdido (guardia rota) y pierde su turno.");
+                enemy.IsBroken = false;
+                enemy.Poise = enemy.MaxPoise;
+                return;
+            }
+
             var aliveParty = Party.Where(p => p.IsAlive).ToList();
             if (aliveParty.Count == 0) return;
 
@@ -211,14 +261,27 @@ namespace Combat
             log.Add($"{enemy.Name} ataca a {target.Name}: {dmg} de daño.{(wasGuarding ? " (bloqueado con guardia)" : "")}");
         }
 
-        // Aplica dano a un enemigo y, si con eso muere y tiene OnDeathSplit configurado (p.ej. un
-        // Slime grande), lo reemplaza por sus versiones mas debiles -- hasta el tope MaxEnemies.
-        // El enemigo original queda "derrotado" en su lugar (no se borra de la lista: mantiene
-        // estables los indices que usan el resto de los sistemas).
-        private void ApplyDamageToEnemy(EnemyStats target, int dmg)
+        // Aplica dano a un enemigo (a su vida y, si esta vivo y no estaba ya roto, a su aguante) y,
+        // si con eso muere y tiene OnDeathSplit configurado (p.ej. un Slime grande), lo reemplaza
+        // por sus versiones mas debiles -- hasta el tope MaxEnemies. El enemigo original queda
+        // "derrotado" en su lugar (no se borra de la lista: mantiene estables los indices que usan
+        // el resto de los sistemas). poiseBroke sale en true si este golpe fue el que rompio el
+        // aguante (para poder anotarlo en el log del que llama).
+        private void ApplyDamageToEnemy(EnemyStats target, int dmg, out bool poiseBroke)
         {
+            poiseBroke = false;
             bool wasAlive = target.IsAlive;
             target.HP = Math.Max(0, target.HP - dmg);
+
+            if (target.IsAlive && !target.IsBroken && target.MaxPoise > 0)
+            {
+                target.Poise = Math.Max(0, target.Poise - dmg);
+                if (target.Poise <= 0)
+                {
+                    target.IsBroken = true;
+                    poiseBroke = true;
+                }
+            }
 
             if (wasAlive && !target.IsAlive && target.OnDeathSplit != null)
             {

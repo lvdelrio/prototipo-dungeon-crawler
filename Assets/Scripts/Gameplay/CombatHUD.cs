@@ -32,6 +32,15 @@ namespace Gameplay
 
         private QteManager QteManager => combatManager != null ? combatManager.qteManager : null;
 
+        // Ademas del boton, se puede "smashear" Espacio para el Ataque en Conjunto (mas estiloso
+        // que solo un click) -- se chequea en Update (no en OnGUI) para no disparar varias veces
+        // por el mismo frame.
+        void Update()
+        {
+            if (combatManager != null && combatManager.AllOutAttackReady && Input.GetKeyDown(KeyCode.Space))
+                combatManager.TriggerAllOutAttack();
+        }
+
         void OnGUI()
         {
             if (combatManager == null || !combatManager.IsActive)
@@ -81,7 +90,7 @@ namespace Gameplay
             foreach (var enemy in combatManager.Enemies)
             {
                 bool isTurn = combatManager.IsResolvingRound && !combatManager.CurrentTurnIsParty && combatManager.CurrentTurnActorName == enemy.Name;
-                string status = enemy.IsAlive ? $"HP {enemy.HP}/{enemy.MaxHP}" : "derrotado";
+                string status = enemy.IsAlive ? $"HP {enemy.HP}/{enemy.MaxHP}{(enemy.IsBroken ? " [ROTO: pierde su turno]" : "")}" : "derrotado";
                 string inspect = _inspecting
                     ? $"  |  Debil: {ElementLabel(enemy.Weakness)}  Resiste: {ElementLabel(enemy.Resistance)}  DEF {enemy.Defense}  VEL {enemy.Speed}"
                     : "";
@@ -106,7 +115,12 @@ namespace Gameplay
 
             y += 12;
 
-            if (QteManager != null && QteManager.IsActive)
+            if (combatManager.AllOutAttackReady)
+            {
+                DrawAllOutAttackBanner(panelX, y, panelW);
+                y += 90;
+            }
+            else if (QteManager != null && QteManager.IsActive)
             {
                 DrawQteOverlay(panelX, y, panelW);
                 y += 90;
@@ -281,6 +295,34 @@ namespace Gameplay
                 case Element.Pierce: return "Perforación";
                 default: return "Ninguno";
             }
+        }
+
+        // Banner grande y llamativo ("hazlo estiloso"): se rompio el aguante de TODOS los
+        // enemigos a la vez. Pulsa entre dorado y blanco y ofrece el boton (o Espacio) para
+        // lanzar el golpe de equipo antes de que se acabe el tiempo.
+        private void DrawAllOutAttackBanner(float panelX, float y, float panelW)
+        {
+            float pulse = 0.5f + 0.5f * Mathf.Sin(Time.time * 8f);
+            Color glow = Color.Lerp(new Color(0.85f, 0.65f, 0.1f), new Color(1f, 0.95f, 0.55f), pulse);
+
+            DrawRect(new Rect(panelX + 10, y, panelW - 20, 80), new Color(0.08f, 0.06f, 0.02f, 0.9f));
+            DrawRect(new Rect(panelX + 10, y, panelW - 20, 4), glow);
+            DrawRect(new Rect(panelX + 10, y + 76, panelW - 20, 4), glow);
+
+            var oldColor = GUI.color;
+            var bigStyle = new GUIStyle(GUI.skin.label) { fontSize = 20, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
+            bigStyle.normal.textColor = glow;
+            GUI.Label(new Rect(panelX + 10, y + 6, panelW - 20, 28), "¡TODOS LOS ENEMIGOS ATURDIDOS!", bigStyle);
+            GUI.color = oldColor;
+
+            GUI.Label(new Rect(panelX + 20, y + 34, panelW - 260, 24), "La party puede lanzar un golpe en conjunto ahora mismo.");
+
+            var buttonStyle = new GUIStyle(GUI.skin.button) { fontStyle = FontStyle.Bold };
+            var oldBg = GUI.backgroundColor;
+            GUI.backgroundColor = glow;
+            if (GUI.Button(new Rect(panelX + panelW - 230, y + 30, 210, 32), "¡ATAQUE EN CONJUNTO! (Espacio)", buttonStyle))
+                combatManager.TriggerAllOutAttack();
+            GUI.backgroundColor = oldBg;
         }
 
         private void DrawQteOverlay(float panelX, float y, float panelW)

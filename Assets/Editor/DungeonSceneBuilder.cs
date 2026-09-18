@@ -77,6 +77,8 @@ public static class DungeonSceneBuilder
         var dialogueManager = dialogueGo.AddComponent<DialogueManager>();
         var dialogueHudGo = new GameObject("DialogueHUD");
         var dialogueHud = dialogueHudGo.AddComponent<DialogueHUD>();
+        var enemyBarsGo = new GameObject("EnemyHealthBarHUD");
+        var enemyBarsHud = enemyBarsGo.AddComponent<EnemyHealthBarHUD>();
 
         manager.settings = settings;
         manager.eventTable = eventTable;
@@ -105,6 +107,8 @@ public static class DungeonSceneBuilder
         battleStage.elementalBurstMaterial = GetOrCreateElementalBurstMaterial();
         playerController.dialogueManager = dialogueManager;
         dialogueHud.dialogueManager = dialogueManager;
+        enemyBarsHud.combatManager = combatManager;
+        enemyBarsHud.battleStage = battleStage;
 
         if (!AssetDatabase.IsValidFolder("Assets/Scenes"))
             AssetDatabase.CreateFolder("Assets", "Scenes");

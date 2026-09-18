@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -113,20 +114,66 @@ public static class BattleBatchValidator
                     Check("Los 6 frames del efecto de impacto quedaron asignados", _battleStage.hitImpactFrames != null && _battleStage.hitImpactFrames.Length == 6 && _battleStage.hitImpactFrames[0] != null);
                     Check("El material del efecto elemental (shader) quedo asignado", _battleStage.elementalBurstMaterial != null);
 
-                    // Dispara la disolucion real de un enemigo (mismo codigo que usa una muerte de
-                    // verdad), el efecto de impacto de habilidad (sprite) y el efecto elemental
-                    // (shader) -- mismo codigo que un golpe real -- para poder fotografiar los tres
-                    // a mitad de camino.
-                    views[0].PlayDeathDissolve(null);
-                    Quaternion camRot = battleCam != null ? battleCam.transform.rotation : Quaternion.identity;
-                    if (_battleStage.hitImpactFrames != null && _battleStage.hitImpactFrames.Length > 0)
+                    TestPoiseBreakSetup();
+                    SetPhase(10);
+                }
+                break;
+
+            // Fuerza el aguante roto de TODOS los enemigos (ver TestPoiseBreakSetup) y espera a que
+            // CombatManager ofrezca el Ataque en Conjunto (AllOutAttackReady) tras el primer turno
+            // de la ronda, despues de que la party someta su accion.
+            case 10:
+                if (elapsed > PhaseTimeout)
+                {
+                    Check("Se rompio el aguante de todos los enemigos y aparecio el aviso de Ataque en Conjunto", false, $"paso {PhaseTimeout}s");
+                    Finish();
+                    return;
+                }
+                if (_combatManager.AllOutAttackReady)
+                {
+                    Check("AllOutAttackReady se activa cuando todos los enemigos quedan rotos a la vez", true);
+                    _combatManager.TriggerAllOutAttack();
+                    SetPhase(11);
+                }
+                break;
+
+            // Espera a que se resuelva el golpe en conjunto (y el resto de la ronda) y confirma que
+            // los enemigos recibieron dano, dejaron de estar rotos y el log quedo con el mensaje.
+            case 11:
+                if (elapsed > PhaseTimeout)
+                {
+                    Check("El Ataque en Conjunto se resolvio a tiempo", false, $"paso {PhaseTimeout}s");
+                    Finish();
+                    return;
+                }
+                if (!_combatManager.AllOutAttackReady && !_combatManager.IsResolvingRound)
+                {
+                    Check("Tras el Ataque en Conjunto, AllOutAttackReady vuelve a false", !_combatManager.AllOutAttackReady);
+                    Check("Tras el Ataque en Conjunto, ningun enemigo sigue con el aguante roto",
+                        _combatManager.Enemies.Where(e => e.IsAlive).All(e => !e.IsBroken));
+                    Check("Todos los enemigos recibieron dano del golpe en conjunto",
+                        _combatManager.Enemies.All(e => e.HP < e.MaxHP), string.Join(",", _combatManager.Enemies.Select(e => $"{e.Name}={e.HP}/{e.MaxHP}")));
+                    Check("El log de combate registra el Ataque en Conjunto",
+                        _combatManager.Log.Any(l => l.Contains("Ataque en conjunto")));
+
+                    var views2 = Object.FindObjectsOfType<EnemyView>();
+                    Check("Las representaciones visuales de los enemigos siguen en pie tras el golpe en conjunto", views2.Length == _combatManager.Enemies.Count(e => e.IsAlive));
+
+                    // Ahora si: dispara la disolucion real de un enemigo (mismo codigo que una
+                    // muerte de verdad), el efecto de impacto de habilidad (sprite) y el efecto
+                    // elemental (shader) -- para poder fotografiar los tres a mitad de camino.
+                    var battleCamGo2 = GameObject.Find("BattleCamera");
+                    var battleCam2 = battleCamGo2 != null ? battleCamGo2.GetComponent<Camera>() : null;
+                    Quaternion camRot = battleCam2 != null ? battleCam2.transform.rotation : Quaternion.identity;
+                    if (views2.Length > 0) views2[0].PlayDeathDissolve(null);
+                    if (_battleStage.hitImpactFrames != null && _battleStage.hitImpactFrames.Length > 0 && views2.Length > 0)
                     {
-                        var pos = views[0].transform.position + (views.Length > 1 ? Vector3.zero : new Vector3(1.6f, 0.3f, -0.5f));
+                        var pos = views2[0].transform.position + (views2.Length > 1 ? Vector3.zero : new Vector3(1.6f, 0.3f, -0.5f));
                         HitImpactEffect.Spawn(_battleStage.hitImpactFrames, pos, new Color(1f, 0.6f, 0.3f), camRot);
                     }
-                    if (_battleStage.elementalBurstMaterial != null && views.Length > 1)
+                    if (_battleStage.elementalBurstMaterial != null && views2.Length > 1)
                     {
-                        ElementalBurstEffect.Spawn(_battleStage.elementalBurstMaterial, views[1].transform.position, new Color(1f, 0.35f, 0.12f), camRot);
+                        ElementalBurstEffect.Spawn(_battleStage.elementalBurstMaterial, views2[1].transform.position, new Color(1f, 0.35f, 0.12f), camRot);
                     }
                     SetPhase(2);
                 }
@@ -245,6 +292,27 @@ public static class BattleBatchValidator
         var backTo = _combatManager.GetChooser();
         Check("Volver deja elegir de nuevo al mismo personaje de antes", backTo == first, $"esperado={first?.Name} real={backTo?.Name}");
         Check("Volver deshace la accion elegida (CanGoBack vuelve a false)", !_combatManager.CanGoBack);
+    }
+
+    // Fuerza el aguante roto de TODOS los enemigos activos (en vez de tener que grindear golpes
+    // reales durante el test) y somete Guardia para toda la party viva, lo que dispara la
+    // resolucion de ronda -- ahi CombatManager deberia detectar AllEnemiesBroken() y ofrecer el
+    // Ataque en Conjunto (fase 10). Se sube el HP y se baja la Velocidad de los enemigos a 0 para
+    // que ninguno actue antes que la party (no se recuperarian solos) ni muera con el golpe de
+    // prueba, dejando limpio el resto del test de disolucion/impacto que sigue despues.
+    private static void TestPoiseBreakSetup()
+    {
+        foreach (var e in _combatManager.Enemies)
+        {
+            e.MaxHP = 9999;
+            e.HP = 9999;
+            e.Speed = 0;
+            e.MaxPoise = 10;
+            e.Poise = 0;
+            e.IsBroken = true;
+        }
+        foreach (var p in _combatManager.Party.Where(p => p.IsAlive))
+            _combatManager.SubmitAction(new Combat.PartyAction { Actor = p, Type = Combat.ActionType.Guard });
     }
 
     private static void TakeScreenshot()

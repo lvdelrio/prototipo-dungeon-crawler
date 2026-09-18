@@ -19,6 +19,15 @@ namespace Gameplay
 
         private static readonly int ColorId = Shader.PropertyToID("_Color");
         private static readonly int DissolveAmountId = Shader.PropertyToID("_DissolveAmount");
+        private static readonly int EdgeColorId = Shader.PropertyToID("_EdgeColor");
+        private static readonly Color DefaultEdgeColor = new Color(1f, 0.55f, 0.1f, 1f);
+        private static readonly Color BreakEdgeColor = new Color(1f, 0.95f, 0.25f, 1f);
+
+        // Posicion (mundo) justo arriba de la cabeza del enemigo, para anclar ahi la barra de
+        // vida/aguante flotante (EnemyHealthBarHUD) sin importar el tamano/escala de la especie.
+        public Vector3 TopAnchor => _renderer != null
+            ? new Vector3(transform.position.x, _renderer.bounds.max.y + 0.25f, transform.position.z)
+            : transform.position + Vector3.up;
 
         public void Initialize(EnemyStats stats, Renderer renderer, Color baseColor)
         {
@@ -27,6 +36,7 @@ namespace Gameplay
             _props = new MaterialPropertyBlock();
             _props.SetColor(ColorId, baseColor);
             _props.SetFloat(DissolveAmountId, 0f);
+            _props.SetColor(EdgeColorId, DefaultEdgeColor);
             _renderer.SetPropertyBlock(_props);
         }
 
@@ -66,6 +76,43 @@ namespace Gameplay
                 yield return null;
             }
             SetDissolve(0f);
+            _activeRoutine = null;
+        }
+
+        // Pulso mas fuerte y con el borde en amarillo brillante (en vez del naranja normal), para
+        // que romper el "aguante" de un enemigo se note claramente distinto de un golpe comun.
+        public void PlayBreakFlash()
+        {
+            if (_activeRoutine != null) StopCoroutine(_activeRoutine);
+            _activeRoutine = StartCoroutine(BreakFlashRoutine());
+        }
+
+        private IEnumerator BreakFlashRoutine()
+        {
+            const float peak = 0.55f;
+            const float upTime = 0.07f;
+            const float holdTime = 0.12f;
+            const float downTime = 0.3f;
+
+            _props.SetColor(EdgeColorId, BreakEdgeColor);
+            float t = 0f;
+            while (t < upTime)
+            {
+                t += Time.deltaTime;
+                SetDissolve(Mathf.Lerp(0f, peak, t / upTime));
+                yield return null;
+            }
+            yield return new WaitForSeconds(holdTime);
+            t = 0f;
+            while (t < downTime)
+            {
+                t += Time.deltaTime;
+                SetDissolve(Mathf.Lerp(peak, 0f, t / downTime));
+                yield return null;
+            }
+            SetDissolve(0f);
+            _props.SetColor(EdgeColorId, DefaultEdgeColor);
+            if (_renderer != null) _renderer.SetPropertyBlock(_props);
             _activeRoutine = null;
         }
 

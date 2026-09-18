@@ -28,6 +28,12 @@ namespace Gameplay
         public Color healFlashColor = new Color(0.35f, 1f, 0.55f, 0.3f);
         public float healFlashDuration = 0.3f;
 
+        [Header("Flash del Ataque en Conjunto (mas fuerte y dorado)")]
+        public Color allOutFlashColor = new Color(1f, 0.85f, 0.25f, 0.6f);
+        public float allOutFlashDuration = 0.35f;
+        public float allOutShakeDuration = 0.35f;
+        public float allOutShakeMagnitude = 0.18f;
+
         private Material _flashMat;
         private float _flashIntensity;
         private Color _flashColor = Color.white;
@@ -48,6 +54,8 @@ namespace Gameplay
         public void OnPartyHit(int damage) => Impact(partyHitFlashColor, partyHitFlashDuration, partyHitShakeDuration, partyHitShakeMagnitude);
 
         public void OnHeal(int amount) => Flash(healFlashColor, healFlashDuration);
+
+        public void OnAllOutAttack() => Impact(allOutFlashColor, allOutFlashDuration, allOutShakeDuration, allOutShakeMagnitude);
 
         private void Impact(Color flashColor, float flashDuration, float shakeDuration, float shakeMagnitude)
         {
