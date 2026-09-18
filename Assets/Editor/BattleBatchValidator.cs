@@ -337,25 +337,41 @@ public static class BattleBatchValidator
 
     // Confirma que la mazmorra tiene su sistema de particulas de ambiente activo apenas arranca
     // Play Mode (se configura solo, en su propio Awake/LateUpdate, sin que este test lo dispare).
+    // No alcanza con confirmar que el componente existe (eso paso incluso con el bug real: el
+    // sistema quedaba "reproduciendose" pero nunca emitia ninguna particula porque arrancaba a
+    // jugar con Play On Awake ANTES de terminar de configurarse). Se fuerza un paso de simulacion
+    // con Simulate() y se chequea particleCount > 0 para confirmar que de verdad emite algo.
     private static void TestAmbientParticles()
     {
         var ambient = Object.FindObjectOfType<AmbientParticles>();
         if (!Check("AmbientParticles presente en la escena de mazmorra", ambient != null)) return;
-        var ps = ambient.GetComponent<ParticleSystem>();
-        Check("AmbientParticles tiene su propio ParticleSystem", ps != null);
-        Check("El ParticleSystem de ambiente esta reproduciendose", ps != null && ps.isPlaying);
+        var ps = ambient.GetComponentInChildren<ParticleSystem>();
+        if (!Check("AmbientParticles tiene su propio ParticleSystem (hijo)", ps != null)) return;
+        Check("El ParticleSystem de ambiente esta reproduciendose", ps.isPlaying);
+
+        ps.Simulate(1.5f, true, false);
+        Check("el ambiente realmente emite particulas tras un rato (no se queda en 0)", ps.particleCount > 0, $"particleCount={ps.particleCount}");
     }
 
-    // Confirma que ElementalParticleEffect.Spawn crea un ParticleSystem real para cada elemento
-    // (la config especifica de cada uno -- color/velocidad/forma -- ya se prueba a ojo jugando).
+    // Confirma que ElementalParticleEffect.Spawn no solo crea un ParticleSystem, sino que la
+    // rafaga configurada para cada elemento realmente emite particulas (particleCount > 0) --
+    // esto es lo que detecta el bug real de "Play On Awake" antes de terminar de configurarse.
     private static void TestElementalParticles()
     {
         foreach (Combat.Element element in System.Enum.GetValues(typeof(Combat.Element)))
         {
-            int before = Object.FindObjectsOfType<ParticleSystem>().Length;
+            var before = new System.Collections.Generic.HashSet<ParticleSystem>(Object.FindObjectsOfType<ParticleSystem>());
             ElementalParticleEffect.Spawn(Vector3.zero, element);
-            int after = Object.FindObjectsOfType<ParticleSystem>().Length;
-            Check($"ElementalParticleEffect.Spawn crea un ParticleSystem para {element}", after == before + 1, $"antes={before} despues={after}");
+
+            ParticleSystem created = null;
+            foreach (var ps in Object.FindObjectsOfType<ParticleSystem>())
+            {
+                if (!before.Contains(ps)) { created = ps; break; }
+            }
+            if (!Check($"ElementalParticleEffect.Spawn crea un ParticleSystem para {element}", created != null)) continue;
+
+            created.Simulate(0.02f, true, false);
+            Check($"la rafaga de {element} realmente emite particulas (no se queda en 0)", created.particleCount > 0, $"particleCount={created.particleCount}");
         }
     }
 

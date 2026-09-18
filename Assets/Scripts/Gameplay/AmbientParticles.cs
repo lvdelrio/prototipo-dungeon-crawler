@@ -21,8 +21,17 @@ namespace Gameplay
 
         void Awake()
         {
-            _ps = gameObject.AddComponent<ParticleSystem>();
-            var renderer = gameObject.GetComponent<ParticleSystemRenderer>();
+            // El sistema de particulas real vive en un HIJO que arranca INACTIVO: si se agregara
+            // el componente ya activo, "Play On Awake" (true por defecto) lo haria empezar a
+            // reproducirse YA MISMO con la config de fabrica (particulas blancas gigantes en cono)
+            // antes de terminar de aplicar el bioma -- quedaba visualmente mal o de plano invisible
+            // segun el timing. Configurar todo con el hijo inactivo y recien ahi activarlo evita esto.
+            var psGo = new GameObject("AmbientParticleSystem");
+            psGo.transform.SetParent(transform, false);
+            psGo.SetActive(false);
+
+            _ps = psGo.AddComponent<ParticleSystem>();
+            var renderer = psGo.GetComponent<ParticleSystemRenderer>();
             renderer.material = ParticleTextureFactory.SharedMaterial;
 
             var main = _ps.main;
@@ -33,12 +42,16 @@ namespace Gameplay
 
             var shape = _ps.shape;
             shape.shapeType = ParticleSystemShapeType.Box;
-            shape.scale = new Vector3(10f, 4f, 10f);
+            // Ancho/profundidad cerca del tamano real de un pasillo (DungeonSettings.cellSize=4),
+            // para que la mayoria del volumen quede en el aire caminable y no adentro de paredes.
+            shape.scale = new Vector3(3.5f, 2.6f, 3.5f);
 
             var vel = _ps.velocityOverLifetime;
             vel.enabled = true;
 
             ApplyBiome(Biome.Dust, false);
+
+            psGo.SetActive(true);
             _ps.Play();
         }
 
@@ -70,36 +83,36 @@ namespace Gameplay
             switch (biome)
             {
                 case Biome.Leaves:
-                    main.startColor = new Color(0.45f, 0.62f, 0.22f, 0.85f);
+                    main.startColor = new Color(0.5f, 0.68f, 0.24f, 0.95f);
                     main.startSpeed = new ParticleSystem.MinMaxCurve(0.15f, 0.4f);
-                    main.startSize = new ParticleSystem.MinMaxCurve(0.06f, 0.14f);
+                    main.startSize = new ParticleSystem.MinMaxCurve(0.14f, 0.28f);
                     main.startLifetime = new ParticleSystem.MinMaxCurve(6f, 10f);
                     main.gravityModifier = 0.06f;
-                    emission.rateOverTime = 5f;
+                    emission.rateOverTime = 8f;
                     vel.x = new ParticleSystem.MinMaxCurve(-0.15f, 0.15f);
                     vel.y = new ParticleSystem.MinMaxCurve(0f, 0f);
                     vel.z = new ParticleSystem.MinMaxCurve(-0.15f, 0.15f);
                     break;
 
                 case Biome.Embers:
-                    main.startColor = new Color(1f, 0.45f, 0.12f, 0.9f);
+                    main.startColor = new Color(1f, 0.48f, 0.14f, 1f);
                     main.startSpeed = new ParticleSystem.MinMaxCurve(0.3f, 0.7f);
-                    main.startSize = new ParticleSystem.MinMaxCurve(0.03f, 0.07f);
+                    main.startSize = new ParticleSystem.MinMaxCurve(0.06f, 0.13f);
                     main.startLifetime = new ParticleSystem.MinMaxCurve(2.5f, 4f);
                     main.gravityModifier = -0.04f; // suben, como brasas
-                    emission.rateOverTime = intense ? 26f : 12f;
+                    emission.rateOverTime = intense ? 30f : 16f;
                     vel.x = new ParticleSystem.MinMaxCurve(-0.1f, 0.1f);
                     vel.y = new ParticleSystem.MinMaxCurve(0f, 0f);
                     vel.z = new ParticleSystem.MinMaxCurve(-0.1f, 0.1f);
                     break;
 
                 default: // Dust
-                    main.startColor = new Color(0.82f, 0.8f, 0.72f, 0.22f);
+                    main.startColor = new Color(0.88f, 0.85f, 0.75f, 0.45f);
                     main.startSpeed = new ParticleSystem.MinMaxCurve(0.05f, 0.15f);
-                    main.startSize = new ParticleSystem.MinMaxCurve(0.02f, 0.05f);
+                    main.startSize = new ParticleSystem.MinMaxCurve(0.05f, 0.11f);
                     main.startLifetime = new ParticleSystem.MinMaxCurve(5f, 8f);
                     main.gravityModifier = 0f;
-                    emission.rateOverTime = 6f;
+                    emission.rateOverTime = 10f;
                     vel.x = new ParticleSystem.MinMaxCurve(-0.05f, 0.05f);
                     vel.y = new ParticleSystem.MinMaxCurve(0f, 0f);
                     vel.z = new ParticleSystem.MinMaxCurve(-0.05f, 0.05f);

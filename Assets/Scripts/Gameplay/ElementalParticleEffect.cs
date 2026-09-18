@@ -14,6 +14,13 @@ namespace Gameplay
         public static void Spawn(Vector3 worldPosition, Element element)
         {
             var go = new GameObject($"ElementalParticles_{element}");
+            // Arranca INACTIVO: si el GameObject ya estuviera activo, AddComponent<ParticleSystem>
+            // dispara su OnEnable al toque y "Play On Awake" (true por defecto) lo hace empezar a
+            // reproducirse YA MISMO con la configuracion de fabrica (sin la rafaga que se arma mas
+            // abajo). Como esa rafaga esta programada justo en el instante 0, el sistema ya habia
+            // pasado ese instante para cuando se la configuraba -- se perdia entera, sin ningun
+            // error visible (el componente existia igual, solo que nunca emitia nada).
+            go.SetActive(false);
             go.transform.position = worldPosition;
 
             var ps = go.AddComponent<ParticleSystem>();
@@ -25,6 +32,8 @@ namespace Gameplay
             var main = ps.main;
             main.loop = false;
             main.playOnAwake = false;
+
+            go.SetActive(true);
             ps.Play();
 
             float life = main.startLifetime.constantMax;
