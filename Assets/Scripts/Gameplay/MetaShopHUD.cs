@@ -1,4 +1,5 @@
 using UnityEngine;
+using Combat;
 using Meta;
 
 namespace Gameplay
@@ -22,7 +23,7 @@ namespace Gameplay
             var meta = dungeonManager.Meta;
             if (meta == null) return;
 
-            const int panelX = 40, panelY = 30, panelW = 960, panelH = 640;
+            const int panelX = 40, panelY = 30, panelW = 960, panelH = 760;
             GUI.Box(new Rect(panelX, panelY, panelW, panelH), "");
 
             float y = panelY + 10;
@@ -93,6 +94,30 @@ namespace Gameplay
             GUI.Label(new Rect(panelX + 20, y, panelW - 40, 40),
                 "El Mapa revela de golpe todo el piso actual (tecla M). El Perforador abre un paso permanente en la pared que tengas enfrente, si hay algo real detras (tecla P).");
             y += 56;
+
+            GUI.Label(new Rect(panelX + 20, y, panelW - 40, 20), "Accesorios (se equipan luego desde el menú de pausa, tecla I):");
+            y += 26;
+            foreach (var item in EquipmentCatalog.All)
+            {
+                bool owned = meta.OwnsItem(item.Id);
+                GUI.Label(new Rect(panelX + 20, y, 500, 22), $"{item.Name} - {item.Description}");
+                if (owned)
+                {
+                    GUI.Label(new Rect(panelX + 540, y, 180, 22), "Ya comprado");
+                }
+                else
+                {
+                    GUI.enabled = meta.BankedPoints >= item.Cost;
+                    if (GUI.Button(new Rect(panelX + 540, y, 180, 22), $"Comprar ({item.Cost}p)"))
+                    {
+                        meta.TryPurchaseItem(item.Id);
+                        MetaSaveService.Save(meta);
+                    }
+                    GUI.enabled = true;
+                }
+                y += 26;
+            }
+            y += 12;
 
             if (GUI.Button(new Rect(panelX + 20, y, 240, 38), "Comenzar nueva run"))
             {

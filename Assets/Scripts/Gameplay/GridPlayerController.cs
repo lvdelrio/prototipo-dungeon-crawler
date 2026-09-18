@@ -8,6 +8,7 @@ namespace Gameplay
     {
         public DungeonManager dungeonManager;
         public DialogueManager dialogueManager;
+        public PauseMenuManager pauseMenu;
         public float moveDuration = 0.18f;
         public float turnDuration = 0.12f;
 
@@ -52,6 +53,16 @@ namespace Gameplay
             if (_busy || dungeonManager == null) return;
             if (dungeonManager.IsCombatActive || dungeonManager.IsGameOverShopActive) return; // congelado en combate o en la tienda post-derrota
             if (dialogueManager != null && dialogueManager.IsActive) return; // congelado mientras hay un dialogo en pantalla
+
+            // El menu de pausa (Codex/Equipamiento/Formacion/Guardar) solo se puede abrir "en modo
+            // caminar" -- no en combate, dialogo o la tienda post-run (ya cubierto por los checks
+            // de arriba) -- y mientras esta abierto, el jugador tambien queda congelado.
+            if (pauseMenu != null && Input.GetKeyDown(KeyCode.I) && !pauseMenu.IsOpen) { pauseMenu.Open(); return; }
+            if (pauseMenu != null && pauseMenu.IsOpen)
+            {
+                if (Input.GetKeyDown(KeyCode.I) || Input.GetKeyDown(KeyCode.Escape)) pauseMenu.Close();
+                return;
+            }
 
             if (Input.GetKeyDown(KeyCode.M)) { dungeonManager.TryUseMap(); return; }
             if (Input.GetKeyDown(KeyCode.P)) { dungeonManager.TryUseDrill(_x, _y, _facing); return; }

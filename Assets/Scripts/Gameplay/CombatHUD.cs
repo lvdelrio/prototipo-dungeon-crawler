@@ -14,7 +14,6 @@ namespace Gameplay
         private bool _wasActive;
         private bool _inspecting;
         private bool _showingAbilities;
-        private bool _showingFormation;
 
         // Numeros de dano/curacion flotantes: se detectan comparando el HP visto en el frame
         // anterior contra el actual (asi el motor de combate puro no necesita saber nada de UI).
@@ -49,7 +48,6 @@ namespace Gameplay
                 _pendingType = null;
                 _wasActive = false;
                 _showingAbilities = false;
-                _showingFormation = false;
                 return;
             }
 
@@ -149,27 +147,11 @@ namespace Gameplay
                         combatManager.GoToPreviousChooser();
                         _pendingType = null;
                         _showingAbilities = false;
-                        _showingFormation = false;
                     }
                     GUI.enabled = true;
                     y += 24;
 
-                    if (_showingFormation)
-                    {
-                        GUI.Label(new Rect(panelX + 20, y, 500, 20), "Formación (3 y 3): elegí quién va al frente o al fondo.");
-                        y += 22;
-                        float fx = panelX + 20;
-                        foreach (var member in combatManager.Party)
-                        {
-                            string label = $"{member.Name}\n[{(member.IsFrontRow ? "FRENTE" : "fondo")}]";
-                            if (GUI.Button(new Rect(fx, y, 110, 40), label))
-                                combatManager.SetFrontRow(member, !member.IsFrontRow);
-                            fx += 116;
-                        }
-                        if (GUI.Button(new Rect(panelX + 20, y + 46, 100, 24), "Cerrar"))
-                            _showingFormation = false;
-                    }
-                    else if (_showingAbilities)
+                    if (_showingAbilities)
                     {
                         // Mismo lugar que el boton "Habilidades" (mover lo menos posible): solo las
                         // habilidades de ESTE personaje, cada una con su costo de TP y su boton.
@@ -214,9 +196,6 @@ namespace Gameplay
                             combatManager.AutoAttackRemaining();
                             _pendingType = null;
                         }
-
-                        if (GUI.Button(new Rect(panelX + 620, y, 120, 26), "Formación"))
-                            _showingFormation = true;
                     }
                     else if (_pendingType == ActionType.Skill && chooser.IsHealSkill)
                     {

@@ -6,6 +6,7 @@ namespace Gameplay
     {
         public DungeonManager dungeonManager;
         public GridPlayerController player;
+        public PauseMenuManager pauseMenu;
 
         private string _lastMessage = "";
         private string _validationResult = "";
@@ -15,14 +16,15 @@ namespace Gameplay
         void OnGUI()
         {
             if (dungeonManager == null || player == null) return;
-            // Se esconde durante el combate y en la pantalla de tienda/mejoras post-run: en ambos
-            // casos hay otro panel mas importante que no debe quedar tapado.
+            // Se esconde durante el combate, la pantalla de tienda/mejoras post-run y el menu de
+            // pausa: en todos los casos hay otro panel mas importante que no debe quedar tapado.
             if (dungeonManager.IsCombatActive || dungeonManager.IsGameOverShopActive) return;
+            if (pauseMenu != null && pauseMenu.IsOpen) return;
 
             GUI.Box(new Rect(10, 10, 460, 210), "");
             GUI.Label(new Rect(20, 15, 440, 20),
                 $"Piso: {dungeonManager.CurrentFloorIndex} | Celda: ({player.CellX},{player.CellY}) | Mirando: {player.Facing}");
-            GUI.Label(new Rect(20, 35, 440, 40), "WASD: mover/strafe | flechas izq/der: girar | Espacio: interactuar | Tab: modo mapa\nM: usar Mapa | P: usar Perforador | T: dialogo DEMO (taberna de prueba)");
+            GUI.Label(new Rect(20, 35, 440, 40), "WASD: mover/strafe | flechas izq/der: girar | Espacio: interactuar | Tab: modo mapa\nM: usar Mapa | P: usar Perforador | I: menú de pausa | T: dialogo DEMO (taberna de prueba)");
             GUI.Label(new Rect(20, 75, 440, 40), $"Ultimo evento: {_lastMessage}");
             GUI.Label(new Rect(20, 115, 440, 20), $"Peligro acumulado: {dungeonManager.CurrentWalkingCounter} / {dungeonManager.CurrentEncounterThreshold} (limite oculto real en el juego; visible aca solo para debug)");
             if (dungeonManager.Meta != null)

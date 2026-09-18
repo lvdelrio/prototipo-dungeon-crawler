@@ -13,6 +13,11 @@ namespace DungeonGen
         // estaban ocupadas por otro elemento y hubo que reubicar el switch o el punto de llegada).
         public int SwitchX, SwitchY;
         public int LandingX, LandingY;
+
+        // Si no es null/vacio, activar este atajo (pisar el switch) exige haber desbloqueado esta
+        // entrada de Codex primero (ver CellType.Lore). La zona aislada sigue siendo alcanzable a
+        // pie sin el lore -- esto solo bloquea el TELETRANSPORTE de conveniencia, nunca el acceso.
+        public string RequiredLoreId;
     }
 
     public class DungeonFloor

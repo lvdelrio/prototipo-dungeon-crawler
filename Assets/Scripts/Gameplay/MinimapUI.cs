@@ -7,6 +7,7 @@ namespace Gameplay
     {
         public DungeonManager dungeonManager;
         public GridPlayerController player;
+        public PauseMenuManager pauseMenu;
 
         [Header("Modo de mapa")]
         [Tooltip("true = solo se ve lo que el jugador ya piso (niebla de guerra). false = mapa completo (modo debug).")]
@@ -28,9 +29,10 @@ namespace Gameplay
         void OnGUI()
         {
             if (dungeonManager == null || player == null) return;
-            // El mapa desaparece durante el combate y en la pantalla de tienda/mejoras post-run:
-            // en ambos casos hay otro panel mas importante que no debe quedar tapado.
+            // El mapa desaparece durante el combate, la pantalla de tienda/mejoras post-run y el
+            // menu de pausa: en todos los casos hay otro panel mas importante que no debe quedar tapado.
             if (dungeonManager.IsCombatActive || dungeonManager.IsGameOverShopActive) return;
+            if (pauseMenu != null && pauseMenu.IsOpen) return;
             var floor = dungeonManager.CurrentFloor;
             if (floor == null) return;
 
@@ -125,6 +127,7 @@ namespace Gameplay
                 case CellType.StairsDown: return new Color(1f, 0.5f, 0f);
                 case CellType.Event: return cell.EventConsumed ? (Color?)null : Color.white;
                 case CellType.Boss: return new Color(1f, 0f, 0.1f);
+                case CellType.Lore: return new Color(0.75f, 0.35f, 1f);
                 default: return null;
             }
         }

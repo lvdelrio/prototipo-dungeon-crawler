@@ -8,7 +8,7 @@ namespace DungeonGen
     {
         // ---------- Public orchestration ----------
 
-        public List<DungeonFloor> GenerateDungeon(int floorCount, int width, int height, int seed, float eventPercent, out List<string> log, IList<EventEntry> eventPool = null, int stairPairsPerFloor = 2, IList<int> eventCountsPerFloor = null, int bossFloorStart = 2, int bossFloorInterval = 2, float voidFraction = 0.4f, int dangerValueMin = 0, int dangerValueMax = 5)
+        public List<DungeonFloor> GenerateDungeon(int floorCount, int width, int height, int seed, float eventPercent, out List<string> log, IList<EventEntry> eventPool = null, int stairPairsPerFloor = 2, IList<int> eventCountsPerFloor = null, int bossFloorStart = 2, int bossFloorInterval = 2, float voidFraction = 0.4f, int dangerValueMin = 0, int dangerValueMax = 5, IList<string> loreIdPool = null)
         {
             log = new List<string>();
             var rng = new Random(seed);
@@ -55,6 +55,11 @@ namespace DungeonGen
                     PlaceEvents(floor, rng, eventPercent, eventPool);
 
                 AssignDangerValues(floor, rng, dangerValueMin, dangerValueMax);
+
+                string loreId = (loreIdPool != null && loreIdPool.Count > 0)
+                    ? loreIdPool[floor.Index % loreIdPool.Count]
+                    : $"lore_piso{floor.Index}";
+                AssignLoreLock(floor, rng, loreId);
             }
 
             return floors;
@@ -715,6 +720,40 @@ namespace DungeonGen
             }
         }
 
+        // Ata el atajo (shortcut) de este piso a un fragmento de lore: activarlo (en el juego, ver
+        // Gameplay.DungeonManager) exige haber descubierto ese lore en OTRO punto del mismo piso,
+        // siempre por el camino normal (nunca dentro de la zona aislada que el propio atajo
+        // acorta, para que el jugador pueda encontrarlo ANTES de necesitarlo). La zona aislada
+        // sigue siendo alcanzable a pie sin el lore -- el atajo es una comodidad, no la unica
+        // entrada -- asi que esto no cambia ninguna garantia de conectividad ya validada.
+        private void AssignLoreLock(DungeonFloor floor, Random rng, string loreId)
+        {
+            if (floor.Gates.Count == 0 || string.IsNullOrEmpty(loreId)) return;
+            var gate = floor.Gates[0];
+
+            var candidates = FreeNormalCells(floor).Where(c => !floor.IsInIsolatedZone(c.Item1, c.Item2)).ToList();
+            if (candidates.Count == 0) return; // mapa muy chico: sin lugar libre, no se agrega lore este piso
+
+            Shuffle(candidates, rng);
+            var pos = candidates[0];
+            var cell = floor.Cells[pos.Item1, pos.Item2];
+            cell.Type = CellType.Lore;
+            cell.AssignedLoreId = loreId;
+            cell.DangerValue = 0; // leer una pista de lore es seguro, igual que Start/End/escaleras
+            gate.RequiredLoreId = loreId;
+        }
+
+        private (int, int)? FindLoreCell(DungeonFloor floor, string loreId)
+        {
+            for (int x = 0; x < floor.Width; x++)
+                for (int y = 0; y < floor.Height; y++)
+                {
+                    var c = floor.Cells[x, y];
+                    if (c.Type == CellType.Lore && c.AssignedLoreId == loreId) return (x, y);
+                }
+            return null;
+        }
+
         private EventEntry RollFromPool(IList<EventEntry> pool, Random rng)
         {
             int total = 0;
@@ -823,6 +862,22 @@ namespace DungeonGen
                     if (!teleportOkFromLanding || (lx, ly) != switchCell.Value)
                         issues.Add($"Piso {floor.Index}: al activar el atajo {gi}, el punto de llegada no teletransporta al switch correcto.");
                     gate.IsOpen = false; // deja el estado limpio tras la simulacion
+                }
+
+                if (!string.IsNullOrEmpty(gate.RequiredLoreId))
+                {
+                    var loreCell = FindLoreCell(floor, gate.RequiredLoreId);
+                    if (loreCell == null)
+                    {
+                        issues.Add($"Piso {floor.Index}: el atajo {gi} exige el lore '{gate.RequiredLoreId}' pero no hay ninguna celda Lore con ese id en el piso.");
+                    }
+                    else
+                    {
+                        if (!reachableClosed.Contains(loreCell.Value))
+                            issues.Add($"Piso {floor.Index}: la celda Lore '{gate.RequiredLoreId}' en {loreCell.Value} no es alcanzable.");
+                        if (floor.IsInIsolatedZone(loreCell.Value.Item1, loreCell.Value.Item2))
+                            issues.Add($"Piso {floor.Index}: la celda Lore '{gate.RequiredLoreId}' esta DENTRO de la zona que su propio atajo acorta (el jugador no podria encontrarla sin ya haber cruzado).");
+                    }
                 }
             }
 

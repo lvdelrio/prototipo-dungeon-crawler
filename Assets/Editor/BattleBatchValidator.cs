@@ -90,9 +90,13 @@ public static class BattleBatchValidator
                     return;
                 }
                 TestDialogue();
+                // Formacion y menu de pausa/progresion se prueban ANTES de arrancar el combate:
+                // ahora se editan desde la exploracion (CanChangeFormation ya no depende de estar
+                // en combate), no desde el menu de accion de la pelea.
+                TestFormation();
+                TestPauseMenuAndProgression();
                 _combatManager.StartEncounter(false);
                 TestGoBack();
-                TestFormation();
                 SetPhase(1);
                 break;
 
@@ -327,6 +331,44 @@ public static class BattleBatchValidator
         _combatManager.SetFrontRow(backMember, false);
         Check("Devolverlo al fondo tambien mantiene el balance 3 y 3", party.Count(p => p.IsFrontRow) == 3, $"frente={party.Count(p => p.IsFrontRow)}");
         Check("El personaje vuelve a quedar en el fondo", !backMember.IsFrontRow);
+    }
+
+    // Prueba el menu de pausa (PauseMenuManager) y las piezas de progresion que vive muestran:
+    // Codex (desbloquear lore) y Equipamiento (comprar + equipar con efecto INMEDIATO sobre la
+    // party ya creada, no solo el guardado permanente).
+    private static void TestPauseMenuAndProgression()
+    {
+        var pauseMenu = Object.FindObjectOfType<Gameplay.PauseMenuManager>();
+        var player = Object.FindObjectOfType<GridPlayerController>();
+        if (!Check("PauseMenuManager presente en Play Mode", pauseMenu != null)) return;
+        Check("GridPlayerController tiene el PauseMenuManager cableado", player != null && player.pauseMenu == pauseMenu);
+
+        Check("el menu de pausa arranca cerrado", !pauseMenu.IsOpen);
+        pauseMenu.Open();
+        Check("Open() lo abre", pauseMenu.IsOpen);
+        pauseMenu.Close();
+        Check("Close() lo cierra", !pauseMenu.IsOpen);
+
+        var meta = _dungeonManager.Meta;
+        string loreId = Lore.LoreCatalog.All[0].Id;
+        Check("el lore de prueba arranca sin desbloquear", !meta.IsLoreUnlocked(loreId));
+        meta.UnlockLore(loreId);
+        Check("UnlockLore lo desbloquea en el Codex", meta.IsLoreUnlocked(loreId));
+
+        meta.BankedPoints = 1000;
+        string itemId = Combat.EquipmentCatalog.All[0].Id;
+        bool bought = meta.TryPurchaseItem(itemId);
+        Check("comprar un accesorio con puntos suficientes funciona", bought && meta.OwnsItem(itemId));
+
+        var warrior = _combatManager.Party.Find(p => p.Class == Combat.CharacterClass.Warrior);
+        int atkBefore = warrior.Attack;
+        _combatManager.SetEquippedItemLive(meta, Combat.CharacterClass.Warrior, itemId);
+        int expectedBonus = Combat.EquipmentCatalog.Find(itemId).AttackBonus;
+        Check("equipar en vivo suma el bonus del item a la party YA creada (no hace falta empezar otra run)",
+            warrior.Attack == atkBefore + expectedBonus, $"antes={atkBefore} despues={warrior.Attack} bonus={expectedBonus}");
+
+        _combatManager.SetEquippedItemLive(meta, Combat.CharacterClass.Warrior, "");
+        Check("desequipar en vivo devuelve el ATK al valor original", warrior.Attack == atkBefore, $"real={warrior.Attack}");
     }
 
     // Fuerza el aguante roto de TODOS los enemigos activos (en vez de tener que grindear golpes

@@ -209,9 +209,9 @@ namespace Gameplay
             AllOutAttackMashCount = Mathf.Min(AllOutAttackMashCount + 1, CombatEngine.AllOutMaxPresses);
         }
 
-        // Formacion: cambiarla solo tiene sentido mientras se estan eligiendo acciones, no a
-        // mitad de que se resuelve una ronda.
-        public bool CanChangeFormation => IsActive && !IsResolvingRound;
+        // Formacion: se edita desde el menu de pausa DURANTE LA EXPLORACION (no en combate, para
+        // no complicar el orden de turnos de una ronda que ya esta en marcha).
+        public bool CanChangeFormation => Party != null && !IsActive;
 
         // Pone a "target" al frente o al fondo. Para mantener siempre 3 y 3 (ver
         // CombatEngine.FrontRowAggroWeight), si el cambio desbalancea la formacion se intercambia
@@ -223,6 +223,32 @@ namespace Gameplay
             var partner = Party.FirstOrDefault(p => p != target && p.IsFrontRow == front);
             target.IsFrontRow = front;
             if (partner != null) partner.IsFrontRow = !front;
+        }
+
+        // Cambia el accesorio equipado de una clase (menu de pausa, fuera de combate) y ajusta al
+        // toque las stats del personaje YA CREADO (no solo el guardado permanente): resta el bonus
+        // del item anterior y suma el del nuevo, incluyendo el HP actual si cambia el maximo (asi
+        // no hace falta esperar a la proxima run para ver el efecto ni recrear la party entera).
+        public void SetEquippedItemLive(MetaProgress meta, CharacterClass cls, string newItemId)
+        {
+            if (!CanChangeFormation || meta == null) return;
+            var character = Party.FirstOrDefault(p => p.Class == cls);
+            if (character == null) return;
+
+            var oldItem = EquipmentCatalog.Find(meta.GetEquippedItemId(cls));
+            meta.SetEquippedItem(cls, newItemId);
+            var newItem = EquipmentCatalog.Find(newItemId);
+
+            int dAtk = (newItem?.AttackBonus ?? 0) - (oldItem?.AttackBonus ?? 0);
+            int dDef = (newItem?.DefenseBonus ?? 0) - (oldItem?.DefenseBonus ?? 0);
+            int dSpd = (newItem?.SpeedBonus ?? 0) - (oldItem?.SpeedBonus ?? 0);
+            int dHp = (newItem?.MaxHpBonus ?? 0) - (oldItem?.MaxHpBonus ?? 0);
+
+            character.Attack += dAtk;
+            character.Defense += dDef;
+            character.Speed += dSpd;
+            character.MaxHP += dHp;
+            character.HP = Mathf.Clamp(character.HP + dHp, 1, character.MaxHP);
         }
 
         private void AdvanceChooser()

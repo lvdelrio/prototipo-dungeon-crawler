@@ -3,6 +3,7 @@ using UnityEngine;
 using DungeonGen;
 using Combat;
 using Meta;
+using Lore;
 
 namespace Gameplay
 {
@@ -66,7 +67,8 @@ namespace Gameplay
                 settings.bossFloorInterval,
                 settings.voidFraction,
                 settings.dangerValueMin,
-                settings.dangerValueMax);
+                settings.dangerValueMax,
+                System.Array.ConvertAll(LoreCatalog.All, e => e.Id));
 
             foreach (var line in log) Debug.Log(line);
 
@@ -148,6 +150,17 @@ namespace Gameplay
                         message = ev != null
                             ? $"Evento ({(ev.IsLucky ? "afortunado" : "desafortunado")}): {ev.Name} - {ev.Description}"
                             : "Evento activado.";
+                    }
+                    break;
+                case CellType.Lore:
+                    bool isNew = _meta.UnlockLore(cell.AssignedLoreId);
+                    if (isNew)
+                    {
+                        MetaSaveService.Save(_meta);
+                        var entry = LoreCatalog.Find(cell.AssignedLoreId);
+                        message = entry != null
+                            ? $"¡Nuevo fragmento de lore! \"{entry.Title}\" (revisa el Códex en el menú de pausa)."
+                            : "¡Encontraste un fragmento de lore!";
                     }
                     break;
             }
@@ -269,6 +282,12 @@ namespace Gameplay
                     // Solo la palanca (lado del switch) puede activar el atajo por primera vez.
                     if (cell.Type == CellType.ShortcutSwitch)
                     {
+                        var gate = CurrentFloor.Gates[cell.ControlledGateIndex];
+                        if (!string.IsNullOrEmpty(gate.RequiredLoreId) && !_meta.IsLoreUnlocked(gate.RequiredLoreId))
+                        {
+                            if (hud != null) hud.SetLastMessage("Hay una inscripción en el mecanismo que todavía no podés descifrar. Quizá haya algo de lore sobre esto en otra parte del mapa...");
+                            return;
+                        }
                         _generator.OpenGate(CurrentFloor, cell.ControlledGateIndex);
                         levelBuilder.ActivateShortcutVisual(cell.ControlledGateIndex);
                         if (hud != null) hud.SetLastMessage("Atajo activado de forma permanente: ahora puedes teletransportarte entre este punto y el otro lado del vacio.");

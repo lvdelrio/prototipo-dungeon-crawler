@@ -19,6 +19,7 @@ namespace Gameplay
         public Material stairsDownMaterial;
         public Material eventMarkerMaterial;
         public Material bossMarkerMaterial;
+        public Material loreMarkerMaterial;
         public Material bossRoomFloorMaterial;
         public Material bossRoomCeilingMaterial;
         public Material voidBlockMaterial;
@@ -191,6 +192,7 @@ namespace Gameplay
                 case CellType.StairsDown: color = new Color(1f, 0.5f, 0f); mat = stairsDownMaterial; shape = PrimitiveType.Cube; break;
                 case CellType.Event: color = Color.white; mat = eventMarkerMaterial; shape = PrimitiveType.Cylinder; break;
                 case CellType.Boss: color = new Color(0.7f, 0f, 0.05f); mat = bossMarkerMaterial; shape = PrimitiveType.Capsule; scale = cellSize * 0.55f; break;
+                case CellType.Lore: color = new Color(0.75f, 0.35f, 1f); mat = loreMarkerMaterial; shape = PrimitiveType.Sphere; scale = cellSize * 0.3f; break;
                 default: return;
             }
 

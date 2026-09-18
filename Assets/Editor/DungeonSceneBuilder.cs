@@ -79,6 +79,10 @@ public static class DungeonSceneBuilder
         var dialogueHud = dialogueHudGo.AddComponent<DialogueHUD>();
         var enemyBarsGo = new GameObject("EnemyHealthBarHUD");
         var enemyBarsHud = enemyBarsGo.AddComponent<EnemyHealthBarHUD>();
+        var pauseMenuGo = new GameObject("PauseMenuManager");
+        var pauseMenu = pauseMenuGo.AddComponent<PauseMenuManager>();
+        var pauseMenuHudGo = new GameObject("PauseMenuHUD");
+        var pauseMenuHud = pauseMenuHudGo.AddComponent<PauseMenuHUD>();
 
         manager.settings = settings;
         manager.eventTable = eventTable;
@@ -109,6 +113,12 @@ public static class DungeonSceneBuilder
         dialogueHud.dialogueManager = dialogueManager;
         enemyBarsHud.combatManager = combatManager;
         enemyBarsHud.battleStage = battleStage;
+        playerController.pauseMenu = pauseMenu;
+        hud.pauseMenu = pauseMenu;
+        minimap.pauseMenu = pauseMenu;
+        pauseMenuHud.pauseMenu = pauseMenu;
+        pauseMenuHud.dungeonManager = manager;
+        pauseMenuHud.combatManager = combatManager;
 
         if (!AssetDatabase.IsValidFolder("Assets/Scenes"))
             AssetDatabase.CreateFolder("Assets", "Scenes");

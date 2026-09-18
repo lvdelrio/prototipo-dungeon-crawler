@@ -19,6 +19,9 @@ namespace DungeonGen
         // Populated when Type == Event
         public EventEntry AssignedEvent;
 
+        // Populated when Type == Lore: el id de la entrada de Codex que se desbloquea al pisarla.
+        public string AssignedLoreId;
+
         // Populated when Type == StairsUp / StairsDown
         public int StairTargetFloor = -1;
         public int StairTargetX = -1;

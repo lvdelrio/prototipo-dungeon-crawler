@@ -6,7 +6,7 @@ namespace Meta
 {
     // Progreso permanente entre runs (roguelite): puntos acumulados, items comprados para la
     // proxima run, y niveles de mejora comprados para cada clase de personaje. Se guarda en disco
-    // tal cual (ver Gameplay/MetaSaveService).
+    // tal cual (ver Gameplay/MetaSaveService en el proyecto de Unity).
     [Serializable]
     public class MetaProgress
     {
@@ -14,6 +14,15 @@ namespace Meta
         public int MapCharges;
         public int DrillCharges;
         public List<CharacterUpgrade> Upgrades = new List<CharacterUpgrade>();
+
+        // Equipamiento: items comprados (catalogo en Combat/EquipmentItem.cs) y cual (si alguno)
+        // tiene puesto cada clase -- un solo accesorio por personaje, sin slots de arma/armadura.
+        public List<string> OwnedItemIds = new List<string>();
+        public List<EquipmentSlot> EquippedItems = new List<EquipmentSlot>();
+
+        // Codex: ids de Lore.LoreCatalog ya descubiertos explorando la mazmorra (ver
+        // DungeonGen.CellType.Lore); tambien es lo que exige ShortcutGate.RequiredLoreId.
+        public List<string> UnlockedLoreIds = new List<string>();
 
         public const int PointsPerFloorReached = 15;
         public const int PointsPerEnemyDefeated = 5;
@@ -91,20 +100,70 @@ namespace Meta
             return true;
         }
 
-        // Aplica los niveles comprados como bonus fijos sobre las stats BASE de una party recien
-        // creada (PartyFactory.CreateDefaultParty), y cura HP/TP al maximo resultante.
+        public bool OwnsItem(string itemId) => !string.IsNullOrEmpty(itemId) && OwnedItemIds.Contains(itemId);
+
+        public bool TryPurchaseItem(string itemId)
+        {
+            var item = EquipmentCatalog.Find(itemId);
+            if (item == null || OwnsItem(itemId) || BankedPoints < item.Cost) return false;
+            BankedPoints -= item.Cost;
+            OwnedItemIds.Add(itemId);
+            return true;
+        }
+
+        public string GetEquippedItemId(CharacterClass cls) => EquippedItems.Find(e => e.Class == cls)?.ItemId;
+
+        // itemId vacio/null desequipa. Si se pide un item que no se posee, no hace nada (falla en
+        // silencio: la UI no deberia dejar llegar a este caso, pero por las dudas no corrompe nada).
+        public void SetEquippedItem(CharacterClass cls, string itemId)
+        {
+            if (!string.IsNullOrEmpty(itemId) && !OwnsItem(itemId)) return;
+            var slot = EquippedItems.Find(e => e.Class == cls);
+            if (slot == null)
+            {
+                slot = new EquipmentSlot { Class = cls };
+                EquippedItems.Add(slot);
+            }
+            slot.ItemId = itemId ?? "";
+        }
+
+        public bool IsLoreUnlocked(string loreId) => !string.IsNullOrEmpty(loreId) && UnlockedLoreIds.Contains(loreId);
+
+        // Devuelve true solo la PRIMERA vez que se desbloquea este id (para poder mostrar un
+        // aviso de "nuevo" solo una vez); false si ya estaba desbloqueado antes.
+        public bool UnlockLore(string loreId)
+        {
+            if (string.IsNullOrEmpty(loreId) || UnlockedLoreIds.Contains(loreId)) return false;
+            UnlockedLoreIds.Add(loreId);
+            return true;
+        }
+
+        // Aplica los niveles comprados Y el accesorio equipado como bonus fijos sobre las stats
+        // BASE de una party recien creada (PartyFactory.CreateDefaultParty), y cura HP/TP al
+        // maximo resultante.
         public void ApplyUpgradesToParty(List<CharacterStats> party)
         {
             foreach (var character in party)
             {
                 var upgrade = FindUpgrade(character.Class);
-                if (upgrade == null) continue;
+                if (upgrade != null)
+                {
+                    character.Attack += upgrade.AttackLevel * PerLevelAttack;
+                    character.Defense += upgrade.DefenseLevel * PerLevelDefense;
+                    character.Speed += upgrade.SpeedLevel * PerLevelSpeed;
+                    character.MaxHP += upgrade.MaxHpLevel * PerLevelMaxHp;
+                    character.MaxTP += upgrade.MaxTpLevel * PerLevelMaxTp;
+                }
 
-                character.Attack += upgrade.AttackLevel * PerLevelAttack;
-                character.Defense += upgrade.DefenseLevel * PerLevelDefense;
-                character.Speed += upgrade.SpeedLevel * PerLevelSpeed;
-                character.MaxHP += upgrade.MaxHpLevel * PerLevelMaxHp;
-                character.MaxTP += upgrade.MaxTpLevel * PerLevelMaxTp;
+                var item = EquipmentCatalog.Find(GetEquippedItemId(character.Class));
+                if (item != null)
+                {
+                    character.Attack += item.AttackBonus;
+                    character.Defense += item.DefenseBonus;
+                    character.Speed += item.SpeedBonus;
+                    character.MaxHP += item.MaxHpBonus;
+                }
+
                 character.HP = character.MaxHP;
                 character.TP = character.MaxTP;
             }
