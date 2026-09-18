@@ -83,6 +83,8 @@ public static class DungeonSceneBuilder
         var pauseMenu = pauseMenuGo.AddComponent<PauseMenuManager>();
         var pauseMenuHudGo = new GameObject("PauseMenuHUD");
         var pauseMenuHud = pauseMenuHudGo.AddComponent<PauseMenuHUD>();
+        var ambientGo = new GameObject("AmbientParticles");
+        var ambientParticles = ambientGo.AddComponent<AmbientParticles>();
 
         manager.settings = settings;
         manager.eventTable = eventTable;
@@ -119,6 +121,9 @@ public static class DungeonSceneBuilder
         pauseMenuHud.pauseMenu = pauseMenu;
         pauseMenuHud.dungeonManager = manager;
         pauseMenuHud.combatManager = combatManager;
+        ambientParticles.dungeonManager = manager;
+        ambientParticles.player = playerController;
+        ambientParticles.followTarget = cameraGo.transform;
 
         if (!AssetDatabase.IsValidFolder("Assets/Scenes"))
             AssetDatabase.CreateFolder("Assets", "Scenes");

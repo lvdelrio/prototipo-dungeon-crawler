@@ -90,6 +90,8 @@ public static class BattleBatchValidator
                     return;
                 }
                 TestDialogue();
+                TestAmbientParticles();
+                TestElementalParticles();
                 // Formacion y menu de pausa/progresion se prueban ANTES de arrancar el combate:
                 // ahora se editan desde la exploracion (CanChangeFormation ya no depende de estar
                 // en combate), no desde el menu de accion de la pelea.
@@ -331,6 +333,30 @@ public static class BattleBatchValidator
         _combatManager.SetFrontRow(backMember, false);
         Check("Devolverlo al fondo tambien mantiene el balance 3 y 3", party.Count(p => p.IsFrontRow) == 3, $"frente={party.Count(p => p.IsFrontRow)}");
         Check("El personaje vuelve a quedar en el fondo", !backMember.IsFrontRow);
+    }
+
+    // Confirma que la mazmorra tiene su sistema de particulas de ambiente activo apenas arranca
+    // Play Mode (se configura solo, en su propio Awake/LateUpdate, sin que este test lo dispare).
+    private static void TestAmbientParticles()
+    {
+        var ambient = Object.FindObjectOfType<AmbientParticles>();
+        if (!Check("AmbientParticles presente en la escena de mazmorra", ambient != null)) return;
+        var ps = ambient.GetComponent<ParticleSystem>();
+        Check("AmbientParticles tiene su propio ParticleSystem", ps != null);
+        Check("El ParticleSystem de ambiente esta reproduciendose", ps != null && ps.isPlaying);
+    }
+
+    // Confirma que ElementalParticleEffect.Spawn crea un ParticleSystem real para cada elemento
+    // (la config especifica de cada uno -- color/velocidad/forma -- ya se prueba a ojo jugando).
+    private static void TestElementalParticles()
+    {
+        foreach (Combat.Element element in System.Enum.GetValues(typeof(Combat.Element)))
+        {
+            int before = Object.FindObjectsOfType<ParticleSystem>().Length;
+            ElementalParticleEffect.Spawn(Vector3.zero, element);
+            int after = Object.FindObjectsOfType<ParticleSystem>().Length;
+            Check($"ElementalParticleEffect.Spawn crea un ParticleSystem para {element}", after == before + 1, $"antes={before} despues={after}");
+        }
     }
 
     // Prueba el menu de pausa (PauseMenuManager) y las piezas de progresion que vive muestran:

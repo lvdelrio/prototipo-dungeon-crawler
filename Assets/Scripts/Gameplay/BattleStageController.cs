@@ -217,17 +217,21 @@ namespace Gameplay
             HitImpactEffect.Spawn(hitImpactFrames, view.transform.position, tint, facing);
         }
 
-        // Efecto de shader (sin sprite) que se ve en CUALQUIER golpe -- basico o de habilidad --
-        // para que el elemento del ataque siempre tenga algun feedback visual, no solo las
-        // habilidades (que ademas tienen el sprite de HitImpactEffect).
+        // Efecto de shader + rafaga de particulas reales (sin sprite) que se ven en CUALQUIER
+        // golpe -- basico o de habilidad -- para que el elemento del ataque siempre tenga algun
+        // feedback visual, no solo las habilidades (que ademas tienen el sprite de HitImpactEffect).
         private void HandleEnemyElementalHit(int index, Element element)
         {
-            if (index < 0 || index >= _activeViews.Count || elementalBurstMaterial == null) return;
+            if (index < 0 || index >= _activeViews.Count) return;
             var view = _activeViews[index];
             if (view == null) return;
 
-            Quaternion facing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
-            ElementalBurstEffect.Spawn(elementalBurstMaterial, view.transform.position, ElementColor(element), facing);
+            if (elementalBurstMaterial != null)
+            {
+                Quaternion facing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
+                ElementalBurstEffect.Spawn(elementalBurstMaterial, view.transform.position, ElementColor(element), facing);
+            }
+            ElementalParticleEffect.Spawn(view.transform.position, element);
         }
 
         // Se le rompio el aguante a este enemigo: pulso mas fuerte con el borde en amarillo
