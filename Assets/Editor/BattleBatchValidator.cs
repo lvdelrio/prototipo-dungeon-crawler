@@ -122,6 +122,7 @@ public static class BattleBatchValidator
                     Check("Los 6 frames del efecto de impacto quedaron asignados", _battleStage.hitImpactFrames != null && _battleStage.hitImpactFrames.Length == 6 && _battleStage.hitImpactFrames[0] != null);
                     Check("El material del efecto elemental (shader) quedo asignado", _battleStage.elementalBurstMaterial != null);
 
+                    TestBattleAmbientParticles();
                     TestPoiseBreakSetup();
                     SetPhase(10);
                 }
@@ -226,6 +227,8 @@ public static class BattleBatchValidator
                     Check("La camara de la mazmorra se reactiva al terminar el combate", _battleStage.dungeonCamera != null && _battleStage.dungeonCamera.enabled);
                     var remaining = Object.FindObjectsOfType<EnemyView>();
                     Check("No quedan EnemyView colgados tras terminar el combate", remaining.Length == 0, $"quedaron={remaining.Length}");
+                    Check("No queda BattleAmbientParticles colgado tras terminar el combate", Object.FindObjectOfType<BattleAmbientParticles>() == null);
+                    Check("La niebla de la mazmorra se restaura al salir de combate", RenderSettings.fogEndDistance > 20f, $"fogEndDistance={RenderSettings.fogEndDistance}");
 
                     // Segunda pelea: probar "Huir" (forzado al 100% para que el resultado sea
                     // determinista) y confirmar que se limpia igual que un combate normal, pero
@@ -345,12 +348,37 @@ public static class BattleBatchValidator
     {
         var ambient = Object.FindObjectOfType<AmbientParticles>();
         if (!Check("AmbientParticles presente en la escena de mazmorra", ambient != null)) return;
-        var ps = ambient.GetComponentInChildren<ParticleSystem>();
-        if (!Check("AmbientParticles tiene su propio ParticleSystem (hijo)", ps != null)) return;
-        Check("El ParticleSystem de ambiente esta reproduciendose", ps.isPlaying);
+        var layers = ambient.GetComponentsInChildren<ParticleSystem>();
+        if (!Check("AmbientParticles tiene sus 2 capas (cerca + lejos)", layers.Length == 2, $"encontradas={layers.Length}")) return;
 
-        ps.Simulate(1.5f, true, false);
-        Check("el ambiente realmente emite particulas tras un rato (no se queda en 0)", ps.particleCount > 0, $"particleCount={ps.particleCount}");
+        foreach (var ps in layers)
+        {
+            Check($"{ps.name}: esta reproduciendose", ps.isPlaying);
+            ps.Simulate(2f, true, false);
+            Check($"{ps.name}: realmente emite particulas tras un rato (no se queda en 0)", ps.particleCount > 0, $"particleCount={ps.particleCount}");
+        }
+
+        Check("la niebla de distancia esta activa en la mazmorra", RenderSettings.fog);
+    }
+
+    // Confirma que al entrar en combate aparecen las particulas de ambiente de la escena de
+    // batalla (2 capas, igual criterio que en la mazmorra) y que la niebla de distancia cambia a
+    // la version (mas corta y oscura) de combate.
+    private static void TestBattleAmbientParticles()
+    {
+        var ambient = Object.FindObjectOfType<BattleAmbientParticles>();
+        if (!Check("BattleAmbientParticles aparece al entrar en combate", ambient != null)) return;
+
+        var layers = ambient.GetComponentsInChildren<ParticleSystem>();
+        Check("BattleAmbientParticles tiene sus 2 capas (cerca + lejos)", layers.Length == 2, $"encontradas={layers.Length}");
+        foreach (var ps in layers)
+        {
+            ps.Simulate(2f, true, false);
+            Check($"{ps.name}: realmente emite particulas (no se queda en 0)", ps.particleCount > 0, $"particleCount={ps.particleCount}");
+        }
+
+        Check("la niebla cambia a la version de combate (mas corta que la de la mazmorra)",
+            RenderSettings.fog && RenderSettings.fogEndDistance <= 20f, $"fogEndDistance={RenderSettings.fogEndDistance}");
     }
 
     // Confirma que ElementalParticleEffect.Spawn no solo crea un ParticleSystem, sino que la

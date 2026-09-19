@@ -31,6 +31,17 @@ namespace Gameplay
         // Indice de parante ocupado por cada entrada de _activeViews (misma posicion = mismo enemigo).
         private readonly List<int> _viewStandIndex = new List<int>();
 
+        private BattleAmbientParticles _ambientParticles;
+
+        // Niebla de distancia: se guarda la de la mazmorra la primera vez (ya viene cargada del
+        // scene file) y se restaura al salir de combate, para que la niebla de la batalla no se
+        // quede pegada en la mazmorra.
+        private bool _fogSnapshotTaken;
+        private bool _dungeonFogEnabled;
+        private FogMode _dungeonFogMode;
+        private Color _dungeonFogColor;
+        private float _dungeonFogStart, _dungeonFogEnd;
+
         // Camara activa de la escena de batalla; la usa EnemyHealthBarHUD para proyectar la
         // posicion de cada EnemyView a coordenadas de pantalla (OnGUI) y dibujar sus barras ahi.
         public Camera ActiveBattleCamera => _battleCamera;
@@ -41,6 +52,7 @@ namespace Gameplay
 
         void Awake()
         {
+            CaptureDungeonFogIfNeeded();
             if (combatManager == null) return;
             combatManager.OnCombatStarted += HandleCombatStarted;
             combatManager.OnCombatFinished += HandleCombatFinished;
@@ -87,6 +99,45 @@ namespace Gameplay
             if (_battleAudioListener != null) _battleAudioListener.enabled = true;
 
             SpawnEnemyViews();
+
+            bool isBoss = combatManager != null && combatManager.IsBossFight;
+            ApplyBattleFog(isBoss);
+            if (_battleCamera != null)
+                _ambientParticles = BattleAmbientParticles.Spawn(_battleCamera.transform, isBoss);
+        }
+
+        // ---------- Niebla de distancia ----------
+
+        private void CaptureDungeonFogIfNeeded()
+        {
+            if (_fogSnapshotTaken) return;
+            _dungeonFogEnabled = RenderSettings.fog;
+            _dungeonFogMode = RenderSettings.fogMode;
+            _dungeonFogColor = RenderSettings.fogColor;
+            _dungeonFogStart = RenderSettings.fogStartDistance;
+            _dungeonFogEnd = RenderSettings.fogEndDistance;
+            _fogSnapshotTaken = true;
+        }
+
+        // Niebla mas corta y oscura que la de la mazmorra -- el fondo de la arena se pierde en la
+        // penumbra detras de los enemigos (mas marcada todavia en pelea de jefe), como el fondo
+        // atmosferico de un escenario de pelea.
+        private void ApplyBattleFog(bool boss)
+        {
+            RenderSettings.fog = true;
+            RenderSettings.fogMode = FogMode.Linear;
+            RenderSettings.fogColor = boss ? new Color(0.05f, 0.02f, 0.02f) : new Color(0.03f, 0.03f, 0.05f);
+            RenderSettings.fogStartDistance = 6f;
+            RenderSettings.fogEndDistance = boss ? 20f : 16f;
+        }
+
+        private void RestoreDungeonFog()
+        {
+            RenderSettings.fog = _dungeonFogEnabled;
+            RenderSettings.fogMode = _dungeonFogMode;
+            RenderSettings.fogColor = _dungeonFogColor;
+            RenderSettings.fogStartDistance = _dungeonFogStart;
+            RenderSettings.fogEndDistance = _dungeonFogEnd;
         }
 
         private void SpawnEnemyViews()
@@ -296,6 +347,13 @@ namespace Gameplay
         private void CleanupAfterCombat()
         {
             ClearViews();
+
+            if (_ambientParticles != null)
+            {
+                Destroy(_ambientParticles.gameObject);
+                _ambientParticles = null;
+            }
+            RestoreDungeonFog();
 
             if (dungeonCamera != null) dungeonCamera.enabled = true;
             if (dungeonAudioListener != null) dungeonAudioListener.enabled = true;

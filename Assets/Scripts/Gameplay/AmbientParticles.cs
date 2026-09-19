@@ -2,11 +2,15 @@ using UnityEngine;
 
 namespace Gameplay
 {
-    // Particulas de ambiente en la mazmorra, para dar dinamismo mientras se explora: motas de
-    // polvo por defecto, hojas cayendo en pisos "verdes" y brasas subiendo en pisos de fuego -- el
-    // tipo cambia ciclando segun el indice de piso, y se reemplaza por brasas intensas apenas el
-    // jugador entra a la sala de un jefe. Sigue la POSICION de la camara (nunca su rotacion, para
-    // que el volumen de aparicion no gire con cada vuelta del jugador) sin ser su hijo.
+    // Particulas de ambiente en la mazmorra, para dar dinamismo y sensacion de profundidad
+    // mientras se explora, en 2 capas (como el fondo de un escenario tipo Tekken):
+    //  - Cerca: motas nitidas y relativamente rapidas -- polvo por defecto, hojas cayendo en pisos
+    //    "verdes", brasas subiendo en pisos de fuego.
+    //  - Lejos: un volumen mucho mas grande de particulas grandes, tenues y lentas (neblina/calina)
+    //    que nunca se ve nitido, dando la sensacion de que el fondo se pierde en la distancia.
+    // El tipo cambia ciclando segun el indice de piso, y se reemplaza por brasas intensas apenas
+    // el jugador entra a la sala de un jefe. Sigue la POSICION de la camara (nunca su rotacion,
+    // para que el volumen de aparicion no gire con cada vuelta del jugador) sin ser su hijo.
     public class AmbientParticles : MonoBehaviour
     {
         public DungeonManager dungeonManager;
@@ -15,44 +19,39 @@ namespace Gameplay
 
         private enum Biome { Dust, Leaves, Embers }
 
-        private ParticleSystem _ps;
+        private ParticleSystem _near;
+        private ParticleSystem _far;
         private int _lastFloorIndex = int.MinValue;
         private bool _lastInBossRoom;
 
         void Awake()
         {
-            // El sistema de particulas real vive en un HIJO que arranca INACTIVO: si se agregara
-            // el componente ya activo, "Play On Awake" (true por defecto) lo haria empezar a
-            // reproducirse YA MISMO con la config de fabrica (particulas blancas gigantes en cono)
-            // antes de terminar de aplicar el bioma -- quedaba visualmente mal o de plano invisible
-            // segun el timing. Configurar todo con el hijo inactivo y recien ahi activarlo evita esto.
-            var psGo = new GameObject("AmbientParticleSystem");
-            psGo.transform.SetParent(transform, false);
-            psGo.SetActive(false);
+            _near = ParticleLayerFactory.CreateLayer(transform, "AmbientNear");
+            _far = ParticleLayerFactory.CreateLayer(transform, "AmbientFar");
 
-            _ps = psGo.AddComponent<ParticleSystem>();
-            var renderer = psGo.GetComponent<ParticleSystemRenderer>();
-            renderer.material = ParticleTextureFactory.SharedMaterial;
-
-            var main = _ps.main;
-            main.simulationSpace = ParticleSystemSimulationSpace.World;
-            main.loop = true;
-            main.playOnAwake = true;
-            main.maxParticles = 200;
-
-            var shape = _ps.shape;
-            shape.shapeType = ParticleSystemShapeType.Box;
-            // Ancho/profundidad cerca del tamano real de un pasillo (DungeonSettings.cellSize=4),
-            // para que la mayoria del volumen quede en el aire caminable y no adentro de paredes.
-            shape.scale = new Vector3(3.5f, 2.6f, 3.5f);
-
-            var vel = _ps.velocityOverLifetime;
-            vel.enabled = true;
+            ConfigureCommon(_near, maxParticles: 200, boxScale: new Vector3(3.5f, 2.6f, 3.5f));
+            ConfigureCommon(_far, maxParticles: 120, boxScale: new Vector3(16f, 7f, 16f));
 
             ApplyBiome(Biome.Dust, false);
 
-            psGo.SetActive(true);
-            _ps.Play();
+            ParticleLayerFactory.Activate(_near);
+            ParticleLayerFactory.Activate(_far);
+        }
+
+        private void ConfigureCommon(ParticleSystem ps, int maxParticles, Vector3 boxScale)
+        {
+            var main = ps.main;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.loop = true;
+            main.playOnAwake = true;
+            main.maxParticles = maxParticles;
+
+            var shape = ps.shape;
+            shape.shapeType = ParticleSystemShapeType.Box;
+            shape.scale = boxScale;
+
+            var vel = ps.velocityOverLifetime;
+            vel.enabled = true;
         }
 
         void LateUpdate()
@@ -76,48 +75,57 @@ namespace Gameplay
 
         private void ApplyBiome(Biome biome, bool intense)
         {
-            var main = _ps.main;
-            var emission = _ps.emission;
-            var vel = _ps.velocityOverLifetime;
+            var nearMain = _near.main;
+            var nearEmission = _near.emission;
+            var nearVel = _near.velocityOverLifetime;
+            var farMain = _far.main;
+            var farEmission = _far.emission;
+            var farVel = _far.velocityOverLifetime;
 
             switch (biome)
             {
                 case Biome.Leaves:
-                    main.startColor = new Color(0.5f, 0.68f, 0.24f, 0.95f);
-                    main.startSpeed = new ParticleSystem.MinMaxCurve(0.15f, 0.4f);
-                    main.startSize = new ParticleSystem.MinMaxCurve(0.14f, 0.28f);
-                    main.startLifetime = new ParticleSystem.MinMaxCurve(6f, 10f);
-                    main.gravityModifier = 0.06f;
-                    emission.rateOverTime = 8f;
-                    vel.x = new ParticleSystem.MinMaxCurve(-0.15f, 0.15f);
-                    vel.y = new ParticleSystem.MinMaxCurve(0f, 0f);
-                    vel.z = new ParticleSystem.MinMaxCurve(-0.15f, 0.15f);
+                    SetLayer(nearMain, nearEmission, nearVel,
+                        color: new Color(0.5f, 0.68f, 0.24f, 0.95f), speed: (0.15f, 0.4f), size: (0.14f, 0.28f),
+                        life: (6f, 10f), gravity: 0.06f, rate: 8f, drift: (-0.15f, 0.15f));
+                    SetLayer(farMain, farEmission, farVel,
+                        color: new Color(0.35f, 0.48f, 0.22f, 0.1f), speed: (0.02f, 0.06f), size: (0.6f, 1.1f),
+                        life: (14f, 20f), gravity: 0.01f, rate: 3f, drift: (-0.06f, 0.06f));
                     break;
 
                 case Biome.Embers:
-                    main.startColor = new Color(1f, 0.48f, 0.14f, 1f);
-                    main.startSpeed = new ParticleSystem.MinMaxCurve(0.3f, 0.7f);
-                    main.startSize = new ParticleSystem.MinMaxCurve(0.06f, 0.13f);
-                    main.startLifetime = new ParticleSystem.MinMaxCurve(2.5f, 4f);
-                    main.gravityModifier = -0.04f; // suben, como brasas
-                    emission.rateOverTime = intense ? 30f : 16f;
-                    vel.x = new ParticleSystem.MinMaxCurve(-0.1f, 0.1f);
-                    vel.y = new ParticleSystem.MinMaxCurve(0f, 0f);
-                    vel.z = new ParticleSystem.MinMaxCurve(-0.1f, 0.1f);
+                    SetLayer(nearMain, nearEmission, nearVel,
+                        color: new Color(1f, 0.48f, 0.14f, 1f), speed: (0.3f, 0.7f), size: (0.06f, 0.13f),
+                        life: (2.5f, 4f), gravity: -0.04f, rate: intense ? 30f : 16f, drift: (-0.1f, 0.1f));
+                    SetLayer(farMain, farEmission, farVel,
+                        color: new Color(0.5f, 0.24f, 0.1f, 0.12f), speed: (0.03f, 0.08f), size: (0.7f, 1.3f),
+                        life: (10f, 15f), gravity: -0.015f, rate: intense ? 6f : 4f, drift: (-0.05f, 0.05f));
                     break;
 
                 default: // Dust
-                    main.startColor = new Color(0.88f, 0.85f, 0.75f, 0.45f);
-                    main.startSpeed = new ParticleSystem.MinMaxCurve(0.05f, 0.15f);
-                    main.startSize = new ParticleSystem.MinMaxCurve(0.05f, 0.11f);
-                    main.startLifetime = new ParticleSystem.MinMaxCurve(5f, 8f);
-                    main.gravityModifier = 0f;
-                    emission.rateOverTime = 10f;
-                    vel.x = new ParticleSystem.MinMaxCurve(-0.05f, 0.05f);
-                    vel.y = new ParticleSystem.MinMaxCurve(0f, 0f);
-                    vel.z = new ParticleSystem.MinMaxCurve(-0.05f, 0.05f);
+                    SetLayer(nearMain, nearEmission, nearVel,
+                        color: new Color(0.88f, 0.85f, 0.75f, 0.45f), speed: (0.05f, 0.15f), size: (0.05f, 0.11f),
+                        life: (5f, 8f), gravity: 0f, rate: 10f, drift: (-0.05f, 0.05f));
+                    SetLayer(farMain, farEmission, farVel,
+                        color: new Color(0.6f, 0.58f, 0.52f, 0.1f), speed: (0.02f, 0.05f), size: (0.5f, 0.9f),
+                        life: (12f, 18f), gravity: 0f, rate: 3f, drift: (-0.04f, 0.04f));
                     break;
             }
+        }
+
+        private static void SetLayer(ParticleSystem.MainModule main, ParticleSystem.EmissionModule emission,
+            ParticleSystem.VelocityOverLifetimeModule vel, Color color, (float, float) speed, (float, float) size,
+            (float, float) life, float gravity, float rate, (float, float) drift)
+        {
+            main.startColor = color;
+            main.startSpeed = new ParticleSystem.MinMaxCurve(speed.Item1, speed.Item2);
+            main.startSize = new ParticleSystem.MinMaxCurve(size.Item1, size.Item2);
+            main.startLifetime = new ParticleSystem.MinMaxCurve(life.Item1, life.Item2);
+            main.gravityModifier = gravity;
+            emission.rateOverTime = rate;
+            vel.x = new ParticleSystem.MinMaxCurve(drift.Item1, drift.Item2);
+            vel.y = new ParticleSystem.MinMaxCurve(0f, 0f);
+            vel.z = new ParticleSystem.MinMaxCurve(drift.Item1, drift.Item2);
         }
     }
 }
