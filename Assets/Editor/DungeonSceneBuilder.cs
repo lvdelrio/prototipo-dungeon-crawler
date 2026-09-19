@@ -120,6 +120,12 @@ public static class DungeonSceneBuilder
         HitEffectImporter.EnsureSliced();
         battleStage.hitImpactFrames = HitEffectImporter.LoadFrames();
         battleStage.elementalBurstMaterial = GetOrCreateElementalBurstMaterial();
+        battleStage.slashSkillMaterial = GetOrCreateMaterial("Assets/Data/SlashSkillMaterial.mat", "Custom/SlashBurst");
+        battleStage.strikeSkillMaterial = GetOrCreateMaterial("Assets/Data/StrikeSkillMaterial.mat", "Custom/StrikeBurst");
+        battleStage.pierceSkillMaterial = GetOrCreateMaterial("Assets/Data/PierceSkillMaterial.mat", "Custom/PierceBurst");
+        battleStage.fireSkillMaterial = GetOrCreateMaterial("Assets/Data/FireSkillMaterial.mat", "Custom/FireBurst");
+        battleStage.iceSkillMaterial = GetOrCreateMaterial("Assets/Data/IceSkillMaterial.mat", "Custom/IceBurst");
+        battleStage.voltSkillMaterial = GetOrCreateMaterial("Assets/Data/VoltSkillMaterial.mat", "Custom/VoltBurst");
         playerController.dialogueManager = dialogueManager;
         dialogueHud.dialogueManager = dialogueManager;
         enemyBarsHud.combatManager = combatManager;
@@ -189,14 +195,20 @@ public static class DungeonSceneBuilder
 
     private static Material GetOrCreateElementalBurstMaterial()
     {
-        const string path = "Assets/Data/ElementalBurstMaterial.mat";
+        return GetOrCreateMaterial("Assets/Data/ElementalBurstMaterial.mat", "Custom/ElementalBurst");
+    }
+
+    // Shaders de habilidad por elemento (mas elaborados que el anillo simple de arriba): cada uno
+    // vive en su propio asset, para que se puedan ajustar por separado en el Inspector si hace falta.
+    private static Material GetOrCreateMaterial(string path, string shaderName)
+    {
         var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
         if (existing != null) return existing;
 
         if (!AssetDatabase.IsValidFolder("Assets/Data"))
             AssetDatabase.CreateFolder("Assets", "Data");
 
-        var shader = Shader.Find("Custom/ElementalBurst");
+        var shader = Shader.Find(shaderName);
         var material = new Material(shader);
         AssetDatabase.CreateAsset(material, path);
         return material;

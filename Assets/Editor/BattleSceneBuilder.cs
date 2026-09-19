@@ -58,6 +58,20 @@ public static class BattleSceneBuilder
             stand.transform.position = standPositions[i];
         }
 
+        // Fondo pintado en capas (estilo Hollow Knight: cielo en degrade + siluetas quebradas de
+        // lejos a cerca) bien atras de los parantes, para que la pelea no quede contra un color
+        // solido plano. Cull Off en el shader evita depender de hacia que lado quedo orientado el
+        // Quad; al no usar las macros de niebla de Unity, se ve nitido igual que un skybox.
+        var backdropGo = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        backdropGo.name = "BattleBackdrop";
+        var backdropCollider = backdropGo.GetComponent<Collider>();
+        if (backdropCollider != null) Object.DestroyImmediate(backdropCollider);
+        backdropGo.transform.position = StageOrigin + new Vector3(0f, 6f, 22f);
+        backdropGo.transform.localScale = new Vector3(64f, 36f, 1f);
+        var backdropShader = Shader.Find("Custom/HollowBackdrop");
+        if (backdropShader != null)
+            backdropGo.GetComponent<Renderer>().sharedMaterial = new Material(backdropShader);
+
         EditorSceneManager.SaveScene(scene, ScenePath);
 
         RegisterInBuildSettings();

@@ -121,6 +121,8 @@ public static class BattleBatchValidator
                     Check("La camara de la mazmorra quedo apagada durante el combate", _battleStage.dungeonCamera != null && !_battleStage.dungeonCamera.enabled);
                     Check("Los 6 frames del efecto de impacto quedaron asignados", _battleStage.hitImpactFrames != null && _battleStage.hitImpactFrames.Length == 6 && _battleStage.hitImpactFrames[0] != null);
                     Check("El material del efecto elemental (shader) quedo asignado", _battleStage.elementalBurstMaterial != null);
+                    TestSkillShaders();
+                    TestHollowBackdrop();
 
                     // El flash/sacudida de camara vivia SOLO en la camara de la mazmorra, que se
                     // apaga durante el combate -- nunca se veia en una pelea real. Confirma que
@@ -348,6 +350,37 @@ public static class BattleBatchValidator
         _combatManager.SetFrontRow(backMember, false);
         Check("Devolverlo al fondo tambien mantiene el balance 3 y 3", party.Count(p => p.IsFrontRow) == 3, $"frente={party.Count(p => p.IsFrontRow)}");
         Check("El personaje vuelve a quedar en el fondo", !backMember.IsFrontRow);
+    }
+
+    // Confirma que cada habilidad tiene su PROPIO shader (por elemento, no por personaje): 6
+    // materiales distintos, cada uno con el shader que le corresponde.
+    private static void TestSkillShaders()
+    {
+        var materials = new (string name, Material mat, string expectedShader)[]
+        {
+            ("slashSkillMaterial", _battleStage.slashSkillMaterial, "Custom/SlashBurst"),
+            ("strikeSkillMaterial", _battleStage.strikeSkillMaterial, "Custom/StrikeBurst"),
+            ("pierceSkillMaterial", _battleStage.pierceSkillMaterial, "Custom/PierceBurst"),
+            ("fireSkillMaterial", _battleStage.fireSkillMaterial, "Custom/FireBurst"),
+            ("iceSkillMaterial", _battleStage.iceSkillMaterial, "Custom/IceBurst"),
+            ("voltSkillMaterial", _battleStage.voltSkillMaterial, "Custom/VoltBurst"),
+        };
+        foreach (var (name, mat, expectedShader) in materials)
+        {
+            string realShader = mat != null && mat.shader != null ? mat.shader.name : "null";
+            Check($"{name} esta asignado con el shader {expectedShader}", realShader == expectedShader, $"real={realShader}");
+        }
+    }
+
+    // Confirma que el fondo en capas estilo Hollow Knight existe y usa su propio shader.
+    private static void TestHollowBackdrop()
+    {
+        var backdrop = GameObject.Find("BattleBackdrop");
+        if (!Check("BattleBackdrop existe en la escena de batalla", backdrop != null)) return;
+        var renderer = backdrop.GetComponent<Renderer>();
+        string realShader = renderer != null && renderer.sharedMaterial != null && renderer.sharedMaterial.shader != null
+            ? renderer.sharedMaterial.shader.name : "null";
+        Check("BattleBackdrop usa el shader Custom/HollowBackdrop", realShader == "Custom/HollowBackdrop", $"real={realShader}");
     }
 
     // Confirma que la mazmorra tiene su sistema de particulas de ambiente activo apenas arranca

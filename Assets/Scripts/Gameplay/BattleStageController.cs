@@ -21,8 +21,17 @@ namespace Gameplay
         [Tooltip("Las 6 frames de HitImpact.png, en orden de animacion (las asigna DungeonSceneBuilder via HitEffectImporter.LoadFrames()).")]
         public Sprite[] hitImpactFrames;
 
-        [Header("Efecto de impacto elemental (shader, en todos los golpes)")]
+        [Header("Efecto de impacto elemental (shader simple, en TODOS los golpes -- basicos y habilidades)")]
         public Material elementalBurstMaterial;
+
+        [Header("Shaders de habilidad por elemento (mas elaborados: SOLO en golpes de HABILIDAD)")]
+        [Tooltip("Cada habilidad tiene su propio shader de ataque segun su elemento (no por personaje). Los ataques basicos solo usan el shader simple de arriba.")]
+        public Material slashSkillMaterial;
+        public Material strikeSkillMaterial;
+        public Material pierceSkillMaterial;
+        public Material fireSkillMaterial;
+        public Material iceSkillMaterial;
+        public Material voltSkillMaterial;
 
         private Camera _battleCamera;
         private AudioListener _battleAudioListener;
@@ -268,16 +277,41 @@ namespace Gameplay
 
         // Golpe de habilidad: ademas del pulso de disolucion, aparece el efecto de impacto (sprite
         // HitImpact.png) sobre el enemigo, teñido segun el elemento para que se note la diferencia
-        // entre habilidades. El tinte se mezcla al 55% para no perder el dibujo original.
+        // entre habilidades, Y el shader propio de esa habilidad (SkillMaterialFor) -- cada
+        // habilidad tiene su propio shader de ataque segun su elemento (no por personaje: dos
+        // habilidades del mismo elemento comparten shader). Los ataques basicos NUNCA llegan aca;
+        // solo usan el shader simple de HandleEnemyElementalHit.
         private void HandleEnemySkillHit(int index, Element element)
         {
             if (index < 0 || index >= _activeViews.Count) return;
             var view = _activeViews[index];
-            if (view == null || hitImpactFrames == null || hitImpactFrames.Length == 0) return;
+            if (view == null) return;
 
-            Color tint = Color.Lerp(Color.white, ElementVisuals.ColorFor(element), 0.55f);
             Quaternion facing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
-            HitImpactEffect.Spawn(hitImpactFrames, view.transform.position, tint, facing);
+
+            if (hitImpactFrames != null && hitImpactFrames.Length > 0)
+            {
+                Color tint = Color.Lerp(Color.white, ElementVisuals.ColorFor(element), 0.55f);
+                HitImpactEffect.Spawn(hitImpactFrames, view.transform.position, tint, facing);
+            }
+
+            var skillMaterial = SkillMaterialFor(element);
+            if (skillMaterial != null)
+                ElementalBurstEffect.Spawn(skillMaterial, view.transform.position, ElementVisuals.ColorFor(element), facing);
+        }
+
+        private Material SkillMaterialFor(Element element)
+        {
+            switch (element)
+            {
+                case Element.Slash: return slashSkillMaterial;
+                case Element.Strike: return strikeSkillMaterial;
+                case Element.Pierce: return pierceSkillMaterial;
+                case Element.Fire: return fireSkillMaterial;
+                case Element.Ice: return iceSkillMaterial;
+                case Element.Volt: return voltSkillMaterial;
+                default: return null;
+            }
         }
 
         // Efecto de shader + rafaga de particulas reales (sin sprite) que se ven en CUALQUIER
