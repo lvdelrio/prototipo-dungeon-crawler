@@ -3,6 +3,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using Gameplay;
 
 // Construye y guarda la escena de batalla (aparte de la mazmorra): una camara propia (apagada
 // por defecto, la prende BattleStageController al entrar en combate) y una luz propia mirando 3
@@ -29,6 +30,11 @@ public static class BattleSceneBuilder
         cameraGo.transform.rotation = Quaternion.identity;
         cam.enabled = false;
         listener.enabled = false;
+        // Sin esto, el flash/sacudida de camara (CombatFeedback) solo existia en la camara de la
+        // mazmorra -- que BattleStageController APAGA apenas arranca un combate -- asi que nunca
+        // se veia durante una pelea real (solo la sacudida de una camara invisible). La cámara de
+        // batalla necesita su propia instancia; BattleStageController hace el swap al entrar/salir.
+        cameraGo.AddComponent<CombatFeedback>();
 
         // Luz propia de la escena de batalla (no depende de que la mazmorra este cargada ni de
         // como este rotada su luz): apunta de frente/arriba hacia los parantes para que la cara

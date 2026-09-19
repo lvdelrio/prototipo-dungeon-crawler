@@ -1,5 +1,6 @@
 using System.Collections;
 using UnityEngine;
+using Combat;
 
 namespace Gameplay
 {
@@ -34,10 +35,24 @@ namespace Gameplay
         public float allOutShakeDuration = 0.35f;
         public float allOutShakeMagnitude = 0.18f;
 
+        [Header("Brillo de borde por elemento (fuego/hielo/etc, ver ElementVisuals)")]
+        public Shader edgeGlowShader;
+        public float elementalEdgeDuration = 0.4f;
+        public float elementalEdgeIntensity = 1.3f;
+
         private Material _flashMat;
         private float _flashIntensity;
         private Color _flashColor = Color.white;
         private Coroutine _flashRoutine;
+
+        private Material _edgeMat;
+        private float _edgeIntensity;
+        private Color _edgeColor = Color.white;
+        private Coroutine _edgeRoutine;
+
+        // Expuesto solo para inspeccion (tests/depuracion): cuanto brillo de borde queda activo
+        // en este momento.
+        public float CurrentEdgeIntensity => _edgeIntensity;
 
         private Vector3 _shakeBasePos;
         private float _shakeTimeLeft;
@@ -47,6 +62,9 @@ namespace Gameplay
         {
             if (flashShader == null) flashShader = Shader.Find("Hidden/HitFlash");
             if (flashShader != null) _flashMat = new Material(flashShader);
+
+            if (edgeGlowShader == null) edgeGlowShader = Shader.Find("Hidden/ElementalEdgeGlow");
+            if (edgeGlowShader != null) _edgeMat = new Material(edgeGlowShader);
         }
 
         public void OnEnemyHit(int damage) => Impact(enemyHitFlashColor, enemyHitFlashDuration, enemyHitShakeDuration, enemyHitShakeMagnitude);
@@ -56,6 +74,30 @@ namespace Gameplay
         public void OnHeal(int amount) => Flash(healFlashColor, healFlashDuration);
 
         public void OnAllOutAttack() => Impact(allOutFlashColor, allOutFlashDuration, allOutShakeDuration, allOutShakeMagnitude);
+
+        // Brillo de borde tenido segun el elemento del golpe (fuego, hielo, etc): se ve SIEMPRE,
+        // sin importar hacia donde este mirando la camara en ese momento, ademas del efecto en el
+        // mundo (particulas/shader sobre el enemigo golpeado).
+        public void OnElementalHit(Element element)
+        {
+            _edgeColor = ElementVisuals.ColorFor(element);
+            _edgeIntensity = elementalEdgeIntensity;
+            if (_edgeRoutine != null) StopCoroutine(_edgeRoutine);
+            _edgeRoutine = StartCoroutine(FadeEdge(elementalEdgeDuration));
+        }
+
+        private IEnumerator FadeEdge(float duration)
+        {
+            float t = 0f;
+            while (t < duration)
+            {
+                t += Time.deltaTime;
+                _edgeIntensity = Mathf.Lerp(elementalEdgeIntensity, 0f, duration > 0f ? t / duration : 1f);
+                yield return null;
+            }
+            _edgeIntensity = 0f;
+            _edgeRoutine = null;
+        }
 
         private void Impact(Color flashColor, float flashDuration, float shakeDuration, float shakeMagnitude)
         {
@@ -112,15 +154,39 @@ namespace Gameplay
 
         void OnRenderImage(RenderTexture source, RenderTexture destination)
         {
-            if (_flashMat == null || _flashIntensity <= 0.001f)
+            bool hasFlash = _flashMat != null && _flashIntensity > 0.001f;
+            bool hasEdge = _edgeMat != null && _edgeIntensity > 0.001f;
+
+            if (!hasFlash && !hasEdge)
             {
                 Graphics.Blit(source, destination);
                 return;
             }
 
-            _flashMat.SetColor("_FlashColor", _flashColor);
-            _flashMat.SetFloat("_Intensity", _flashIntensity);
-            Graphics.Blit(source, destination, _flashMat);
+            RenderTexture current = source;
+            RenderTexture temp = null;
+
+            if (hasFlash)
+            {
+                temp = RenderTexture.GetTemporary(source.width, source.height, 0, source.format);
+                _flashMat.SetColor("_FlashColor", _flashColor);
+                _flashMat.SetFloat("_Intensity", _flashIntensity);
+                Graphics.Blit(current, temp, _flashMat);
+                current = temp;
+            }
+
+            if (hasEdge)
+            {
+                _edgeMat.SetColor("_GlowColor", _edgeColor);
+                _edgeMat.SetFloat("_Intensity", _edgeIntensity);
+                Graphics.Blit(current, destination, _edgeMat);
+            }
+            else
+            {
+                Graphics.Blit(current, destination);
+            }
+
+            if (temp != null) RenderTexture.ReleaseTemporary(temp);
         }
     }
 }

@@ -418,6 +418,7 @@ namespace Gameplay
                 if (dmg <= 0) continue;
 
                 feedback?.OnEnemyHit(dmg);
+                if (hitElement != Element.None) feedback?.OnElementalHit(hitElement);
                 OnEnemyDamaged?.Invoke(i);
                 OnEnemyElementalHit?.Invoke(i, hitElement);
                 if (isSkillHit) OnEnemySkillHit?.Invoke(i, hitElement);

@@ -122,6 +122,16 @@ public static class BattleBatchValidator
                     Check("Los 6 frames del efecto de impacto quedaron asignados", _battleStage.hitImpactFrames != null && _battleStage.hitImpactFrames.Length == 6 && _battleStage.hitImpactFrames[0] != null);
                     Check("El material del efecto elemental (shader) quedo asignado", _battleStage.elementalBurstMaterial != null);
 
+                    // El flash/sacudida de camara vivia SOLO en la camara de la mazmorra, que se
+                    // apaga durante el combate -- nunca se veia en una pelea real. Confirma que
+                    // CombatManager.feedback ahora apunta al CombatFeedback de la camara de
+                    // batalla (la que esta realmente activa) mientras dura el combate.
+                    var battleFeedback = battleCam != null ? battleCam.GetComponent<CombatFeedback>() : null;
+                    Check("BattleCamera tiene su propio CombatFeedback", battleFeedback != null);
+                    Check("CombatManager.feedback apunta al CombatFeedback de la camara de batalla (no a la de la mazmorra, apagada)",
+                        battleFeedback != null && _combatManager.feedback == battleFeedback);
+
+                    TestElementalEdgeGlow(battleFeedback);
                     TestBattleAmbientParticles();
                     TestPoiseBreakSetup();
                     SetPhase(10);
@@ -229,6 +239,8 @@ public static class BattleBatchValidator
                     Check("No quedan EnemyView colgados tras terminar el combate", remaining.Length == 0, $"quedaron={remaining.Length}");
                     Check("No queda BattleAmbientParticles colgado tras terminar el combate", Object.FindObjectOfType<BattleAmbientParticles>() == null);
                     Check("La niebla de la mazmorra se restaura al salir de combate", RenderSettings.fogEndDistance > 20f, $"fogEndDistance={RenderSettings.fogEndDistance}");
+                    Check("CombatManager.feedback vuelve a la camara de la mazmorra al salir de combate",
+                        _combatManager.feedback != null && _combatManager.feedback.GetComponent<Camera>() == Camera.main);
 
                     // Segunda pelea: probar "Huir" (forzado al 100% para que el resultado sea
                     // determinista) y confirmar que se limpia igual que un combate normal, pero
@@ -381,9 +393,11 @@ public static class BattleBatchValidator
             RenderSettings.fog && RenderSettings.fogEndDistance <= 20f, $"fogEndDistance={RenderSettings.fogEndDistance}");
     }
 
-    // Confirma que ElementalParticleEffect.Spawn no solo crea un ParticleSystem, sino que la
-    // rafaga configurada para cada elemento realmente emite particulas (particleCount > 0) --
-    // esto es lo que detecta el bug real de "Play On Awake" antes de terminar de configurarse.
+    // Confirma que ElementalParticleEffect.Spawn no solo crea los ParticleSystem, sino que la
+    // rafaga principal Y la de "flare" configuradas para cada elemento realmente emiten
+    // particulas (particleCount > 0) -- esto es lo que detecta el bug real de "Play On Awake"
+    // antes de terminar de configurarse. Tambien confirma la luz de impacto real (Light, para el
+    // golpe "mas llamativo" tipo Tekken 8).
     private static void TestElementalParticles()
     {
         foreach (Combat.Element element in System.Enum.GetValues(typeof(Combat.Element)))
@@ -391,16 +405,33 @@ public static class BattleBatchValidator
             var before = new System.Collections.Generic.HashSet<ParticleSystem>(Object.FindObjectsOfType<ParticleSystem>());
             ElementalParticleEffect.Spawn(Vector3.zero, element);
 
-            ParticleSystem created = null;
+            var created = new System.Collections.Generic.List<ParticleSystem>();
             foreach (var ps in Object.FindObjectsOfType<ParticleSystem>())
             {
-                if (!before.Contains(ps)) { created = ps; break; }
+                if (!before.Contains(ps)) created.Add(ps);
             }
-            if (!Check($"ElementalParticleEffect.Spawn crea un ParticleSystem para {element}", created != null)) continue;
+            if (!Check($"ElementalParticleEffect.Spawn crea las 2 capas (principal + flare) para {element}", created.Count == 2, $"encontradas={created.Count}"))
+                continue;
 
-            created.Simulate(0.02f, true, false);
-            Check($"la rafaga de {element} realmente emite particulas (no se queda en 0)", created.particleCount > 0, $"particleCount={created.particleCount}");
+            foreach (var ps in created)
+            {
+                ps.Simulate(0.02f, true, false);
+                Check($"{element} ({ps.name}): realmente emite particulas (no se queda en 0)", ps.particleCount > 0, $"particleCount={ps.particleCount}");
+            }
+
+            var light = created[0].transform.root.GetComponentInChildren<Light>();
+            Check($"{element}: tiene una luz de impacto real (Light)", light != null);
         }
+    }
+
+    // Confirma que CombatFeedback.OnElementalHit activa el brillo de borde (edge glow), la pieza
+    // que pidio el usuario para "ver reflejado en el borde de la camara" el elemento del golpe.
+    private static void TestElementalEdgeGlow(CombatFeedback battleFeedback)
+    {
+        if (!Check("Hay un CombatFeedback de batalla para probar el brillo de borde", battleFeedback != null)) return;
+        Check("el brillo de borde arranca apagado", battleFeedback.CurrentEdgeIntensity <= 0f);
+        battleFeedback.OnElementalHit(Combat.Element.Fire);
+        Check("OnElementalHit activa el brillo de borde", battleFeedback.CurrentEdgeIntensity > 0f, $"intensity={battleFeedback.CurrentEdgeIntensity}");
     }
 
     // Prueba el menu de pausa (PauseMenuManager) y las piezas de progresion que vive muestran:

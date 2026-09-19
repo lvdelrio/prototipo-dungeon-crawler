@@ -50,10 +50,16 @@ namespace Gameplay
 
         private static readonly Color AllOutBurstColor = new Color(1f, 0.9f, 0.35f);
 
+        // El flash/sacudida de camara (CombatFeedback) tiene que vivir en la camara que este
+        // REALMENTE activa en cada momento: la de la mazmorra se apaga durante el combate, asi que
+        // sin este swap el feedback quedaba disparandose sobre una camara invisible y nunca se veia.
+        private CombatFeedback _dungeonFeedback;
+
         void Awake()
         {
             CaptureDungeonFogIfNeeded();
             if (combatManager == null) return;
+            _dungeonFeedback = combatManager.feedback;
             combatManager.OnCombatStarted += HandleCombatStarted;
             combatManager.OnCombatFinished += HandleCombatFinished;
             combatManager.OnCombatFled += HandleCombatFled;
@@ -97,6 +103,12 @@ namespace Gameplay
             if (dungeonAudioListener != null) dungeonAudioListener.enabled = false;
             if (_battleCamera != null) _battleCamera.enabled = true;
             if (_battleAudioListener != null) _battleAudioListener.enabled = true;
+
+            if (combatManager != null && _battleCamera != null)
+            {
+                var battleFeedback = _battleCamera.GetComponent<CombatFeedback>();
+                if (battleFeedback != null) combatManager.feedback = battleFeedback;
+            }
 
             SpawnEnemyViews();
 
@@ -263,7 +275,7 @@ namespace Gameplay
             var view = _activeViews[index];
             if (view == null || hitImpactFrames == null || hitImpactFrames.Length == 0) return;
 
-            Color tint = Color.Lerp(Color.white, ElementColor(element), 0.55f);
+            Color tint = Color.Lerp(Color.white, ElementVisuals.ColorFor(element), 0.55f);
             Quaternion facing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
             HitImpactEffect.Spawn(hitImpactFrames, view.transform.position, tint, facing);
         }
@@ -280,7 +292,7 @@ namespace Gameplay
             if (elementalBurstMaterial != null)
             {
                 Quaternion facing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
-                ElementalBurstEffect.Spawn(elementalBurstMaterial, view.transform.position, ElementColor(element), facing);
+                ElementalBurstEffect.Spawn(elementalBurstMaterial, view.transform.position, ElementVisuals.ColorFor(element), facing);
             }
             ElementalParticleEffect.Spawn(view.transform.position, element);
         }
@@ -307,19 +319,6 @@ namespace Gameplay
             }
         }
 
-        private static Color ElementColor(Element element)
-        {
-            switch (element)
-            {
-                case Element.Fire: return new Color(1f, 0.35f, 0.12f);
-                case Element.Ice: return new Color(0.4f, 0.85f, 1f);
-                case Element.Volt: return new Color(1f, 0.92f, 0.2f);
-                case Element.Slash: return new Color(0.85f, 0.9f, 1f);
-                case Element.Strike: return new Color(1f, 0.75f, 0.4f);
-                case Element.Pierce: return new Color(0.8f, 1f, 0.7f);
-                default: return Color.white;
-            }
-        }
 
         private void HandleEnemyDefeated(int index)
         {
@@ -354,6 +353,7 @@ namespace Gameplay
                 _ambientParticles = null;
             }
             RestoreDungeonFog();
+            if (combatManager != null && _dungeonFeedback != null) combatManager.feedback = _dungeonFeedback;
 
             if (dungeonCamera != null) dungeonCamera.enabled = true;
             if (dungeonAudioListener != null) dungeonAudioListener.enabled = true;
