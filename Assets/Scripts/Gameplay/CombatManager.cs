@@ -111,12 +111,15 @@ namespace Gameplay
             meta.ApplyUpgradesToParty(Party);
         }
 
-        public void StartEncounter(bool isBoss)
+        // floorIndex (0 = primer piso): escala dificultad -- daño de enemigos y que tan probable es
+        // un encuentro de 3 en vez de 2 suben a medida que se baja mas. Default 0 para no romper
+        // llamadas existentes (tests) que no les importa la escala.
+        public void StartEncounter(bool isBoss, int floorIndex = 0)
         {
             if (IsActive) return;
 
             IsBossFight = isBoss;
-            Enemies = isBoss ? new List<EnemyStats> { EnemyFactory.CreateBoss() } : EnemyFactory.CreateRandomEncounter(_rng);
+            Enemies = isBoss ? new List<EnemyStats> { EnemyFactory.CreateBoss(floorIndex) } : EnemyFactory.CreateRandomEncounter(_rng, floorIndex);
             _engine = new CombatEngine(Party, Enemies, _rng);
             _queuedActions.Clear();
             _chooserIndex = 0;

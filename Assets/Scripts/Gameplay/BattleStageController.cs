@@ -422,6 +422,12 @@ namespace Gameplay
         }
 
 
+        // Los primeros FrontStandCount parantes (0,1,2) son la fila de adelante, mas cerca de la
+        // camara; el resto (3,4,5) es la fila de atras, de reserva para cuando un Slime se divide
+        // con el frente ya lleno (ver BattleSceneBuilder). Coincide con el orden de
+        // StandOrderForCount y con como se nombraron/ordenaron los BattleStand_N.
+        private const int FrontStandCount = 3;
+
         private void HandleEnemyDefeated(int index)
         {
             if (index < 0 || index >= _activeViews.Count) return;
@@ -436,7 +442,35 @@ namespace Gameplay
                 // visual aunque el motor de combate SI la haya agregado a Enemies.
                 if (index < _viewStandIndex.Count) _viewStandIndex[index] = -1;
                 if (index < _activeViews.Count) _activeViews[index] = null;
+                PromoteBackRowEnemies();
             });
+        }
+
+        // Si un enemigo del frente acaba de morir y dejo un parante libre, el primero que siga
+        // vivo en la fila de atras avanza a ese lugar -- sin esto, una vez que el frente se vacia
+        // los enemigos restantes se quedan chicos y lejos en el fondo en vez de acercarse como si
+        // fueran los enemigos iniciales (justo lo que pidio el usuario).
+        private void PromoteBackRowEnemies()
+        {
+            if (_stands.Count < FrontStandCount) return;
+
+            for (int frontStand = 0; frontStand < FrontStandCount; frontStand++)
+            {
+                if (_viewStandIndex.Contains(frontStand)) continue; // ya ocupado
+
+                int backViewIndex = -1;
+                for (int i = 0; i < _viewStandIndex.Count; i++)
+                {
+                    if (_viewStandIndex[i] < FrontStandCount) continue; // -1 (libre) o ya en el frente
+                    if (_activeViews[i] == null) continue;
+                    backViewIndex = i;
+                    break;
+                }
+                if (backViewIndex < 0) break; // no queda nadie atras para promover
+
+                _viewStandIndex[backViewIndex] = frontStand;
+                _activeViews[backViewIndex].MoveTo(_stands[frontStand].position);
+            }
         }
 
         private void HandleCombatFinished(bool victory, bool wasBoss) => CleanupAfterCombat();

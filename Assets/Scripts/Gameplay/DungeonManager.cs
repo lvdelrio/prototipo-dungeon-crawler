@@ -207,7 +207,7 @@ namespace Gameplay
             if (_walkingCounter >= _encounterThreshold)
             {
                 _walkingCounter = 0;
-                combat.StartEncounter(isBoss: false);
+                combat.StartEncounter(isBoss: false, floorIndex: _currentFloorIndex);
             }
         }
 
@@ -344,7 +344,7 @@ namespace Gameplay
                 }
                 else if (combat != null && !combat.IsActive)
                 {
-                    combat.StartEncounter(isBoss: true);
+                    combat.StartEncounter(isBoss: true, floorIndex: _currentFloorIndex);
                 }
             }
             else if (cell.Type == CellType.Lever)

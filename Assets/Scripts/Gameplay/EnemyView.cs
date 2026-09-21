@@ -16,6 +16,7 @@ namespace Gameplay
         private Renderer _renderer;
         private MaterialPropertyBlock _props;
         private Coroutine _activeRoutine;
+        private Coroutine _moveRoutine;
 
         private static readonly int ColorId = Shader.PropertyToID("_Color");
         private static readonly int DissolveAmountId = Shader.PropertyToID("_DissolveAmount");
@@ -147,6 +148,33 @@ namespace Gameplay
             SetDissolve(1f);
             _activeRoutine = null;
             onComplete?.Invoke();
+        }
+
+        // "Avanza" a este enemigo a un nuevo parante (ver
+        // BattleStageController.PromoteBackRowEnemies): cuando muere alguien del frente y deja
+        // lugar libre, el primero que siga vivo atras se desliza hacia adelante en vez de quedarse
+        // chico y lejos en el fondo. Corrutina propia (no _activeRoutine): solo mueve la posicion,
+        // nunca compite con el pulso de golpe/disolucion que anima el shader.
+        public void MoveTo(Vector3 targetPosition)
+        {
+            if (_moveRoutine != null) StopCoroutine(_moveRoutine);
+            _moveRoutine = StartCoroutine(MoveRoutine(targetPosition));
+        }
+
+        private IEnumerator MoveRoutine(Vector3 targetPosition)
+        {
+            const float duration = 0.45f;
+            Vector3 start = transform.position;
+            float t = 0f;
+            while (t < duration)
+            {
+                t += Time.deltaTime;
+                float eased = 1f - Mathf.Pow(1f - Mathf.Clamp01(t / duration), 3f);
+                transform.position = Vector3.Lerp(start, targetPosition, eased);
+                yield return null;
+            }
+            transform.position = targetPosition;
+            _moveRoutine = null;
         }
     }
 }

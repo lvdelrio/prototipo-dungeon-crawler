@@ -65,6 +65,14 @@ namespace Combat
         public const float FrontRowAggroWeight = 3f;
         public const float BackRowAggroWeight = 1f;
 
+        // El aguante (Poise) ya NO baja lo mismo que el HP: un ataque basico machacado sin pensar
+        // apenas lo mella, pero explotar la debilidad elemental del enemigo lo rompe mucho mas
+        // rapido -- en un caso real, un punto flojo se resiente mas con un golpe bien dado que con
+        // uno cualquiera. Un golpe de habilidad que NO es debilidad queda en el medio (1x, como
+        // era antes para todo).
+        public const float PoiseDamageBasicAttack = 0.5f;
+        public const float PoiseDamageWeaknessHit = 1.6f;
+
         public readonly List<CharacterStats> Party;
         public readonly List<EnemyStats> Enemies;
         private readonly Random _rng;
@@ -165,7 +173,9 @@ namespace Combat
             {
                 int cap = Math.Max(1, (int)Math.Round(enemy.MaxHP * AllOutDamageCapFraction));
                 int dmgToEnemy = Math.Min(totalDamage, cap);
-                ApplyDamageToEnemy(enemy, dmgToEnemy, out _);
+                // Ni "basico" ni "debilidad" -- toda la party junta pegandole a todos por igual,
+                // sin elemento (ver arriba): multiplicador de aguante neutro (1x), igual que antes.
+                ApplyDamageToEnemy(enemy, dmgToEnemy, isBasicAttack: false, isWeaknessHit: false, out _);
                 if (enemy.IsAlive)
                 {
                     enemy.IsBroken = false;
@@ -202,8 +212,8 @@ namespace Combat
                 {
                     var target = PickAliveEnemy(action.TargetEnemyIndex);
                     if (target == null) break;
-                    int dmg = ComputeDamageVsEnemy(actor.Attack, actor.AttackElement, target, out string note);
-                    ApplyDamageToEnemy(target, dmg, out bool poiseBroke);
+                    int dmg = ComputeDamageVsEnemy(actor.Attack, actor.AttackElement, target, out string note, out bool isWeak);
+                    ApplyDamageToEnemy(target, dmg, isBasicAttack: true, isWeaknessHit: isWeak, out bool poiseBroke);
                     int regenAtk = RegenTpOnHit(actor);
                     log.Add($"{actor.Name} ataca a {target.Name}: {dmg} de daño.{note}{(poiseBroke ? " ¡Guardia rota!" : "")}{(regenAtk > 0 ? $" (+{regenAtk} TP)" : "")}");
                     break;
@@ -246,15 +256,15 @@ namespace Combat
                                 power *= QteBonus.Multiplier;
                                 qteNote = " ¡QTE exitoso!";
                             }
-                            int dmg = ComputeDamageVsEnemy((int)Math.Round(power), actor.SkillElement, target, out string note);
-                            ApplyDamageToEnemy(target, dmg, out bool poiseBroke);
+                            int dmg = ComputeDamageVsEnemy((int)Math.Round(power), actor.SkillElement, target, out string note, out bool isWeak);
+                            ApplyDamageToEnemy(target, dmg, isBasicAttack: false, isWeaknessHit: isWeak, out bool poiseBroke);
                             // Las habilidades NO regeneran TP (solo los ataques basicos, ver mas abajo).
                             log.Add($"{actor.Name} usa {actor.SkillName} en {target.Name}: {dmg} de daño.{note}{(poiseBroke ? " ¡Guardia rota!" : "")}{qteNote}");
                         }
                         else
                         {
-                            int dmg = ComputeDamageVsEnemy(actor.Attack, actor.AttackElement, target, out string note);
-                            ApplyDamageToEnemy(target, dmg, out bool poiseBroke);
+                            int dmg = ComputeDamageVsEnemy(actor.Attack, actor.AttackElement, target, out string note, out bool isWeak);
+                            ApplyDamageToEnemy(target, dmg, isBasicAttack: true, isWeaknessHit: isWeak, out bool poiseBroke);
                             int regenNoTp = RegenTpOnHit(actor);
                             log.Add($"{actor.Name} no tiene TP, ataca normal a {target.Name}: {dmg} de daño.{note}{(poiseBroke ? " ¡Guardia rota!" : "")}{(regenNoTp > 0 ? $" (+{regenNoTp} TP)" : "")}");
                         }
@@ -310,8 +320,10 @@ namespace Combat
         // por sus versiones mas debiles -- hasta el tope MaxEnemies. El enemigo original queda
         // "derrotado" en su lugar (no se borra de la lista: mantiene estables los indices que usan
         // el resto de los sistemas). poiseBroke sale en true si este golpe fue el que rompio el
-        // aguante (para poder anotarlo en el log del que llama).
-        private void ApplyDamageToEnemy(EnemyStats target, int dmg, out bool poiseBroke)
+        // aguante (para poder anotarlo en el log del que llama). isBasicAttack/isWeaknessHit
+        // deciden que porcentaje del dano de HP se le resta tambien al aguante (ver
+        // PoiseDamageBasicAttack/PoiseDamageWeaknessHit) -- el dano a la vida en si no cambia.
+        private void ApplyDamageToEnemy(EnemyStats target, int dmg, bool isBasicAttack, bool isWeaknessHit, out bool poiseBroke)
         {
             poiseBroke = false;
             bool wasAlive = target.IsAlive;
@@ -319,7 +331,9 @@ namespace Combat
 
             if (target.IsAlive && !target.IsBroken && target.MaxPoise > 0)
             {
-                target.Poise = Math.Max(0, target.Poise - dmg);
+                float poiseMultiplier = isWeaknessHit ? PoiseDamageWeaknessHit : isBasicAttack ? PoiseDamageBasicAttack : 1f;
+                int poiseDamage = Math.Max(1, (int)Math.Round(dmg * poiseMultiplier));
+                target.Poise = Math.Max(0, target.Poise - poiseDamage);
                 if (target.Poise <= 0)
                 {
                     target.IsBroken = true;
@@ -364,11 +378,12 @@ namespace Combat
             return Enemies.FirstOrDefault(e => e.IsAlive);
         }
 
-        private int ComputeDamageVsEnemy(int power, Element element, EnemyStats enemy, out string note)
+        private int ComputeDamageVsEnemy(int power, Element element, EnemyStats enemy, out string note, out bool isWeak)
         {
             int dmg = Math.Max(1, power - enemy.Defense / 2);
             note = "";
-            if (enemy.IsWeakTo(element))
+            isWeak = enemy.IsWeakTo(element);
+            if (isWeak)
             {
                 dmg *= 2;
                 note = " ¡Débil!";

@@ -27,6 +27,14 @@ namespace Gameplay
         public Material leverMarkerMaterial;
         public Material treasureMarkerMaterial;
 
+        // Tinte distinto (piso/pared/techo) para la zona aislada de cada piso: en BotW un mundo con
+        // regiones visualmente distinguibles hace que el jugador arme su propio mapa mental
+        // caminando, en vez de depender todo el tiempo del automapa -- esta zona ya tenia su color
+        // propio en el minimapa (MinimapUI.FloorColor), esto lo lleva tambien a la vista en 3D.
+        public Material isoFloorMaterial;
+        public Material isoCeilingMaterial;
+        public Material isoWallMaterial;
+
         private GameObject _root;
         private readonly Dictionary<int, (GameObject switchGo, GameObject landingGo)> _shortcutMarkers = new Dictionary<int, (GameObject, GameObject)>();
         private readonly Dictionary<(int x, int y), GameObject> _lockedDoorMarkers = new Dictionary<(int, int), GameObject>();
@@ -64,10 +72,11 @@ namespace Gameplay
                         continue;
                     }
 
+                    bool isIso = cell.IsIsolatedZone;
                     if (!cell.IsBossRoom)
                     {
-                        BuildFloorTile(center, cellSize);
-                        BuildCeilingTile(center, cellSize, wallHeight);
+                        BuildFloorTile(center, cellSize, isIso);
+                        BuildCeilingTile(center, cellSize, wallHeight, isIso);
                     }
 
                     // Pared: se construye una sola vez por borde compartido entre dos celdas reales
@@ -82,14 +91,14 @@ namespace Gameplay
                         bool outOfBounds = !floor.InBounds(nx, ny);
                         if (outOfBounds)
                         {
-                            BuildWall(center, dir, cellSize, wallHeight, wallThickness);
+                            BuildWall(center, dir, cellSize, wallHeight, wallThickness, isIso);
                             continue;
                         }
                         if (floor.Cells[nx, ny].Type == CellType.Void) continue;
 
                         bool isPrimaryDir = dir == Direction.North || dir == Direction.East;
                         if (isPrimaryDir)
-                            BuildWall(center, dir, cellSize, wallHeight, wallThickness);
+                            BuildWall(center, dir, cellSize, wallHeight, wallThickness, isIso);
                     }
 
                     BuildMarker(cell, center, cellSize, wallHeight);
@@ -111,24 +120,28 @@ namespace Gameplay
 
         public Vector3 CellCenter(int x, int y, float cellSize) => new Vector3(x * cellSize, 0f, y * cellSize);
 
-        private void BuildFloorTile(Vector3 center, float cellSize)
+        private void BuildFloorTile(Vector3 center, float cellSize, bool isIso)
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
             go.name = "Floor";
             go.transform.SetParent(_root.transform, false);
             go.transform.position = center + new Vector3(0, -0.1f, 0);
             go.transform.localScale = new Vector3(cellSize, 0.2f, cellSize);
-            ApplyMaterial(go, floorMaterial, new Color(0.35f, 0.35f, 0.38f));
+            ApplyMaterial(go,
+                isIso ? isoFloorMaterial : floorMaterial,
+                isIso ? new Color(0.24f, 0.17f, 0.30f) : new Color(0.35f, 0.35f, 0.38f));
         }
 
-        private void BuildCeilingTile(Vector3 center, float cellSize, float wallHeight)
+        private void BuildCeilingTile(Vector3 center, float cellSize, float wallHeight, bool isIso)
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
             go.name = "Ceiling";
             go.transform.SetParent(_root.transform, false);
             go.transform.position = center + new Vector3(0, wallHeight + 0.1f, 0);
             go.transform.localScale = new Vector3(cellSize, 0.2f, cellSize);
-            ApplyMaterial(go, ceilingMaterial, new Color(0.15f, 0.15f, 0.17f));
+            ApplyMaterial(go,
+                isIso ? isoCeilingMaterial : ceilingMaterial,
+                isIso ? new Color(0.12f, 0.08f, 0.16f) : new Color(0.15f, 0.15f, 0.17f));
         }
 
         // Un unico piso/techo grande que cubre todo el rectangulo de la sala de jefe, para que se
@@ -160,7 +173,7 @@ namespace Gameplay
         // borde de cellSize (igual que el mapa real de Etrian Odyssey, sin vacio fisico). La pared
         // de un atajo NUNCA se destruye: el vacio entre el switch y el punto de llegada se cruza por
         // teletransporte, no caminando.
-        private void BuildWall(Vector3 cellCenter, Direction dir, float cellSize, float wallHeight, float wallThickness)
+        private void BuildWall(Vector3 cellCenter, Direction dir, float cellSize, float wallHeight, float wallThickness, bool isIso)
         {
             var (ox, oy) = dir.Offset();
             Vector3 edgeOffset = new Vector3(ox, 0, oy) * (cellSize / 2f);
@@ -176,7 +189,9 @@ namespace Gameplay
                 ? new Vector3(cellSize, wallHeight, wallThickness)
                 : new Vector3(wallThickness, wallHeight, cellSize);
 
-            ApplyMaterial(go, wallMaterial, new Color(0.5f, 0.45f, 0.4f));
+            ApplyMaterial(go,
+                isIso ? isoWallMaterial : wallMaterial,
+                isIso ? new Color(0.4f, 0.32f, 0.48f) : new Color(0.5f, 0.45f, 0.4f));
         }
 
         private void BuildMarker(DungeonCell cell, Vector3 center, float cellSize, float wallHeight)
