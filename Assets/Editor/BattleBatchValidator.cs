@@ -35,6 +35,10 @@ public static class BattleBatchValidator
     // vez de fallar, porque ese unico enemigo ya lo necesita vivo el chequeo de la formula exacta
     // de dano (Enemies[0]).
     private static int _guaranteedKillIndex;
+    // Cuantos enemigos habia ANTES del golpe en conjunto de TestPoiseBreakSetup -- si el enemigo
+    // forzado a morir era un Slime, se agregan crias nuevas con HP lleno, que no deben contar en
+    // el chequeo de "todos recibieron dano".
+    private static int _preBurstEnemyCount;
 
     [MenuItem("Dungeon/Validate Battle Scene (Play Mode Batch)")]
     public static void ValidateFromBatch()
@@ -186,8 +190,9 @@ public static class BattleBatchValidator
                     Check("Tras el Ataque en Conjunto, AllOutAttackReady vuelve a false", !_combatManager.AllOutAttackReady);
                     Check("Tras el Ataque en Conjunto, ningun enemigo sigue con el aguante roto",
                         _combatManager.Enemies.Where(e => e.IsAlive).All(e => !e.IsBroken));
-                    Check("Todos los enemigos recibieron dano del golpe en conjunto",
-                        _combatManager.Enemies.All(e => e.HP < e.MaxHP), string.Join(",", _combatManager.Enemies.Select(e => $"{e.Name}={e.HP}/{e.MaxHP}")));
+                    Check("Todos los enemigos que ya existian antes del golpe recibieron dano",
+                        _combatManager.Enemies.Take(_preBurstEnemyCount).All(e => e.HP < e.MaxHP),
+                        string.Join(",", _combatManager.Enemies.Select(e => $"{e.Name}={e.HP}/{e.MaxHP}")));
                     Check("El log de combate registra el Ataque en Conjunto",
                         _combatManager.Log.Any(l => l.Contains("Ataque en conjunto")));
 
@@ -332,6 +337,104 @@ public static class BattleBatchValidator
                     Check("Huir con 100% de chance termina el combate", true);
                     Check("Huir NO cuenta como derrota (no abre la tienda de fin de run)", !_dungeonManager.IsGameOverShopActive);
                     Check("La camara de la mazmorra se reactiva tras huir", _battleStage.dungeonCamera != null && _battleStage.dungeonCamera.enabled);
+                    SetPhase(9);
+                }
+                break;
+
+            // Huir justo al arrancar la pelea (como recien) puede terminar el combate ANTES de que
+            // termine de cargar la escena de batalla additive -- BattleStageController lo pospone
+            // (_cleanupPendingSceneLoad) en vez de dejarla huerfana, pero esa carga demorada sigue
+            // en curso. Un buffer corto antes de arrancar la 3ra pelea evita que dos cargas de la
+            // MISMA escena additive se solapen (lo cual seria ambiguo por nombre), algo que ni
+            // siquiera pasaria en un juego real (el jugador tarda mas en caminar a otro encuentro).
+            case 9:
+                if (elapsed > 1.0)
+                {
+                    // Chequeo fuerte (no solo isLoaded, que tambien es false mientras esta
+                    // cargando): IsValid() en false confirma que Unity ya la descargo de verdad,
+                    // no que la limpieza pospuesta todavia esta en camino.
+                    var battleSceneAfterBuffer = SceneManager.GetSceneByName(BattleSceneBuilder.SceneName);
+                    Check("Tras el buffer, la escena de batalla de la pelea anterior ya se descargo de verdad (no solo 'todavia cargando')",
+                        !battleSceneAfterBuffer.IsValid());
+
+                    // 3ra pelea: probar el resumen de victoria de verdad (ganar por combate real,
+                    // no por SkipFightForTesting, que sigue bypaseando el resumen a proposito).
+                    _combatManager.StartEncounter(false);
+                    SetPhase(6);
+                }
+                break;
+
+            case 6: // espera a que la 3ra pelea este activa, fuerza HP=1 en todos y ataca a todos
+                if (elapsed > PhaseTimeout)
+                {
+                    Check("La 3ra pelea (test de resumen de victoria) arranco a tiempo", false, $"paso {PhaseTimeout}s");
+                    Finish();
+                    return;
+                }
+                if (_combatManager.IsActive)
+                {
+                    foreach (var e in _combatManager.Enemies)
+                    {
+                        e.HP = 1; // cualquier golpe real los mata
+                        // Sin esto, si toca un Slime, morir lo divide en 2 crias vivas y
+                        // AllEnemiesDefeated() nunca se cumple (justo lo que prueba el harness
+                        // puro en C:\temp\CombatTest) -- esta prueba es sobre el resumen de
+                        // victoria, no sobre la division de Slimes, asi que se la evita a proposito.
+                        e.OnDeathSplit = null;
+                    }
+                    int enemyCount = _combatManager.Enemies.Count;
+                    int i = 0;
+                    foreach (var p in _combatManager.Party.Where(p => p.IsAlive))
+                    {
+                        _combatManager.SubmitAction(new Combat.PartyAction { Actor = p, Type = Combat.ActionType.Attack, TargetEnemyIndex = i % enemyCount });
+                        i++;
+                    }
+                    SetPhase(7);
+                }
+                break;
+
+            // Espera a que se resuelva la ronda y aparezca el resumen de victoria -- este es
+            // exactamente el camino nuevo (ganar por combate real, no por el boton de test) que
+            // agrega CombatManager.IsShowingVictorySummary/DismissVictorySummary.
+            case 7:
+                if (elapsed > PhaseTimeout)
+                {
+                    Check("Aparecio el resumen de victoria a tiempo tras derrotar a todos los enemigos", false, $"paso {PhaseTimeout}s");
+                    Finish();
+                    return;
+                }
+                if (_combatManager.IsShowingVictorySummary)
+                {
+                    Check("IsShowingVictorySummary se activa al derrotar a todos los enemigos por combate real", true);
+                    Check("El combate sigue activo mientras se muestra el resumen (no se corta de golpe)", _combatManager.IsActive);
+                    var battleSceneDuringSummary = SceneManager.GetSceneByName(BattleSceneBuilder.SceneName);
+                    Check("La escena de batalla sigue cargada mientras se muestra el resumen",
+                        battleSceneDuringSummary.IsValid() && battleSceneDuringSummary.isLoaded);
+
+                    int totalDealt = _combatManager.DamageDealtThisFight.Values.Sum();
+                    Check("El resumen acumulo dano hecho por la party durante la pelea", totalDealt > 0, $"total={totalDealt}");
+
+                    _combatManager.DismissVictorySummary();
+                    SetPhase(8);
+                }
+                break;
+
+            // Confirma que "Continuar" (DismissVictorySummary) termina el combate de verdad, con
+            // la misma limpieza de siempre (escena descargada, sin EnemyView colgados).
+            case 8:
+                if (elapsed > PhaseTimeout)
+                {
+                    Check("Tras Continuar, el combate termino y la escena de batalla se descargo a tiempo", false, $"paso {PhaseTimeout}s");
+                    Finish();
+                    return;
+                }
+                var battleScene4 = SceneManager.GetSceneByName(BattleSceneBuilder.SceneName);
+                bool sceneGoneAfterSummary = !battleScene4.IsValid() || !battleScene4.isLoaded;
+                if (!_combatManager.IsActive && sceneGoneAfterSummary)
+                {
+                    Check("DismissVictorySummary termina el combate de verdad", true);
+                    Check("No quedan EnemyView colgados tras cerrar el resumen de victoria",
+                        Object.FindObjectsOfType<EnemyView>().Length == 0);
                     Finish();
                 }
                 break;
@@ -603,6 +706,11 @@ public static class BattleBatchValidator
         // corrutina de disolucion con un pulso corto y dejando al enemigo visible para siempre.
         _guaranteedKillIndex = _combatManager.Enemies.Count > 1 ? 1 : -1;
         if (_guaranteedKillIndex >= 0) _combatManager.Enemies[_guaranteedKillIndex].HP = 1;
+        // Si el enemigo forzado a morir resulta ser un Slime, el golpe en conjunto lo hace
+        // dividirse de verdad (cubre ese camino tambien) -- las crias nuevas quedan con HP lleno
+        // porque recien aparecen, asi que el chequeo de "todos recibieron dano" de mas abajo tiene
+        // que ignorarlas (solo mira los enemigos que ya existian ANTES del golpe).
+        _preBurstEnemyCount = _combatManager.Enemies.Count;
         foreach (var p in _combatManager.Party.Where(p => p.IsAlive))
             _combatManager.SubmitAction(new Combat.PartyAction { Actor = p, Type = Combat.ActionType.Guard });
     }

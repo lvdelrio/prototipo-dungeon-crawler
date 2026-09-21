@@ -45,6 +45,21 @@ namespace Gameplay
         public string CurrentTurnActorName { get; private set; }
         public bool CurrentTurnIsParty { get; private set; }
 
+        // Estadisticas de ESTE combate (se resetean en StartEncounter), para el resumen de
+        // victoria -- inspirado en juegos que muestran, al final de cada pelea, informacion util
+        // para la proxima decision (quien hizo mas dano, quien curo, quien recibio mas golpes) en
+        // vez de solo un mensaje generico de "Victoria" y seguir caminando.
+        public Dictionary<CharacterStats, int> DamageDealtThisFight { get; } = new Dictionary<CharacterStats, int>();
+        public Dictionary<CharacterStats, int> HealingDoneThisFight { get; } = new Dictionary<CharacterStats, int>();
+        public Dictionary<CharacterStats, int> DamageTakenThisFight { get; } = new Dictionary<CharacterStats, int>();
+        public int AllOutAttackDamageThisFight { get; private set; }
+
+        // True apenas se derrota al ultimo enemigo por combate REAL (no por SkipFightForTesting,
+        // que sigue terminando el combate al instante como antes): el combate en si sigue
+        // "activo" (la escena de batalla no se descarga todavia) hasta que el jugador confirma
+        // con DismissVictorySummary(), para poder mostrar el resumen de la pelea.
+        public bool IsShowingVictorySummary { get; private set; }
+
         [Header("Ataque en Conjunto (se habilita si se rompe el aguante de TODOS los enemigos a la vez)")]
         [Tooltip("Segundos que dura la ventana para 'machacar' el boton: cada pulsacion suma mas dano (ver CombatEngine.ExecuteAllOutAttack). Si nadie aprieta nada, se pierde la oportunidad esta ronda.")]
         public float allOutAttackMashWindow = 3f;
@@ -105,6 +120,18 @@ namespace Gameplay
             _chooserIndex = 0;
             IsActive = true;
             IsResolvingRound = false;
+            IsShowingVictorySummary = false;
+
+            DamageDealtThisFight.Clear();
+            HealingDoneThisFight.Clear();
+            DamageTakenThisFight.Clear();
+            AllOutAttackDamageThisFight = 0;
+            foreach (var p in Party.Where(p => p.IsAlive))
+            {
+                DamageDealtThisFight[p] = 0;
+                HealingDoneThisFight[p] = 0;
+                DamageTakenThisFight[p] = 0;
+            }
 
             Log.Clear();
             Log.Add(isBoss ? "¡Aparece el Guardián de Piedra!" : "¡Un grupo de enemigos aparece!");
@@ -176,6 +203,15 @@ namespace Gameplay
                 _chooserIndex = Party.Count;
                 StartCoroutine(ResolveRoundCoroutine());
             }
+        }
+
+        // Boton "Continuar" del resumen de victoria: recien aca termina el combate de verdad (se
+        // descarga la escena de batalla, se resume la exploracion).
+        public void DismissVictorySummary()
+        {
+            if (!IsShowingVictorySummary) return;
+            IsShowingVictorySummary = false;
+            EndCombat(victory: true);
         }
 
         // Boton de test (para probar el resto del juego rapido): gana el combate actual al
@@ -286,6 +322,7 @@ namespace Gameplay
 
                 var turnLog = _engine.ExecuteTurn(isParty, idx, _queuedActions);
                 Log.AddRange(turnLog);
+                AccumulateFightStats(isParty, idx, partyHpBefore, enemyHpBefore);
 
                 // Golpe de habilidad (no ataque basico, no curacion) contra un enemigo: dispara el
                 // efecto de impacto especial (shader unico por elemento) ademas del feedback normal.
@@ -327,9 +364,11 @@ namespace Gameplay
             {
                 Log.Add(IsBossFight ? "¡Venciste al Guardián de Piedra!" : "¡Victoria!");
                 // Le da tiempo a la animacion de disolucion del ultimo enemigo caido antes de
-                // cerrar el combate y descargar la escena de batalla.
+                // mostrar el resumen de la pelea. El combate NO termina todavia (EndCombat recien
+                // se llama desde DismissVictorySummary, cuando el jugador confirma haber visto el
+                // resumen): la escena de batalla se queda cargada mientras tanto.
                 yield return new WaitForSeconds(1f);
-                EndCombat(victory: true);
+                IsShowingVictorySummary = true;
             }
             else if (_engine.AllPartyDefeated())
             {
@@ -388,6 +427,10 @@ namespace Gameplay
             {
                 int dmg = enemyHpBeforeBurst[i] - Enemies[i].HP;
                 if (dmg <= 0) continue;
+                // Dano del golpe en conjunto: es de toda la party junta (la formula suma el ATK de
+                // todos los vivos), asi que no se le atribuye a un solo personaje -- se muestra
+                // como su propia fila aparte en el resumen de victoria.
+                AllOutAttackDamageThisFight += dmg;
                 OnEnemyDamaged?.Invoke(i);
                 if (enemyHpBeforeBurst[i] > 0 && Enemies[i].HP <= 0)
                     OnEnemyDefeated?.Invoke(i);
@@ -397,6 +440,34 @@ namespace Gameplay
 
             OnAllOutAttackUsed?.Invoke();
             yield return new WaitForSeconds(0.6f);
+        }
+
+        // Suma al total de ESTE combate cuanto dano hizo / cuanto curo el actor de este turno (si
+        // fue un personaje de la party), y cuanto dano recibio cada miembro de la party (sin
+        // importar quien actuo) -- para el resumen de victoria (ver DamageDealtThisFight/
+        // HealingDoneThisFight/DamageTakenThisFight). El Ataque en Conjunto se acumula aparte, en
+        // OfferAllOutAttack, porque no es de un solo personaje.
+        private void AccumulateFightStats(bool isParty, int idx, int[] partyHpBefore, int[] enemyHpBefore)
+        {
+            if (isParty && idx < Party.Count)
+            {
+                var actor = Party[idx];
+                int dealt = 0;
+                for (int i = 0; i < enemyHpBefore.Length && i < Enemies.Count; i++)
+                    dealt += Math.Max(0, enemyHpBefore[i] - Enemies[i].HP);
+                if (dealt > 0 && DamageDealtThisFight.ContainsKey(actor)) DamageDealtThisFight[actor] += dealt;
+
+                int healed = 0;
+                for (int i = 0; i < partyHpBefore.Length && i < Party.Count; i++)
+                    healed += Math.Max(0, Party[i].HP - partyHpBefore[i]);
+                if (healed > 0 && HealingDoneThisFight.ContainsKey(actor)) HealingDoneThisFight[actor] += healed;
+            }
+
+            for (int i = 0; i < partyHpBefore.Length && i < Party.Count; i++)
+            {
+                int taken = Math.Max(0, partyHpBefore[i] - Party[i].HP);
+                if (taken > 0 && DamageTakenThisFight.ContainsKey(Party[i])) DamageTakenThisFight[Party[i]] += taken;
+            }
         }
 
         // Compara el HP de todos antes/despues del turno que se acaba de ejecutar: dispara el

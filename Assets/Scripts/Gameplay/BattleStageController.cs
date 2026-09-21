@@ -45,6 +45,14 @@ namespace Gameplay
 
         private BattleAmbientParticles _ambientParticles;
 
+        // True cuando el combate termino (CleanupAfterCombat se llamo) mientras la carga
+        // additive de la escena de batalla TODAVIA estaba en progreso: sin esto, la escena se
+        // queda huerfana para siempre (cargada, sin nadie que la descargue nunca), porque
+        // SceneManager.GetSceneByName la devuelve con isLoaded=false en ese momento y el chequeo
+        // de limpieza la salteaba en silencio. Puede pasar en un combate real si el jugador huye
+        // (o hace algo que termine el combate) muy rapido, justo al arrancar la pelea.
+        private bool _cleanupPendingSceneLoad;
+
         // Niebla de distancia: se guarda la de la mazmorra la primera vez (ya viene cargada del
         // scene file) y se restaura al salir de combate, para que la niebla de la batalla no se
         // quede pegada en la mazmorra.
@@ -128,6 +136,16 @@ namespace Gameplay
             ApplyBattleFog(isBoss);
             if (_battleCamera != null)
                 _ambientParticles = BattleAmbientParticles.Spawn(_battleCamera.transform, isBoss);
+
+            // El combate termino MUY rapido (p.ej. Huir justo al arrancar la pelea, o
+            // SkipFightForTesting) y CleanupAfterCombat se llamo mientras la escena todavia
+            // estaba cargando: en ese momento no habia nada que descargar todavia (isLoaded era
+            // false), asi que se pospuso hasta ahora. Recien esta lista, hacerla de una.
+            if (_cleanupPendingSceneLoad)
+            {
+                _cleanupPendingSceneLoad = false;
+                CleanupAfterCombat();
+            }
         }
 
         // ---------- Niebla de distancia ----------
@@ -401,6 +419,17 @@ namespace Gameplay
 
         private void CleanupAfterCombat()
         {
+            var battleSceneCheck = SceneManager.GetSceneByName(battleSceneName);
+            if (battleSceneCheck.IsValid() && !battleSceneCheck.isLoaded)
+            {
+                // El combate termino mientras la carga additive todavia estaba en progreso (ver
+                // _cleanupPendingSceneLoad): nada de esto (camara, niebla, parantes) existe todavia
+                // de verdad, asi que no hay nada que limpiar ni descargar TODAVIA. Se reintenta
+                // completa desde OnBattleSceneLoaded en cuanto la carga termine.
+                _cleanupPendingSceneLoad = true;
+                return;
+            }
+
             ClearViews();
 
             if (_ambientParticles != null)
@@ -414,9 +443,8 @@ namespace Gameplay
             if (dungeonCamera != null) dungeonCamera.enabled = true;
             if (dungeonAudioListener != null) dungeonAudioListener.enabled = true;
 
-            var battleScene = SceneManager.GetSceneByName(battleSceneName);
-            if (battleScene.IsValid() && battleScene.isLoaded)
-                SceneManager.UnloadSceneAsync(battleScene);
+            if (battleSceneCheck.IsValid() && battleSceneCheck.isLoaded)
+                SceneManager.UnloadSceneAsync(battleSceneCheck);
         }
 
         private void ClearViews()

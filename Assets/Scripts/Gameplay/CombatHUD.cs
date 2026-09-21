@@ -43,8 +43,11 @@ namespace Gameplay
         // por el mismo frame.
         void Update()
         {
-            if (combatManager != null && combatManager.AllOutAttackReady && Input.GetKeyDown(KeyCode.Space))
+            if (combatManager == null) return;
+            if (combatManager.AllOutAttackReady && Input.GetKeyDown(KeyCode.Space))
                 combatManager.TriggerAllOutAttack();
+            else if (combatManager.IsShowingVictorySummary && Input.GetKeyDown(KeyCode.Space))
+                combatManager.DismissVictorySummary();
         }
 
         void OnGUI()
@@ -66,6 +69,14 @@ namespace Gameplay
                 _lastPartyHp.Clear();
                 _popups.Clear();
                 _wasActive = true;
+            }
+
+            // Resumen de victoria: se dibuja SOLO esto (nada del panel normal de abajo) hasta que
+            // el jugador confirma con "Continuar" -- ver CombatManager.DismissVictorySummary.
+            if (combatManager.IsShowingVictorySummary)
+            {
+                DrawVictorySummary();
+                return;
             }
 
             // El panel se ancla abajo (deja el resto de la pantalla, arriba, libre para que se vea
@@ -372,6 +383,61 @@ namespace Gameplay
             string buttonLabel = mashCount > 0 ? $"¡SEGUÍ MACHACANDO! x{mashCount} (Espacio)" : "¡ATAQUE EN CONJUNTO! (Espacio)";
             if (UIButton.Draw(new Rect(panelX + panelW - 260, y + 30, 240, 32), buttonLabel, accentColor: glow))
                 combatManager.TriggerAllOutAttack();
+        }
+
+        // Resumen de la pelea que se acaba de ganar: quien hizo mas dano, quien curo, quien
+        // recibio mas golpes -- inspirado en juegos que muestran esta info al final de cada
+        // combate (no solo al final de la run) para que el jugador entienda que funciono y pueda
+        // ajustar formacion/objetivos la proxima vez, en vez de un simple mensaje de "Victoria"
+        // que desaparece sin dejar nada util.
+        private void DrawVictorySummary()
+        {
+            float panelW = Mathf.Min(Screen.width - 80f, 640f);
+            float panelH = Mathf.Min(Screen.height - 80f, 60f + combatManager.Party.Count * 30f + 150f);
+            float panelX = (Screen.width - panelW) / 2f;
+            float panelY = (Screen.height - panelH) / 2f;
+
+            DrawRect(new Rect(panelX, panelY, panelW, panelH), new Color(0.06f, 0.06f, 0.08f, 0.97f));
+            DrawRect(new Rect(panelX, panelY, panelW, 4), new Color(0.85f, 0.7f, 0.15f));
+
+            var titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 22, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
+            titleStyle.normal.textColor = new Color(0.95f, 0.85f, 0.4f);
+            GUI.Label(new Rect(panelX, panelY + 10, panelW, 32), combatManager.IsBossFight ? "¡VICTORIA DE JEFE!" : "¡VICTORIA!", titleStyle);
+
+            var defeated = combatManager.Enemies.Where(e => !e.IsAlive).Select(e => e.Name).ToList();
+            GUI.Label(new Rect(panelX + 20, panelY + 46, panelW - 40, 20), $"Derrotaste a: {string.Join(", ", defeated)}");
+
+            float y = panelY + 76;
+            var headerStyle = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold };
+            GUI.Label(new Rect(panelX + 20, y, 200, 20), "Personaje", headerStyle);
+            GUI.Label(new Rect(panelX + 260, y, 120, 20), "Daño hecho", headerStyle);
+            GUI.Label(new Rect(panelX + 390, y, 120, 20), "Curación", headerStyle);
+            GUI.Label(new Rect(panelX + 510, y, 110, 20), "Daño recibido", headerStyle);
+            y += 24;
+
+            foreach (var member in combatManager.Party)
+            {
+                int dealt = combatManager.DamageDealtThisFight.TryGetValue(member, out var d) ? d : 0;
+                int healed = combatManager.HealingDoneThisFight.TryGetValue(member, out var h) ? h : 0;
+                int taken = combatManager.DamageTakenThisFight.TryGetValue(member, out var t) ? t : 0;
+                GUI.Label(new Rect(panelX + 20, y, 230, 22), member.IsAlive ? member.Name : $"{member.Name} (caído)");
+                GUI.Label(new Rect(panelX + 260, y, 120, 22), dealt.ToString());
+                GUI.Label(new Rect(panelX + 390, y, 120, 22), healed > 0 ? $"+{healed}" : "-");
+                GUI.Label(new Rect(panelX + 510, y, 110, 22), taken.ToString());
+                y += 26;
+            }
+
+            if (combatManager.AllOutAttackDamageThisFight > 0)
+            {
+                y += 6;
+                var goldStyle = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold };
+                goldStyle.normal.textColor = new Color(0.95f, 0.85f, 0.4f);
+                GUI.Label(new Rect(panelX + 20, y, panelW - 40, 22), $"Ataque en Conjunto: {combatManager.AllOutAttackDamageThisFight} de daño total", goldStyle);
+                y += 26;
+            }
+
+            if (UIButton.Draw(new Rect(panelX + panelW - 180, panelY + panelH - 44, 160, 34), "Continuar"))
+                combatManager.DismissVictorySummary();
         }
 
         private void TrackActionMenuReveal(CharacterStats chooser)
