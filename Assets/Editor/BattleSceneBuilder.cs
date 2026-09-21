@@ -1,0 +1,109 @@
+using System.Collections.Generic;
+using System.Linq;
+using UnityEditor;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+using Gameplay;
+
+// Construye y guarda la escena de batalla (aparte de la mazmorra): una camara propia (apagada
+// por defecto, la prende BattleStageController al entrar en combate) y una luz propia mirando 3
+// "parantes" donde se instancian los enemigos.
+public static class BattleSceneBuilder
+{
+    public const string ScenePath = "Assets/Scenes/BattleScene.unity";
+    public const string SceneName = "BattleScene";
+
+    // Bien lejos de la mazmorra (que vive cerca de Y=0) para que nunca se puedan pisar/ver entre si.
+    private static readonly Vector3 StageOrigin = new Vector3(0f, 200f, 0f);
+
+    [MenuItem("Dungeon/Build Battle Scene")]
+    public static void Build()
+    {
+        var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+
+        var cameraGo = new GameObject("BattleCamera");
+        var cam = cameraGo.AddComponent<Camera>();
+        var listener = cameraGo.AddComponent<AudioListener>();
+        cam.clearFlags = CameraClearFlags.SolidColor;
+        cam.backgroundColor = new Color(0.04f, 0.04f, 0.07f);
+        cameraGo.transform.position = StageOrigin + new Vector3(0f, 1.2f, -6f);
+        cameraGo.transform.rotation = Quaternion.identity;
+        cam.enabled = false;
+        listener.enabled = false;
+        // Sin esto, el flash/sacudida de camara (CombatFeedback) solo existia en la camara de la
+        // mazmorra -- que BattleStageController APAGA apenas arranca un combate -- asi que nunca
+        // se veia durante una pelea real (solo la sacudida de una camara invisible). La cámara de
+        // batalla necesita su propia instancia; BattleStageController hace el swap al entrar/salir.
+        cameraGo.AddComponent<CombatFeedback>();
+
+        // Luz propia de la escena de batalla (no depende de que la mazmorra este cargada ni de
+        // como este rotada su luz): apunta de frente/arriba hacia los parantes para que la cara
+        // que mira a la camara quede bien iluminada.
+        var lightGo = new GameObject("BattleLight");
+        var light = lightGo.AddComponent<Light>();
+        light.type = LightType.Directional;
+        light.intensity = 1.1f;
+        lightGo.transform.position = StageOrigin;
+        lightGo.transform.rotation = Quaternion.Euler(35f, 20f, 0f);
+
+        // 6 parantes en 2 filas de 3: la fila de adelante (z=0) es la de siempre, donde arrancan
+        // los encuentros normales (nunca mas de 3, ver EnemyFactory.CreateRandomEncounter). La
+        // fila de atras (mas lejos de la camara, que esta en z=-6 -- ver arriba) es de reserva
+        // para cuando los Slimes se dividen: el PEOR caso es un encuentro de 3 Slimes donde los 3
+        // se parten en 2, terminando en 6 crias vivas a la vez (CombatEngine.MaxEnemies), asi que
+        // hacen falta los 6 parantes, no solo uno de mas.
+        var standPositions = new[]
+        {
+            StageOrigin + new Vector3(-2.6f, 1.2f, 0f),
+            StageOrigin + new Vector3(0f, 1.2f, 0f),
+            StageOrigin + new Vector3(2.6f, 1.2f, 0f),
+            StageOrigin + new Vector3(-2.6f, 1.6f, 2.6f),
+            StageOrigin + new Vector3(0f, 1.6f, 2.6f),
+            StageOrigin + new Vector3(2.6f, 1.6f, 2.6f),
+        };
+        for (int i = 0; i < standPositions.Length; i++)
+        {
+            var stand = new GameObject($"BattleStand_{i}");
+            stand.transform.position = standPositions[i];
+        }
+
+        // Fondo pintado en capas (estilo Hollow Knight: cielo en degrade + siluetas quebradas de
+        // lejos a cerca) bien atras de los parantes, para que la pelea no quede contra un color
+        // solido plano. Cull Off en el shader evita depender de hacia que lado quedo orientado el
+        // Quad; al no usar las macros de niebla de Unity, se ve nitido igual que un skybox.
+        var backdropGo = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        backdropGo.name = "BattleBackdrop";
+        var backdropCollider = backdropGo.GetComponent<Collider>();
+        if (backdropCollider != null) Object.DestroyImmediate(backdropCollider);
+        backdropGo.transform.position = StageOrigin + new Vector3(0f, 6f, 22f);
+        backdropGo.transform.localScale = new Vector3(64f, 36f, 1f);
+        var backdropShader = Shader.Find("Custom/HollowBackdrop");
+        if (backdropShader != null)
+            backdropGo.GetComponent<Renderer>().sharedMaterial = new Material(backdropShader);
+
+        EditorSceneManager.SaveScene(scene, ScenePath);
+
+        RegisterInBuildSettings();
+
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+        Debug.Log("BattleScene creada correctamente en " + ScenePath);
+    }
+
+    // SceneManager.LoadSceneAsync por nombre necesita que la escena figure en Build Settings
+    // (tanto para Play Mode del editor como para un build real).
+    private static void RegisterInBuildSettings()
+    {
+        var scenes = EditorBuildSettings.scenes.ToList();
+        EnsureScene(scenes, "Assets/Scenes/DungeonTest.unity");
+        EnsureScene(scenes, ScenePath);
+        EditorBuildSettings.scenes = scenes.ToArray();
+    }
+
+    private static void EnsureScene(List<EditorBuildSettingsScene> scenes, string path)
+    {
+        if (!System.IO.File.Exists(path)) return;
+        if (scenes.Any(s => s.path == path)) return;
+        scenes.Add(new EditorBuildSettingsScene(path, true));
+    }
+}

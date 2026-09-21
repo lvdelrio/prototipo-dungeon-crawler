@@ -7,16 +7,17 @@ namespace Gameplay
     {
         public DungeonManager dungeonManager;
         public GridPlayerController player;
+        public PauseMenuManager pauseMenu;
 
         [Header("Modo de mapa")]
         [Tooltip("true = solo se ve lo que el jugador ya piso (niebla de guerra). false = mapa completo (modo debug).")]
         public bool playerMode = true;
         public KeyCode toggleModeKey = KeyCode.Tab;
 
-        public int panelX = 500;
         public int panelY = 10;
         public int cellPixelSize = 16;
         public int wallPixelThickness = 2;
+        public int rightMargin = 10;
 
         private static Texture2D _whiteTex;
 
@@ -28,11 +29,18 @@ namespace Gameplay
         void OnGUI()
         {
             if (dungeonManager == null || player == null) return;
+            // El mapa desaparece durante el combate, la pantalla de tienda/mejoras post-run y el
+            // menu de pausa: en todos los casos hay otro panel mas importante que no debe quedar tapado.
+            if (dungeonManager.IsCombatActive || dungeonManager.IsGameOverShopActive) return;
+            if (pauseMenu != null && pauseMenu.IsOpen) return;
             var floor = dungeonManager.CurrentFloor;
             if (floor == null) return;
 
             int w = floor.Width;
             int h = floor.Height;
+            // Anclado arriba a la derecha, ajustado al tamano real del mapa, en vez de una
+            // posicion X fija que en pantallas angostas podia salirse o superponerse con otra UI.
+            int panelX = Screen.width - (w * cellPixelSize + 20) - rightMargin;
             float top = panelY + 24;
 
             GUI.Box(new Rect(panelX - 10, panelY - 10, w * cellPixelSize + 20, h * cellPixelSize + 44), "");
@@ -49,23 +57,29 @@ namespace Gameplay
                     float px = panelX + x * cellPixelSize;
                     float py = top + (h - 1 - y) * cellPixelSize;
 
+                    if (cell.Type == CellType.Void)
+                    {
+                        DrawRect(new Rect(px, py, cellPixelSize, cellPixelSize), VoidColor);
+                        continue;
+                    }
+
                     bool revealed = !playerMode || cell.Discovered;
                     if (!revealed)
                     {
-                        DrawRect(new Rect(px, py, cellPixelSize, cellPixelSize), new Color(0.05f, 0.05f, 0.06f));
+                        DrawRect(new Rect(px, py, cellPixelSize, cellPixelSize), VoidColor);
                         continue;
                     }
 
                     DrawRect(new Rect(px, py, cellPixelSize, cellPixelSize), FloorColor(cell));
 
                     if (cell.HasWall(Direction.North))
-                        DrawRect(new Rect(px, py, cellPixelSize, wallPixelThickness), Color.black);
+                        DrawRect(new Rect(px, py, cellPixelSize, wallPixelThickness), VoidColor);
                     if (cell.HasWall(Direction.South))
-                        DrawRect(new Rect(px, py + cellPixelSize - wallPixelThickness, cellPixelSize, wallPixelThickness), Color.black);
+                        DrawRect(new Rect(px, py + cellPixelSize - wallPixelThickness, cellPixelSize, wallPixelThickness), VoidColor);
                     if (cell.HasWall(Direction.West))
-                        DrawRect(new Rect(px, py, wallPixelThickness, cellPixelSize), Color.black);
+                        DrawRect(new Rect(px, py, wallPixelThickness, cellPixelSize), VoidColor);
                     if (cell.HasWall(Direction.East))
-                        DrawRect(new Rect(px + cellPixelSize - wallPixelThickness, py, wallPixelThickness, cellPixelSize), Color.black);
+                        DrawRect(new Rect(px + cellPixelSize - wallPixelThickness, py, wallPixelThickness, cellPixelSize), VoidColor);
 
                     Color? markerColor = MarkerColor(cell);
                     if (markerColor.HasValue)
@@ -87,11 +101,17 @@ namespace Gameplay
             DrawRect(new Rect(facingPx - 2, facingPy - 2, 4, 4), Color.magenta);
         }
 
+        // Paleta calcada de un automapa real de Etrian Odyssey: piso celeste, vacio azul oscuro.
+        private static readonly Color VoidColor = new Color(0.04f, 0.1f, 0.2f);
+        private static readonly Color PathColor = new Color(0.47f, 0.67f, 0.82f);
+
         private Color FloorColor(DungeonCell cell)
         {
             if (cell.Type == CellType.Event && cell.EventConsumed)
-                return new Color(0.45f, 0.45f, 0.45f);
-            return cell.IsIsolatedZone ? new Color(0.30f, 0.20f, 0.35f) : new Color(0.62f, 0.62f, 0.66f);
+                return new Color(0.35f, 0.42f, 0.5f);
+            if (cell.IsBossRoom)
+                return new Color(0.5f, 0.16f, 0.16f);
+            return cell.IsIsolatedZone ? new Color(0.30f, 0.20f, 0.35f) : PathColor;
         }
 
         private Color? MarkerColor(DungeonCell cell)
@@ -102,9 +122,15 @@ namespace Gameplay
                 case CellType.End: return Color.red;
                 case CellType.SecondaryQuest: return Color.yellow;
                 case CellType.ShortcutSwitch: return new Color(0.2f, 0.4f, 1f);
+                case CellType.ShortcutLanding: return new Color(0.85f, 0.45f, 0.1f);
                 case CellType.StairsUp: return Color.cyan;
                 case CellType.StairsDown: return new Color(1f, 0.5f, 0f);
                 case CellType.Event: return cell.EventConsumed ? (Color?)null : Color.white;
+                case CellType.Boss: return new Color(1f, 0f, 0.1f);
+                case CellType.Lore: return new Color(0.75f, 0.35f, 1f);
+                case CellType.LockedDoor: return new Color(0.55f, 0.1f, 0.1f);
+                case CellType.Lever: return new Color(0.15f, 0.9f, 0.35f);
+                case CellType.Treasure: return new Color(1f, 0.82f, 0.1f);
                 default: return null;
             }
         }

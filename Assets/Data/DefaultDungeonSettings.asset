@@ -12,12 +12,19 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7a6c57bccb55ee24fba80f27ff3707bf, type: 3}
   m_Name: DefaultDungeonSettings
   m_EditorClassIdentifier: 
-  width: 16
-  height: 16
+  size: 16
   floorCount: 3
   stairPairsPerFloor: 2
-  seed: 12345
-  eventPercent: 0.12
+  seed: 0
+  eventPercent: 0.06
+  eventsPerFloor: 
   cellSize: 4
   wallHeight: 3
   wallThickness: 0.2
+  voidFraction: 0.4
+  bossFloorStart: 2
+  bossFloorInterval: 2
+  dangerValueMin: 0
+  dangerValueMax: 5
+  encounterThresholdMin: 16
+  encounterThresholdMax: 64
