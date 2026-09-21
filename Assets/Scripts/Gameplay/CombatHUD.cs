@@ -224,7 +224,13 @@ namespace Gameplay
                     {
                         GUI.Label(new Rect(panelX + 20, y, 300, 20), "Elegí un objetivo:");
                         y += 22;
+                        // Hasta 3 enemigos vivos a la vez podian entrar en una sola fila; con el
+                        // Slime pudiendo dividirse hasta 6 a la vez (CombatEngine.MaxEnemies), sin
+                        // esto la fila se salia de la pantalla y los ultimos objetivos quedaban
+                        // inalcanzables. Envuelve a una fila nueva cada 3 botones.
+                        const int perRow = 3;
                         float bx = panelX + 20;
+                        int col = 0;
                         foreach (var enemy in combatManager.Enemies.Where(e => e.IsAlive))
                         {
                             int idx = combatManager.Enemies.IndexOf(enemy);
@@ -234,9 +240,12 @@ namespace Gameplay
                                 combatManager.SubmitAction(action);
                                 _pendingType = null;
                             }
-                            bx += 190;
+                            col++;
+                            if (col >= perRow) { col = 0; bx = panelX + 20; y += 30; }
+                            else bx += 190;
                         }
-                        if (UIButton.Draw(new Rect(panelX + 20, y + 34, 100, 24), "Cancelar")) _pendingType = null;
+                        if (col != 0) y += 30;
+                        if (UIButton.Draw(new Rect(panelX + 20, y + 4, 100, 24), "Cancelar")) _pendingType = null;
                     }
                 }
                 else

@@ -30,6 +30,11 @@ public static class BattleBatchValidator
     private const double GlobalTimeout = 40.0;
     private const int TestMashPresses = 4;
     private static float _preCombatFogEndDistance;
+    // -1 cuando el encuentro random de esta corrida solo trajo 1 enemigo (sin semilla fija, puede
+    // pasar): en ese caso el chequeo de "muere de verdad por el golpe en conjunto" se saltea en
+    // vez de fallar, porque ese unico enemigo ya lo necesita vivo el chequeo de la formula exacta
+    // de dano (Enemies[0]).
+    private static int _guaranteedKillIndex;
 
     [MenuItem("Dungeon/Validate Battle Scene (Play Mode Batch)")]
     public static void ValidateFromBatch()
@@ -202,11 +207,18 @@ public static class BattleBatchValidator
                     // TestPoiseBreakSetup ya deberia estar muerto de verdad -- pero su vista todavia
                     // esta ahi, a mitad de la disolucion (dura 0.8s), asi que TODOS los enemigos
                     // (vivos + el recien muerto) siguen teniendo una vista en este instante exacto.
-                    var views2 = Object.FindObjectsOfType<EnemyView>();
-                    bool killedForReal = _combatManager.Enemies.Count > 1 && !_combatManager.Enemies[1].IsAlive;
-                    Check("El enemigo con HP bajo murio de verdad por el golpe en conjunto", killedForReal);
-                    Check("Las representaciones visuales de los enemigos todavia estan ahi (la disolucion recien empieza)",
-                        views2.Length == _combatManager.Enemies.Count, $"vistas={views2.Length} enemigos={_combatManager.Enemies.Count}");
+                    if (_guaranteedKillIndex >= 0)
+                    {
+                        var views2 = Object.FindObjectsOfType<EnemyView>();
+                        bool killedForReal = !_combatManager.Enemies[_guaranteedKillIndex].IsAlive;
+                        Check("El enemigo con HP bajo murio de verdad por el golpe en conjunto", killedForReal);
+                        Check("Las representaciones visuales de los enemigos todavia estan ahi (la disolucion recien empieza)",
+                            views2.Length == _combatManager.Enemies.Count, $"vistas={views2.Length} enemigos={_combatManager.Enemies.Count}");
+                    }
+                    else
+                    {
+                        Debug.Log("[BATTLE-VALIDATE] (salteado) el encuentro random de esta corrida solo trajo 1 enemigo, no se puede probar la muerte garantizada sin pisar el chequeo de formula de dano.");
+                    }
 
                     SetPhase(12);
                 }
@@ -222,9 +234,12 @@ public static class BattleBatchValidator
             case 12:
                 if (elapsed > 1.2)
                 {
-                    var viewForDead = _battleStage.GetEnemyView(1);
-                    Check("El enemigo muerto por el golpe en conjunto SI desaparece de la pantalla tras la disolucion",
-                        viewForDead == null, viewForDead != null ? "la vista sigue asignada en ese indice" : "");
+                    if (_guaranteedKillIndex >= 0)
+                    {
+                        var viewForDead = _battleStage.GetEnemyView(_guaranteedKillIndex);
+                        Check("El enemigo muerto por el golpe en conjunto SI desaparece de la pantalla tras la disolucion",
+                            viewForDead == null, viewForDead != null ? "la vista sigue asignada en ese indice" : "");
+                    }
 
                     var remainingViews = Object.FindObjectsOfType<EnemyView>();
                     int expectedRemaining = _combatManager.Enemies.Count(e => e.IsAlive);
@@ -580,12 +595,14 @@ public static class BattleBatchValidator
             e.Poise = 0;
             e.IsBroken = true;
         }
-        // Un enemigo (si hay al menos 2) arranca con HP bajo a proposito: el golpe en conjunto SI
-        // lo mata de verdad (el tope de dano nunca baja de 1), a diferencia del resto (9999 HP,
+        // Un enemigo (si hay al menos 2 -- el encuentro es random de verdad, sin semilla fija, asi
+        // que a veces toca solo 1) arranca con HP bajo a proposito: el golpe en conjunto SI lo
+        // mata de verdad (el tope de dano nunca baja de 1), a diferencia del resto (9999 HP,
         // sobreviven para poder medir el dano exacto). Esto fuerza el camino real de "muere por un
         // ataque en conjunto", el mismo que tenia el bug de HandleAllOutAttackUsed pisando la
         // corrutina de disolucion con un pulso corto y dejando al enemigo visible para siempre.
-        if (_combatManager.Enemies.Count > 1) _combatManager.Enemies[1].HP = 1;
+        _guaranteedKillIndex = _combatManager.Enemies.Count > 1 ? 1 : -1;
+        if (_guaranteedKillIndex >= 0) _combatManager.Enemies[_guaranteedKillIndex].HP = 1;
         foreach (var p in _combatManager.Party.Where(p => p.IsAlive))
             _combatManager.SubmitAction(new Combat.PartyAction { Actor = p, Type = Combat.ActionType.Guard });
     }

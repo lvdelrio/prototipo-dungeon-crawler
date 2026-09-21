@@ -46,17 +46,20 @@ public static class BattleSceneBuilder
         lightGo.transform.position = StageOrigin;
         lightGo.transform.rotation = Quaternion.Euler(35f, 20f, 0f);
 
-        // 4 parantes: los primeros 3 son los de siempre (encuentros normales nunca arrancan con
-        // mas de 3, ver EnemyFactory.CreateRandomEncounter). El 4to queda un poco atras y al
-        // costado, de reserva para cuando un Slime se parte en 2 con los otros 3 ya ocupados
-        // (CombatEngine.MaxEnemies) -- asi la pelea puede crecer a 4 sin que las crias se
-        // amontonen encima de otro enemigo.
+        // 6 parantes en 2 filas de 3: la fila de adelante (z=0) es la de siempre, donde arrancan
+        // los encuentros normales (nunca mas de 3, ver EnemyFactory.CreateRandomEncounter). La
+        // fila de atras (mas lejos de la camara, que esta en z=-6 -- ver arriba) es de reserva
+        // para cuando los Slimes se dividen: el PEOR caso es un encuentro de 3 Slimes donde los 3
+        // se parten en 2, terminando en 6 crias vivas a la vez (CombatEngine.MaxEnemies), asi que
+        // hacen falta los 6 parantes, no solo uno de mas.
         var standPositions = new[]
         {
             StageOrigin + new Vector3(-2.6f, 1.2f, 0f),
             StageOrigin + new Vector3(0f, 1.2f, 0f),
             StageOrigin + new Vector3(2.6f, 1.2f, 0f),
-            StageOrigin + new Vector3(4.6f, 1.2f, -1.6f),
+            StageOrigin + new Vector3(-2.6f, 1.6f, 2.6f),
+            StageOrigin + new Vector3(0f, 1.6f, 2.6f),
+            StageOrigin + new Vector3(2.6f, 1.6f, 2.6f),
         };
         for (int i = 0; i < standPositions.Length; i++)
         {

@@ -33,11 +33,13 @@ namespace Combat
 
     public class CombatEngine
     {
-        // Tope de enemigos VIVOS simultaneos en pantalla (coincide con los 4 "parantes" de la
-        // escena de batalla): un Slime que se divide nunca puede hacer crecer la pelea mas alla de
-        // esto. Los encuentros normales arrancan con 1-3 (ver EnemyFactory.CreateRandomEncounter),
-        // asi que el 4to parante solo se ocupa cuando un Slime se parte con los otros 3 ya en pie.
-        public const int MaxEnemies = 4;
+        // Tope de enemigos VIVOS simultaneos en pantalla (coincide con los 6 "parantes" de la
+        // escena de batalla). Los encuentros normales arrancan con 1-3 (ver
+        // EnemyFactory.CreateRandomEncounter), pero el PEOR caso real es un encuentro de 3 Slimes:
+        // si los 3 mueren y los 3 se dividen, terminan siendo 3*2=6 crias vivas a la vez (ninguna
+        // de las 3 "ranuras" originales sigue ocupada, todas fueron reemplazadas). El tope tiene
+        // que cubrir ese caso completo, no solo "un Slime de mas".
+        public const int MaxEnemies = 6;
 
         // Costo en TP de la habilidad de Protector de proteger a todo el grupo (antes era gratis).
         public const int ProtectAllTpCost = 6;
