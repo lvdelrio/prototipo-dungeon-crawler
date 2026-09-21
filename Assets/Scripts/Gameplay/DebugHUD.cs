@@ -30,7 +30,7 @@ namespace Gameplay
             if (dungeonManager.Meta != null)
                 GUI.Label(new Rect(20, 135, 440, 20), $"Puntos: {dungeonManager.Meta.BankedPoints} | Mapas: {dungeonManager.Meta.MapCharges} | Perforadores: {dungeonManager.Meta.DrillCharges}");
 
-            if (GUI.Button(new Rect(20, 158, 160, 25), "Validar Dungeon"))
+            if (UIButton.Draw(new Rect(20, 158, 160, 25), "Validar Dungeon"))
             {
                 var (ok, issues) = dungeonManager.ValidateCurrentDungeon();
                 _validationResult = ok

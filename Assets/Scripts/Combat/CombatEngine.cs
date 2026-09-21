@@ -33,9 +33,11 @@ namespace Combat
 
     public class CombatEngine
     {
-        // Tope de enemigos simultaneos en pantalla (coincide con los 3 "parantes" de la escena de
-        // batalla): un Slime que se divide nunca puede hacer crecer la pelea mas alla de esto.
-        public const int MaxEnemies = 3;
+        // Tope de enemigos VIVOS simultaneos en pantalla (coincide con los 4 "parantes" de la
+        // escena de batalla): un Slime que se divide nunca puede hacer crecer la pelea mas alla de
+        // esto. Los encuentros normales arrancan con 1-3 (ver EnemyFactory.CreateRandomEncounter),
+        // asi que el 4to parante solo se ocupa cuando un Slime se parte con los otros 3 ya en pie.
+        public const int MaxEnemies = 4;
 
         // Costo en TP de la habilidad de Protector de proteger a todo el grupo (antes era gratis).
         public const int ProtectAllTpCost = 6;
@@ -48,6 +50,13 @@ namespace Combat
         // cada pulsacion EXTRA (hasta un tope) suma mas dano, para que "smashear" tenga sentido.
         public const float AllOutDamagePerExtraPress = 0.12f;
         public const int AllOutMaxPresses = 12;
+
+        // Tope: el golpe en conjunto nunca le saca a un enemigo mas de este porcentaje de SU
+        // MaxHP de una sola vez, sin importar cuantos personajes vivos tenga la party ni cuanto se
+        // haya machacado el boton -- sin este limite, con una party de 6 el dano total (suma de
+        // ATK de todos) mas el bonus de mashear volvia el golpe en un one-shot casi garantizado
+        // incluso contra el jefe, sintiendose disparatado en vez de un finisher fuerte.
+        public const float AllOutDamageCapFraction = 0.5f;
 
         // Formula de agro: los personajes del frente concentran mas probabilidad de ser el
         // blanco de los enemigos que los de atras (ver CharacterStats.IsFrontRow).
@@ -152,14 +161,16 @@ namespace Combat
 
             foreach (var enemy in Enemies.Where(e => e.IsAlive).ToList())
             {
-                ApplyDamageToEnemy(enemy, totalDamage, out _);
+                int cap = Math.Max(1, (int)Math.Round(enemy.MaxHP * AllOutDamageCapFraction));
+                int dmgToEnemy = Math.Min(totalDamage, cap);
+                ApplyDamageToEnemy(enemy, dmgToEnemy, out _);
                 if (enemy.IsAlive)
                 {
                     enemy.IsBroken = false;
                     enemy.Poise = enemy.MaxPoise;
                 }
             }
-            log.Add($"¡Ataque en conjunto! Toda la party golpea a la vez por {totalDamage} de daño a cada enemigo (x{clampedMash} golpes de boton).");
+            log.Add($"¡Ataque en conjunto! Toda la party golpea a la vez (hasta {totalDamage} de daño, tope {AllOutDamageCapFraction:P0} del HP máximo de cada enemigo, x{clampedMash} golpes de botón).");
             return log;
         }
 
@@ -322,7 +333,12 @@ namespace Combat
                 // Todo o nada: si no hay lugar para TODOS los reemplazos, no se agrega ninguno (un
                 // Slime partiendose en un solo hijo, a medias, se veia como un bug en vez de una
                 // decision de diseño). Con lugar de sobra, entran todos los que devuelva el split.
-                if (replacements != null && Enemies.Count + replacements.Count <= MaxEnemies)
+                // OJO: el Slime que se acaba de morir NO se borra de Enemies (mantiene indices
+                // estables), asi que Enemies.Count todavia lo cuenta como si siguiera "ocupando
+                // lugar" aunque ya este muerto -- hay que contar solo los que siguen VIVOS (el
+                // Slime recien muerto queda afuera solo porque target.IsAlive ya es false aca).
+                int aliveAfterSplit = Enemies.Count(e => e.IsAlive) + replacements.Count;
+                if (replacements != null && aliveAfterSplit <= MaxEnemies)
                 {
                     Enemies.AddRange(replacements);
                 }

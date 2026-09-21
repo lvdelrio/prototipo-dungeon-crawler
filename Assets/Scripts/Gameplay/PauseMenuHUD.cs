@@ -26,18 +26,18 @@ namespace Gameplay
             GUI.Label(new Rect(panelX + 20, panelY + 8, 300, 26), "MENÚ");
 
             float tabY = panelY + 8;
-            if (GUI.Button(new Rect(panelX + panelW - 620, tabY, 140, 28), "Códex"))
+            if (UIButton.Draw(new Rect(panelX + panelW - 620, tabY, 140, 28), "Códex"))
                 pauseMenu.ShowTab(PauseMenuManager.Tab.Codex);
-            if (GUI.Button(new Rect(panelX + panelW - 470, tabY, 140, 28), "Equipamiento"))
+            if (UIButton.Draw(new Rect(panelX + panelW - 470, tabY, 140, 28), "Equipamiento"))
                 pauseMenu.ShowTab(PauseMenuManager.Tab.Equipment);
-            if (GUI.Button(new Rect(panelX + panelW - 320, tabY, 140, 28), "Formación"))
+            if (UIButton.Draw(new Rect(panelX + panelW - 320, tabY, 140, 28), "Formación"))
                 pauseMenu.ShowTab(PauseMenuManager.Tab.Formation);
-            if (GUI.Button(new Rect(panelX + panelW - 170, tabY, 90, 28), "Guardar"))
+            if (UIButton.Draw(new Rect(panelX + panelW - 170, tabY, 90, 28), "Guardar"))
             {
                 MetaSaveService.Save(meta);
                 _saveMessageUntil = Time.time + 2f;
             }
-            if (GUI.Button(new Rect(panelX + panelW - 70, tabY, 50, 28), "X"))
+            if (UIButton.Draw(new Rect(panelX + panelW - 70, tabY, 50, 28), "X"))
                 pauseMenu.Close();
 
             float y = panelY + 46;
@@ -102,7 +102,7 @@ namespace Gameplay
                 GUI.Label(new Rect(panelX + 250, y, 260, 24), equippedItem != null ? equippedItem.Name : "(sin equipar)");
 
                 float bx = panelX + 520;
-                if (GUI.Button(new Rect(bx, y, 90, 24), "Ninguno"))
+                if (UIButton.Draw(new Rect(bx, y, 90, 24), "Ninguno"))
                     combatManager.SetEquippedItemLive(meta, character.Class, "");
                 bx += 96;
 
@@ -111,7 +111,7 @@ namespace Gameplay
                     if (itemId == equippedId) continue;
                     var item = EquipmentCatalog.Find(itemId);
                     if (item == null) continue;
-                    if (GUI.Button(new Rect(bx, y, 130, 24), item.Name))
+                    if (UIButton.Draw(new Rect(bx, y, 130, 24), item.Name))
                         combatManager.SetEquippedItemLive(meta, character.Class, itemId);
                     bx += 136;
                 }
@@ -145,13 +145,13 @@ namespace Gameplay
                 if (i < front.Count)
                 {
                     var p = front[i];
-                    if (GUI.Button(new Rect(panelX + 20, y, 400, 30), $"{p.Name} ({p.Class}) -> mover al fondo"))
+                    if (UIButton.Draw(new Rect(panelX + 20, y, 400, 30), $"{p.Name} ({p.Class}) -> mover al fondo"))
                         combatManager.SetFrontRow(p, false);
                 }
                 if (i < back.Count)
                 {
                     var p = back[i];
-                    if (GUI.Button(new Rect(panelX + 470, y, 400, 30), $"{p.Name} ({p.Class}) -> mover al frente"))
+                    if (UIButton.Draw(new Rect(panelX + 470, y, 400, 30), $"{p.Name} ({p.Class}) -> mover al frente"))
                         combatManager.SetFrontRow(p, true);
                 }
                 y += 36;

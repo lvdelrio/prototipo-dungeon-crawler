@@ -44,15 +44,16 @@ public static class DungeonSceneBuilder
         RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
         RenderSettings.ambientLight = new Color(0.5f, 0.5f, 0.55f);
 
-        // Niebla de distancia: limita lo que se puede ver hacia adelante a unas 4 celdas (cellSize
-        // = 4 -> 16 unidades), para dar sensacion real de exploracion -- mas alla de eso, todo se
-        // pierde en la penumbra en vez de que el pasillo entero quede a la vista de punta a punta.
+        // Niebla de distancia: limita lo que se puede ver hacia adelante a unas 3 celdas (cellSize
+        // = 4 -> 12 unidades), version mas intensa/corta que la primera pasada (4 celdas, 16
+        // unidades) -- empieza a cerrar desde 1 celda de distancia en vez de 1.5, para que la
+        // sensacion de "todavia no se que hay ahi" se note mucho mas apenas se avanza.
         const float cellSizeForFog = 4f;
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.Linear;
         RenderSettings.fogColor = new Color(0.05f, 0.05f, 0.08f);
-        RenderSettings.fogStartDistance = cellSizeForFog * 1.5f;
-        RenderSettings.fogEndDistance = cellSizeForFog * 4f;
+        RenderSettings.fogStartDistance = cellSizeForFog * 1f;
+        RenderSettings.fogEndDistance = cellSizeForFog * 3f;
 
         var managerGo = new GameObject("DungeonManager");
         var manager = managerGo.AddComponent<DungeonManager>();
@@ -109,6 +110,7 @@ public static class DungeonSceneBuilder
         minimap.dungeonManager = manager;
         minimap.player = playerController;
         combatHud.combatManager = combatManager;
+        combatHud.battleStage = battleStage;
         combatManager.qteManager = qteManager;
         combatManager.feedback = combatFeedback;
         metaShopHud.dungeonManager = manager;

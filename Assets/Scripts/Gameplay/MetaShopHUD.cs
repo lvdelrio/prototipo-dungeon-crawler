@@ -58,13 +58,11 @@ namespace Gameplay
                     }
                     else
                     {
-                        GUI.enabled = meta.BankedPoints >= cost;
-                        if (GUI.Button(new Rect(bx, y, colW - 10, 24), $"Lv {level}->{level + 1} ({cost}p)"))
+                        if (UIButton.Draw(new Rect(bx, y, colW - 10, 24), $"Lv {level}->{level + 1} ({cost}p)", enabled: meta.BankedPoints >= cost))
                         {
                             meta.TryPurchaseUpgrade(character.Class, stat);
                             MetaSaveService.Save(meta);
                         }
-                        GUI.enabled = true;
                     }
                 }
                 y += 28;
@@ -74,21 +72,17 @@ namespace Gameplay
             GUI.Label(new Rect(panelX + 20, y, panelW - 40, 20), "Tienda de items para la proxima run:");
             y += 26;
 
-            GUI.enabled = meta.BankedPoints >= MetaProgress.MapCost;
-            if (GUI.Button(new Rect(panelX + 20, y, 280, 30), $"Comprar Mapa ({meta.MapCharges} en inventario) - {MetaProgress.MapCost}p"))
+            if (UIButton.Draw(new Rect(panelX + 20, y, 280, 30), $"Comprar Mapa ({meta.MapCharges} en inventario) - {MetaProgress.MapCost}p", enabled: meta.BankedPoints >= MetaProgress.MapCost))
             {
                 meta.TryPurchaseMap();
                 MetaSaveService.Save(meta);
             }
-            GUI.enabled = true;
 
-            GUI.enabled = meta.BankedPoints >= MetaProgress.DrillCost;
-            if (GUI.Button(new Rect(panelX + 320, y, 320, 30), $"Comprar Perforador ({meta.DrillCharges} en inventario) - {MetaProgress.DrillCost}p"))
+            if (UIButton.Draw(new Rect(panelX + 320, y, 320, 30), $"Comprar Perforador ({meta.DrillCharges} en inventario) - {MetaProgress.DrillCost}p", enabled: meta.BankedPoints >= MetaProgress.DrillCost))
             {
                 meta.TryPurchaseDrill();
                 MetaSaveService.Save(meta);
             }
-            GUI.enabled = true;
             y += 42;
 
             GUI.Label(new Rect(panelX + 20, y, panelW - 40, 40),
@@ -107,19 +101,17 @@ namespace Gameplay
                 }
                 else
                 {
-                    GUI.enabled = meta.BankedPoints >= item.Cost;
-                    if (GUI.Button(new Rect(panelX + 540, y, 180, 22), $"Comprar ({item.Cost}p)"))
+                    if (UIButton.Draw(new Rect(panelX + 540, y, 180, 22), $"Comprar ({item.Cost}p)", enabled: meta.BankedPoints >= item.Cost))
                     {
                         meta.TryPurchaseItem(item.Id);
                         MetaSaveService.Save(meta);
                     }
-                    GUI.enabled = true;
                 }
                 y += 26;
             }
             y += 12;
 
-            if (GUI.Button(new Rect(panelX + 20, y, 240, 38), "Comenzar nueva run"))
+            if (UIButton.Draw(new Rect(panelX + 20, y, 240, 38), "Comenzar nueva run"))
             {
                 dungeonManager.StartNewRun();
             }

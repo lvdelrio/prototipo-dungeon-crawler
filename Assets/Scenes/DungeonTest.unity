@@ -576,6 +576,9 @@ MonoBehaviour:
   bossRoomFloorMaterial: {fileID: 0}
   bossRoomCeilingMaterial: {fileID: 0}
   voidBlockMaterial: {fileID: 0}
+  lockedDoorMarkerMaterial: {fileID: 0}
+  leverMarkerMaterial: {fileID: 0}
+  treasureMarkerMaterial: {fileID: 0}
 --- !u!4 &576578297
 Transform:
   m_ObjectHideFlags: 0
@@ -961,7 +964,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: bbe737b89db56584b9074a42802819db, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  turnRevealDelay: 0.7
+  turnRevealDelay: 0.5
   qteManager: {fileID: 1330331453}
   qteTimeLimit: 2.5
   feedback: {fileID: 399547477}

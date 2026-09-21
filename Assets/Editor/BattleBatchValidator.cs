@@ -190,30 +190,62 @@ public static class BattleBatchValidator
                     // pulsaciones (no solo "recibio algo de dano"): confirma que mashear de verdad
                     // escala el golpe, no que quedo pegado en el minimo de 1 pulsacion.
                     float mashMultiplier = 1f + Combat.CombatEngine.AllOutDamagePerExtraPress * (TestMashPresses - 1);
-                    int expectedDmg = _combatManager.Party.Where(p => p.IsAlive)
+                    int rawDmg = _combatManager.Party.Where(p => p.IsAlive)
                         .Sum(p => (int)System.Math.Round(p.Attack * Combat.CombatEngine.AllOutAttackMultiplier * mashMultiplier));
+                    int cap = (int)System.Math.Round(_combatManager.Enemies[0].MaxHP * Combat.CombatEngine.AllOutDamageCapFraction);
+                    int expectedDmg = System.Math.Min(rawDmg, System.Math.Max(1, cap));
                     int actualDmg = _combatManager.Enemies[0].MaxHP - _combatManager.Enemies[0].HP;
                     Check("el dano del Ataque en Conjunto escala segun la formula exacta de mashCount",
                         actualDmg == expectedDmg, $"esperado={expectedDmg} real={actualDmg}");
 
+                    // A esta altura (mismo frame que el golpe), el enemigo forzado a HP=1 en
+                    // TestPoiseBreakSetup ya deberia estar muerto de verdad -- pero su vista todavia
+                    // esta ahi, a mitad de la disolucion (dura 0.8s), asi que TODOS los enemigos
+                    // (vivos + el recien muerto) siguen teniendo una vista en este instante exacto.
                     var views2 = Object.FindObjectsOfType<EnemyView>();
-                    Check("Las representaciones visuales de los enemigos siguen en pie tras el golpe en conjunto", views2.Length == _combatManager.Enemies.Count(e => e.IsAlive));
+                    bool killedForReal = _combatManager.Enemies.Count > 1 && !_combatManager.Enemies[1].IsAlive;
+                    Check("El enemigo con HP bajo murio de verdad por el golpe en conjunto", killedForReal);
+                    Check("Las representaciones visuales de los enemigos todavia estan ahi (la disolucion recien empieza)",
+                        views2.Length == _combatManager.Enemies.Count, $"vistas={views2.Length} enemigos={_combatManager.Enemies.Count}");
 
-                    // Ahora si: dispara la disolucion real de un enemigo (mismo codigo que una
+                    SetPhase(12);
+                }
+                break;
+
+            // Deja pasar la duracion de la disolucion de muerte (0.8s) y confirma que el enemigo
+            // muerto por el golpe en conjunto de verdad desaparecio -- este es exactamente el bug
+            // que reporto el usuario ("cuando el enemigo muere por un smash, no desaparece de la
+            // pantalla"): HandleAllOutAttackUsed pisaba la corrutina de PlayDeathDissolve con un
+            // PlayHitPulse corto para TODOS los activeViews no-null, sin importar si ya estaban
+            // muriendo, y el callback que destruye el GameObject y libera el parante nunca llegaba
+            // a dispararse.
+            case 12:
+                if (elapsed > 1.2)
+                {
+                    var viewForDead = _battleStage.GetEnemyView(1);
+                    Check("El enemigo muerto por el golpe en conjunto SI desaparece de la pantalla tras la disolucion",
+                        viewForDead == null, viewForDead != null ? "la vista sigue asignada en ese indice" : "");
+
+                    var remainingViews = Object.FindObjectsOfType<EnemyView>();
+                    int expectedRemaining = _combatManager.Enemies.Count(e => e.IsAlive);
+                    Check("Solo quedan vistas para los enemigos que siguen vivos",
+                        remainingViews.Length == expectedRemaining, $"vistas={remainingViews.Length} vivos={expectedRemaining}");
+
+                    // Ahora si: dispara la disolucion real de un enemigo VIVO (mismo codigo que una
                     // muerte de verdad), el efecto de impacto de habilidad (sprite) y el efecto
                     // elemental (shader) -- para poder fotografiar los tres a mitad de camino.
                     var battleCamGo2 = GameObject.Find("BattleCamera");
                     var battleCam2 = battleCamGo2 != null ? battleCamGo2.GetComponent<Camera>() : null;
                     Quaternion camRot = battleCam2 != null ? battleCam2.transform.rotation : Quaternion.identity;
-                    if (views2.Length > 0) views2[0].PlayDeathDissolve(null);
-                    if (_battleStage.hitImpactFrames != null && _battleStage.hitImpactFrames.Length > 0 && views2.Length > 0)
+                    if (remainingViews.Length > 0) remainingViews[0].PlayDeathDissolve(null);
+                    if (_battleStage.hitImpactFrames != null && _battleStage.hitImpactFrames.Length > 0 && remainingViews.Length > 0)
                     {
-                        var pos = views2[0].transform.position + (views2.Length > 1 ? Vector3.zero : new Vector3(1.6f, 0.3f, -0.5f));
+                        var pos = remainingViews[0].transform.position + (remainingViews.Length > 1 ? Vector3.zero : new Vector3(1.6f, 0.3f, -0.5f));
                         HitImpactEffect.Spawn(_battleStage.hitImpactFrames, pos, new Color(1f, 0.6f, 0.3f), camRot);
                     }
-                    if (_battleStage.elementalBurstMaterial != null && views2.Length > 1)
+                    if (_battleStage.elementalBurstMaterial != null && remainingViews.Length > 1)
                     {
-                        ElementalBurstEffect.Spawn(_battleStage.elementalBurstMaterial, views2[1].transform.position, new Color(1f, 0.35f, 0.12f), camRot);
+                        ElementalBurstEffect.Spawn(_battleStage.elementalBurstMaterial, remainingViews[1].transform.position, new Color(1f, 0.35f, 0.12f), camRot);
                     }
                     SetPhase(2);
                 }
@@ -548,6 +580,12 @@ public static class BattleBatchValidator
             e.Poise = 0;
             e.IsBroken = true;
         }
+        // Un enemigo (si hay al menos 2) arranca con HP bajo a proposito: el golpe en conjunto SI
+        // lo mata de verdad (el tope de dano nunca baja de 1), a diferencia del resto (9999 HP,
+        // sobreviven para poder medir el dano exacto). Esto fuerza el camino real de "muere por un
+        // ataque en conjunto", el mismo que tenia el bug de HandleAllOutAttackUsed pisando la
+        // corrutina de disolucion con un pulso corto y dejando al enemigo visible para siempre.
+        if (_combatManager.Enemies.Count > 1) _combatManager.Enemies[1].HP = 1;
         foreach (var p in _combatManager.Party.Where(p => p.IsAlive))
             _combatManager.SubmitAction(new Combat.PartyAction { Actor = p, Type = Combat.ActionType.Guard });
     }

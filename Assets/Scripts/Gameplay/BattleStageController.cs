@@ -352,9 +352,21 @@ namespace Gameplay
         private void HandleAllOutAttackUsed()
         {
             Quaternion facing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
-            foreach (var view in _activeViews)
+            for (int i = 0; i < _activeViews.Count; i++)
             {
+                var view = _activeViews[i];
                 if (view == null) continue;
+
+                // Si el golpe en conjunto acaba de matar a este enemigo, OnEnemyDefeated ya disparo
+                // PlayDeathDissolve unas lineas antes en el mismo frame (la view todavia no es null:
+                // eso recien pasa cuando esa disolucion termina). Pulsarlo aca tambien pisaria esa
+                // corrutina con un pulso corto que nunca llama al callback de limpieza -- el
+                // enemigo se quedaba visible para siempre en vez de desaparecer. Los enemigos
+                // muertos ya tienen su propio efecto de muerte; no hace falta este pulso extra.
+                bool isDead = combatManager != null && combatManager.Enemies != null
+                    && i < combatManager.Enemies.Count && !combatManager.Enemies[i].IsAlive;
+                if (isDead) continue;
+
                 view.PlayHitPulse();
                 if (elementalBurstMaterial != null)
                     ElementalBurstEffect.Spawn(elementalBurstMaterial, view.transform.position, AllOutBurstColor, facing);

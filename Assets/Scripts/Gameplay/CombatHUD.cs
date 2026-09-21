@@ -8,6 +8,7 @@ namespace Gameplay
     public class CombatHUD : MonoBehaviour
     {
         public CombatManager combatManager;
+        public BattleStageController battleStage;
 
         private ActionType? _pendingType;
         private static Texture2D _whiteTex;
@@ -19,8 +20,6 @@ namespace Gameplay
         // rojo/negro, entrada en cascada) -- se reinicia cada vez que le toca elegir a alguien nuevo.
         private CharacterStats _actionMenuChooser;
         private float _actionMenuRevealStart;
-        private static readonly Color P5Red = new Color(0.82f, 0.08f, 0.1f);
-        private static readonly Color P5Black = new Color(0.07f, 0.07f, 0.08f);
 
         // Numeros de dano/curacion flotantes: se detectan comparando el HP visto en el frame
         // anterior contra el actual (asi el motor de combate puro no necesita saber nada de UI).
@@ -79,20 +78,18 @@ namespace Gameplay
             GUI.Box(new Rect(panelX, panelY, panelW, panelH), "");
             GUI.Label(new Rect(panelX + 10, panelY + 5, panelW - 350, 24), combatManager.IsBossFight ? "COMBATE DE JEFE" : "COMBATE");
 
-            GUI.enabled = !combatManager.IsBossFight;
-            if (GUI.Button(new Rect(panelX + panelW - 330, panelY + 4, 100, 24), $"Huir ({combatManager.FleeChancePercent:F0}%)"))
+            if (UIButton.Draw(new Rect(panelX + panelW - 330, panelY + 4, 100, 24), $"Huir ({combatManager.FleeChancePercent:F0}%)", enabled: !combatManager.IsBossFight))
                 combatManager.TryFlee();
-            GUI.enabled = true;
-            if (GUI.Button(new Rect(panelX + panelW - 220, panelY + 4, 100, 24), "Rendirse"))
+            if (UIButton.Draw(new Rect(panelX + panelW - 220, panelY + 4, 100, 24), "Rendirse"))
                 combatManager.Surrender();
-            if (GUI.Button(new Rect(panelX + panelW - 110, panelY + 4, 100, 24), "[TEST] Saltar"))
+            if (UIButton.Draw(new Rect(panelX + panelW - 110, panelY + 4, 100, 24), "[TEST] Saltar"))
                 combatManager.SkipFightForTesting();
 
             float y = panelY + 32;
 
             // --- Enemigos ---
             GUI.Label(new Rect(panelX + 10, y, 200, 20), "Enemigos:");
-            if (GUI.Button(new Rect(panelX + 200, y - 2, 150, 22), _inspecting ? "Ocultar debilidades" : "Inspeccionar"))
+            if (UIButton.Draw(new Rect(panelX + 200, y - 2, 150, 22), _inspecting ? "Ocultar debilidades" : "Inspeccionar"))
                 _inspecting = !_inspecting;
             y += 22;
             foreach (var enemy in combatManager.Enemies)
@@ -103,7 +100,8 @@ namespace Gameplay
                     ? $"  |  Debil: {ElementLabel(enemy.Weakness)}  Resiste: {ElementLabel(enemy.Resistance)}  DEF {enemy.Defense}  VEL {enemy.Speed}"
                     : "";
                 DrawTurnLine(panelX + 20, y, panelW - 40, $"{enemy.Name} - {status}{inspect}", isTurn, isEnemyTurn: true);
-                TrackHpChange(_lastEnemyHp, enemy, enemy.HP, panelX + panelW - 60, y);
+                var (popupX, popupY) = EnemyPopupPosition(combatManager.Enemies.IndexOf(enemy), panelX + panelW - 60, y);
+                TrackHpChange(_lastEnemyHp, enemy, enemy.HP, popupX, popupY);
                 y += 20;
             }
 
@@ -149,14 +147,12 @@ namespace Gameplay
                 if (chooser != null)
                 {
                     GUI.Label(new Rect(panelX + 10, y, panelW - 130, 20), $"Turno de {chooser.Name}:");
-                    GUI.enabled = combatManager.CanGoBack;
-                    if (GUI.Button(new Rect(panelX + panelW - 120, y - 2, 120, 22), "◄ Volver"))
+                    if (UIButton.Draw(new Rect(panelX + panelW - 120, y - 2, 120, 22), "◄ Volver", enabled: combatManager.CanGoBack))
                     {
                         combatManager.GoToPreviousChooser();
                         _pendingType = null;
                         _showingAbilities = false;
                     }
-                    GUI.enabled = true;
                     y += 24;
 
                     if (_showingAbilities)
@@ -166,7 +162,7 @@ namespace Gameplay
                         string skillLabel = chooser.IsHealSkill
                             ? $"{chooser.SkillName} - cura {chooser.HealAmount} HP ({chooser.SkillTpCost} TP)"
                             : $"{chooser.SkillName} - {ElementLabel(chooser.SkillElement)} x{chooser.SkillPower:F1} ({chooser.SkillTpCost} TP)";
-                        if (GUI.Button(new Rect(panelX + 20, y, 340, 26), skillLabel))
+                        if (UIButton.Draw(new Rect(panelX + 20, y, 340, 26), skillLabel))
                         {
                             _pendingType = ActionType.Skill;
                             _showingAbilities = false;
@@ -175,14 +171,14 @@ namespace Gameplay
                         if (chooser.CanProtectAll)
                         {
                             string protectLabel = $"Proteger a todos ({CombatEngine.ProtectAllTpCost} TP)";
-                            if (GUI.Button(new Rect(panelX + 370, y, 220, 26), protectLabel))
+                            if (UIButton.Draw(new Rect(panelX + 370, y, 220, 26), protectLabel))
                             {
                                 combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.ProtectAll });
                                 _showingAbilities = false;
                             }
                         }
 
-                        if (GUI.Button(new Rect(panelX + 600, y, 100, 26), "Cerrar"))
+                        if (UIButton.Draw(new Rect(panelX + 600, y, 100, 26), "Cerrar"))
                             _showingAbilities = false;
                     }
                     else if (_pendingType == null)
@@ -214,7 +210,7 @@ namespace Gameplay
                         float bx = panelX + 20;
                         foreach (var ally in combatManager.Party.Where(p => p.IsAlive))
                         {
-                            if (GUI.Button(new Rect(bx, y, 150, 26), ally.Name))
+                            if (UIButton.Draw(new Rect(bx, y, 150, 26), ally.Name))
                             {
                                 var action = new PartyAction { Actor = chooser, Type = ActionType.Skill, TargetAllyIndex = combatManager.Party.IndexOf(ally) };
                                 combatManager.SubmitAction(action);
@@ -222,7 +218,7 @@ namespace Gameplay
                             }
                             bx += 160;
                         }
-                        if (GUI.Button(new Rect(panelX + 20, y + 34, 100, 24), "Cancelar")) _pendingType = null;
+                        if (UIButton.Draw(new Rect(panelX + 20, y + 34, 100, 24), "Cancelar")) _pendingType = null;
                     }
                     else if (_pendingType.HasValue)
                     {
@@ -232,7 +228,7 @@ namespace Gameplay
                         foreach (var enemy in combatManager.Enemies.Where(e => e.IsAlive))
                         {
                             int idx = combatManager.Enemies.IndexOf(enemy);
-                            if (GUI.Button(new Rect(bx, y, 180, 26), enemy.Name))
+                            if (UIButton.Draw(new Rect(bx, y, 180, 26), enemy.Name))
                             {
                                 var action = new PartyAction { Actor = chooser, Type = _pendingType.Value, TargetEnemyIndex = idx };
                                 combatManager.SubmitAction(action);
@@ -240,7 +236,7 @@ namespace Gameplay
                             }
                             bx += 190;
                         }
-                        if (GUI.Button(new Rect(panelX + 20, y + 34, 100, 24), "Cancelar")) _pendingType = null;
+                        if (UIButton.Draw(new Rect(panelX + 20, y + 34, 100, 24), "Cancelar")) _pendingType = null;
                     }
                 }
                 else
@@ -266,6 +262,23 @@ namespace Gameplay
 
         // Compara el HP actual contra el ultimo visto para ese combatiente; si bajo o subio,
         // crea un numero flotante (rojo = dano, verde = curacion) en la posicion de su linea.
+        // Centra el numero flotante sobre la representacion 3D real del enemigo (proyectando su
+        // TopAnchor a coordenadas de pantalla con la camara de batalla, igual que EnemyHealthBarHUD),
+        // en vez de dejarlo pegado a la fila de texto del panel de abajo. Si todavia no hay camara o
+        // vista (p.ej. el primer frame antes de que cargue la escena de batalla), cae de nuevo a la
+        // posicion del panel como antes.
+        private (float x, float y) EnemyPopupPosition(int enemyIndex, float fallbackX, float fallbackY)
+        {
+            var cam = battleStage != null ? battleStage.ActiveBattleCamera : null;
+            var view = battleStage != null && enemyIndex >= 0 ? battleStage.GetEnemyView(enemyIndex) : null;
+            if (cam == null || !cam.enabled || view == null) return (fallbackX, fallbackY);
+
+            Vector3 screenPos = cam.WorldToScreenPoint(view.TopAnchor);
+            if (screenPos.z <= 0f) return (fallbackX, fallbackY);
+
+            return (screenPos.x, Screen.height - screenPos.y - 18f);
+        }
+
         private void TrackHpChange<T>(Dictionary<T, int> lastHp, T key, int currentHp, float x, float y) where T : class
         {
             if (lastHp.TryGetValue(key, out int previous) && previous != currentHp)
@@ -278,8 +291,21 @@ namespace Gameplay
             lastHp[key] = currentHp;
         }
 
+        private static GUIStyle _popupStyle;
+
         private void DrawDamagePopups()
         {
+            if (_popupStyle == null)
+            {
+                _popupStyle = new GUIStyle(GUI.skin.label)
+                {
+                    alignment = TextAnchor.MiddleCenter,
+                    fontStyle = FontStyle.Bold,
+                    fontSize = 18,
+                };
+            }
+
+            const float w = 90f, h = 26f;
             for (int i = _popups.Count - 1; i >= 0; i--)
             {
                 float age = Time.time - _popups[i].StartTime;
@@ -287,10 +313,11 @@ namespace Gameplay
 
                 float frac = age / PopupDuration;
                 var popup = _popups[i];
-                var oldColor = GUI.color;
-                GUI.color = new Color(popup.Color.r, popup.Color.g, popup.Color.b, 1f - frac);
-                GUI.Label(new Rect(popup.X, popup.Y - frac * 24f, 60, 20), popup.Text);
-                GUI.color = oldColor;
+                _popupStyle.normal.textColor = new Color(popup.Color.r, popup.Color.g, popup.Color.b, 1f - frac);
+                // Centrado horizontal real (no solo el punto de anclaje a la izquierda), y sube
+                // flotando desde la posicion de origen -- sobre el enemigo si vino de
+                // EnemyPopupPosition, o junto a la fila del panel para la party.
+                GUI.Label(new Rect(popup.X - w / 2f, popup.Y - frac * 24f - h / 2f, w, h), popup.Text, _popupStyle);
             }
         }
 
@@ -333,13 +360,9 @@ namespace Gameplay
             string countLabel = mashCount > 0 ? $"¡Golpes acumulados: x{mashCount}! Mientras más machacás, más daño." : "¡MACHACÁ el botón (o Espacio) para el Ataque en Conjunto!";
             GUI.Label(new Rect(panelX + 20, y + 34, panelW - 260, 24), countLabel);
 
-            var buttonStyle = new GUIStyle(GUI.skin.button) { fontStyle = FontStyle.Bold };
-            var oldBg = GUI.backgroundColor;
-            GUI.backgroundColor = glow;
             string buttonLabel = mashCount > 0 ? $"¡SEGUÍ MACHACANDO! x{mashCount} (Espacio)" : "¡ATAQUE EN CONJUNTO! (Espacio)";
-            if (GUI.Button(new Rect(panelX + panelW - 260, y + 30, 240, 32), buttonLabel, buttonStyle))
+            if (UIButton.Draw(new Rect(panelX + panelW - 260, y + 30, 240, 32), buttonLabel, accentColor: glow))
                 combatManager.TriggerAllOutAttack();
-            GUI.backgroundColor = oldBg;
         }
 
         private void TrackActionMenuReveal(CharacterStats chooser)
@@ -349,12 +372,10 @@ namespace Gameplay
             _actionMenuRevealStart = Time.time;
         }
 
-        // Boton con varias capas apiladas (sombra + borde blanco + cuerpo negro + acento rojo
-        // lateral) que entra deslizandose desde la izquierda con una desaceleracion marcada, en
-        // cascada segun "order" (cada boton entra un poco despues que el anterior) -- el gesto de
-        // los menus de Persona 5, adaptado a lo que da el IMGUI de Unity (sin cortes diagonales
-        // reales, pero con el mismo espiritu de capas llamativas). No es clickeable hasta que
-        // termina de entrar, para que la animacion se note.
+        // Mismo boton compartido (UIButton) que el resto del juego, pero con una entrada extra:
+        // desliza desde la izquierda con una desaceleracion marcada, en cascada segun "order"
+        // (cada boton entra un poco despues que el anterior) -- el gesto de los menus de Persona
+        // 5. No es clickeable hasta que termina de entrar, para que la animacion se note.
         private bool DrawP5Button(Rect target, string label, int order)
         {
             const float perStepDelay = 0.06f;
@@ -366,18 +387,8 @@ namespace Gameplay
             float slide = (1f - eased) * (target.width + 40f);
             var r = new Rect(target.x - slide, target.y, target.width, target.height);
 
-            DrawRect(new Rect(r.x + 4, r.y + 4, r.width, r.height), new Color(0f, 0f, 0f, 0.35f));
-            DrawRect(new Rect(r.x - 2, r.y - 2, r.width + 4, r.height + 4), Color.white);
-            DrawRect(r, P5Black);
-            DrawRect(new Rect(r.x, r.y, 8, r.height), P5Red);
-
-            bool clicked = t >= 1f && GUI.Button(r, "", GUIStyle.none);
-
-            var style = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold };
-            style.normal.textColor = Color.white;
-            GUI.Label(r, label.ToUpperInvariant(), style);
-
-            return clicked;
+            bool clicked = UIButton.Draw(r, label.ToUpperInvariant());
+            return t >= 1f && clicked;
         }
 
         private void DrawQteOverlay(float panelX, float y, float panelW)

@@ -32,14 +32,14 @@ namespace Gameplay
                 foreach (var choice in dialogueManager.Choices)
                 {
                     float bw = Mathf.Min(220f, (panelW - 40f) / Mathf.Max(1, dialogueManager.Choices.Count) - 10f);
-                    if (GUI.Button(new Rect(bx, by, bw, 30), choice.Label))
+                    if (UIButton.Draw(new Rect(bx, by, bw, 30), choice.Label))
                         dialogueManager.Choose(choice);
                     bx += bw + 10f;
                 }
             }
             else
             {
-                if (GUI.Button(new Rect(panelX + panelW - 150, panelY + panelH - 40, 130, 30), "Continuar"))
+                if (UIButton.Draw(new Rect(panelX + panelW - 150, panelY + panelH - 40, 130, 30), "Continuar"))
                     dialogueManager.Advance();
             }
         }
