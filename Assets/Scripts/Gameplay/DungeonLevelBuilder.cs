@@ -23,14 +23,19 @@ namespace Gameplay
         public Material bossRoomFloorMaterial;
         public Material bossRoomCeilingMaterial;
         public Material voidBlockMaterial;
+        public Material lockedDoorMarkerMaterial;
+        public Material leverMarkerMaterial;
+        public Material treasureMarkerMaterial;
 
         private GameObject _root;
         private readonly Dictionary<int, (GameObject switchGo, GameObject landingGo)> _shortcutMarkers = new Dictionary<int, (GameObject, GameObject)>();
+        private readonly Dictionary<(int x, int y), GameObject> _lockedDoorMarkers = new Dictionary<(int, int), GameObject>();
 
         public void Clear()
         {
             if (_root != null) Destroy(_root);
             _shortcutMarkers.Clear();
+            _lockedDoorMarkers.Clear();
         }
 
         // Una celda logica = una distancia cellSize = un paso del jugador, en angulos de 90°, igual
@@ -87,7 +92,7 @@ namespace Gameplay
                             BuildWall(center, dir, cellSize, wallHeight, wallThickness);
                     }
 
-                    BuildMarker(cell, center, cellSize);
+                    BuildMarker(cell, center, cellSize, wallHeight);
                 }
             }
         }
@@ -174,7 +179,7 @@ namespace Gameplay
             ApplyMaterial(go, wallMaterial, new Color(0.5f, 0.45f, 0.4f));
         }
 
-        private void BuildMarker(DungeonCell cell, Vector3 center, float cellSize)
+        private void BuildMarker(DungeonCell cell, Vector3 center, float cellSize, float wallHeight)
         {
             Color color;
             Material mat = null;
@@ -193,6 +198,9 @@ namespace Gameplay
                 case CellType.Event: color = Color.white; mat = eventMarkerMaterial; shape = PrimitiveType.Cylinder; break;
                 case CellType.Boss: color = new Color(0.7f, 0f, 0.05f); mat = bossMarkerMaterial; shape = PrimitiveType.Capsule; scale = cellSize * 0.55f; break;
                 case CellType.Lore: color = new Color(0.75f, 0.35f, 1f); mat = loreMarkerMaterial; shape = PrimitiveType.Sphere; scale = cellSize * 0.3f; break;
+                case CellType.LockedDoor: color = new Color(0.55f, 0.1f, 0.1f); mat = lockedDoorMarkerMaterial; shape = PrimitiveType.Cube; scale = cellSize * 0.5f; break;
+                case CellType.Lever: color = new Color(0.15f, 0.9f, 0.35f); mat = leverMarkerMaterial; shape = PrimitiveType.Cylinder; scale = cellSize * 0.3f; break;
+                case CellType.Treasure: color = new Color(1f, 0.82f, 0.1f); mat = treasureMarkerMaterial; shape = PrimitiveType.Cube; scale = cellSize * 0.35f; break;
                 default: return;
             }
 
@@ -206,6 +214,17 @@ namespace Gameplay
             if (col != null) Destroy(col);
 
             ApplyMaterial(go, mat, color);
+
+            if (cell.Type == CellType.StairsUp || cell.Type == CellType.StairsDown)
+            {
+                var beaconGo = new GameObject("StairsBeacon");
+                beaconGo.transform.SetParent(_root.transform, false);
+                beaconGo.transform.position = center;
+                beaconGo.AddComponent<StairsBeacon>().Configure(cell.Type == CellType.StairsUp, cellSize, wallHeight);
+            }
+
+            if (cell.Type == CellType.LockedDoor)
+                _lockedDoorMarkers[(cell.X, cell.Y)] = go;
 
             if (cell.Type == CellType.ShortcutSwitch || cell.Type == CellType.ShortcutLanding)
             {
@@ -238,6 +257,15 @@ namespace Gameplay
             var activeColor = new Color(1f, 0.95f, 0.2f);
             if (pair.switchGo != null) ApplyMaterial(pair.switchGo, null, activeColor);
             if (pair.landingGo != null) ApplyMaterial(pair.landingGo, null, activeColor);
+        }
+
+        // Al activar la palanca, el marcador de la puerta bloqueada pasa de rojo (cerrada) a un
+        // verde apagado (abierta para siempre), para que quede claro de un vistazo que ese candado
+        // ya no bloquea nada en esta run.
+        public void UnlockDoorVisual(int doorX, int doorY)
+        {
+            if (!_lockedDoorMarkers.TryGetValue((doorX, doorY), out var go) || go == null) return;
+            ApplyMaterial(go, null, new Color(0.2f, 0.55f, 0.25f));
         }
     }
 }

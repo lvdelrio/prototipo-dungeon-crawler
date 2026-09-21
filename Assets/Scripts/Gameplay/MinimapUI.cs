@@ -128,6 +128,9 @@ namespace Gameplay
                 case CellType.Event: return cell.EventConsumed ? (Color?)null : Color.white;
                 case CellType.Boss: return new Color(1f, 0f, 0.1f);
                 case CellType.Lore: return new Color(0.75f, 0.35f, 1f);
+                case CellType.LockedDoor: return new Color(0.55f, 0.1f, 0.1f);
+                case CellType.Lever: return new Color(0.15f, 0.9f, 0.35f);
+                case CellType.Treasure: return new Color(1f, 0.82f, 0.1f);
                 default: return null;
             }
         }

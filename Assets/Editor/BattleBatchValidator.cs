@@ -29,6 +29,7 @@ public static class BattleBatchValidator
     private static double _globalStart;
     private const double GlobalTimeout = 40.0;
     private const int TestMashPresses = 4;
+    private static float _preCombatFogEndDistance;
 
     [MenuItem("Dungeon/Validate Battle Scene (Play Mode Batch)")]
     public static void ValidateFromBatch()
@@ -89,8 +90,10 @@ public static class BattleBatchValidator
                     Finish();
                     return;
                 }
+                _preCombatFogEndDistance = RenderSettings.fogEndDistance;
                 TestDialogue();
                 TestAmbientParticles();
+                TestStairsBeacons();
                 TestElementalParticles();
                 // Formacion y menu de pausa/progresion se prueban ANTES de arrancar el combate:
                 // ahora se editan desde la exploracion (CanChangeFormation ya no depende de estar
@@ -241,7 +244,7 @@ public static class BattleBatchValidator
                     var remaining = Object.FindObjectsOfType<EnemyView>();
                     Check("No quedan EnemyView colgados tras terminar el combate", remaining.Length == 0, $"quedaron={remaining.Length}");
                     Check("No queda BattleAmbientParticles colgado tras terminar el combate", Object.FindObjectOfType<BattleAmbientParticles>() == null);
-                    Check("La niebla de la mazmorra se restaura al salir de combate", RenderSettings.fogEndDistance > 20f, $"fogEndDistance={RenderSettings.fogEndDistance}");
+                    Check("La niebla de la mazmorra se restaura al salir de combate", Mathf.Approximately(RenderSettings.fogEndDistance, _preCombatFogEndDistance), $"fogEndDistance={RenderSettings.fogEndDistance} esperado={_preCombatFogEndDistance}");
                     Check("CombatManager.feedback vuelve a la camara de la mazmorra al salir de combate",
                         _combatManager.feedback != null && _combatManager.feedback.GetComponent<Camera>() == Camera.main);
 
@@ -411,6 +414,24 @@ public static class BattleBatchValidator
         Check("la niebla de distancia esta activa en la mazmorra", RenderSettings.fog);
     }
 
+    // Cada escalera (subida/bajada) tiene su propia StairsBeacon con una columna de particulas
+    // que realmente emite (mismo criterio que TestAmbientParticles: no alcanza con que el
+    // componente exista, hay que forzar Simulate() y confirmar particleCount > 0).
+    private static void TestStairsBeacons()
+    {
+        var beacons = Object.FindObjectsOfType<StairsBeacon>();
+        if (!Check("Hay al menos una StairsBeacon en la mazmorra", beacons.Length > 0, $"encontradas={beacons.Length}")) return;
+
+        foreach (var beacon in beacons)
+        {
+            var ps = beacon.GetComponentInChildren<ParticleSystem>();
+            if (!Check($"{beacon.name}: tiene su ParticleSystem", ps != null)) continue;
+            Check($"{beacon.name}: esta reproduciendose", ps.isPlaying);
+            ps.Simulate(2f, true, false);
+            Check($"{beacon.name}: realmente emite particulas tras un rato (no se queda en 0)", ps.particleCount > 0, $"particleCount={ps.particleCount}");
+        }
+    }
+
     // Confirma que al entrar en combate aparecen las particulas de ambiente de la escena de
     // batalla (2 capas, igual criterio que en la mazmorra) y que la niebla de distancia cambia a
     // la version (mas corta y oscura) de combate.
@@ -427,8 +448,8 @@ public static class BattleBatchValidator
             Check($"{ps.name}: realmente emite particulas (no se queda en 0)", ps.particleCount > 0, $"particleCount={ps.particleCount}");
         }
 
-        Check("la niebla cambia a la version de combate (mas corta que la de la mazmorra)",
-            RenderSettings.fog && RenderSettings.fogEndDistance <= 20f, $"fogEndDistance={RenderSettings.fogEndDistance}");
+        Check("la niebla cambia a la version de combate (a lo sumo tan larga como la de la mazmorra)",
+            RenderSettings.fog && RenderSettings.fogEndDistance <= _preCombatFogEndDistance, $"fogEndDistance={RenderSettings.fogEndDistance} mazmorra={_preCombatFogEndDistance}");
     }
 
     // Confirma que ElementalParticleEffect.Spawn no solo crea los ParticleSystem, sino que la

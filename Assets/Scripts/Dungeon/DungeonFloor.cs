@@ -20,6 +20,19 @@ namespace DungeonGen
         public string RequiredLoreId;
     }
 
+    // Candado OBLIGATORIO sobre una arista del camino critico Start->End (a diferencia del
+    // ShortcutGate, que siempre es opcional/atajo): la pared entre DoorX/DoorY y su vecino en
+    // DoorDir arranca cerrada de verdad, y no hay otro camino alrededor (el mapa base es un
+    // arbol) -- hay que encontrar la palanca en LeverX/LeverY, que siempre esta en un punto
+    // muerto alcanzable SIN cruzar la puerta, y despues volver (backtracking real).
+    public class LockedDoor
+    {
+        public int DoorX, DoorY;
+        public Direction DoorDir;
+        public bool IsUnlocked;
+        public int LeverX, LeverY;
+    }
+
     public class DungeonFloor
     {
         public int Index;
@@ -27,6 +40,11 @@ namespace DungeonGen
         public int Height;
         public DungeonCell[,] Cells;
         public List<ShortcutGate> Gates = new List<ShortcutGate>();
+        public List<LockedDoor> LockedDoors = new List<LockedDoor>();
+
+        // Cofre opcional fuera del camino principal (null si el mapa fue demasiado chico como
+        // para reservarle un punto muerto propio, aparte del de la palanca y la mision secundaria).
+        public (int x, int y)? TreasurePos;
 
         public (int x, int y) StartPos;
         public (int x, int y) EndPos;

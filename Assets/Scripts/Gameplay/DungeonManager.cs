@@ -16,6 +16,8 @@ namespace Gameplay
         public DebugHUD hud;
         public CombatManager combat;
 
+        private const int TreasurePointsReward = 25;
+
         private readonly DungeonGenerator _generator = new DungeonGenerator();
         private List<DungeonFloor> _floors;
         private int _currentFloorIndex;
@@ -163,12 +165,36 @@ namespace Gameplay
                             : "¡Encontraste un fragmento de lore!";
                     }
                     break;
+                case CellType.LockedDoor:
+                    message = FindDoorAt(x, y) is LockedDoor lockedHere && lockedHere.IsUnlocked
+                        ? null
+                        : "Un mecanismo sella el paso. Hace falta encontrar la palanca que lo abre.";
+                    break;
+                case CellType.Lever:
+                    var doorForLever = FindDoorForLever(x, y);
+                    message = doorForLever == null
+                        ? null
+                        : doorForLever.IsUnlocked
+                            ? "La palanca ya esta activada."
+                            : "Una palanca. Presiona Espacio para activarla y abrir el candado de forma permanente.";
+                    break;
+                case CellType.Treasure:
+                    message = cell.EventConsumed
+                        ? null
+                        : "Un cofre. Presiona Espacio para abrirlo.";
+                    break;
             }
             if (message != null && hud != null) hud.SetLastMessage(message);
         }
 
         private bool IsGateOpen(DungeonCell cell) =>
             cell.ControlledGateIndex >= 0 && CurrentFloor.Gates[cell.ControlledGateIndex].IsOpen;
+
+        private LockedDoor FindDoorAt(int x, int y) =>
+            CurrentFloor.LockedDoors.Find(d => d.DoorX == x && d.DoorY == y);
+
+        private LockedDoor FindDoorForLever(int x, int y) =>
+            CurrentFloor.LockedDoors.Find(d => d.LeverX == x && d.LeverY == y);
 
         // Sistema real de encuentros de Etrian Odyssey: cada celda tiene un valor de peligro
         // (0-5) oculto que se suma a un contador de pasos. Cuando el contador supera un limite
@@ -320,6 +346,40 @@ namespace Gameplay
                 {
                     combat.StartEncounter(isBoss: true);
                 }
+            }
+            else if (cell.Type == CellType.Lever)
+            {
+                var door = FindDoorForLever(x, y);
+                if (door == null) return;
+                if (door.IsUnlocked)
+                {
+                    if (hud != null) hud.SetLastMessage("La palanca ya esta activada.");
+                    return;
+                }
+                int doorIndex = CurrentFloor.LockedDoors.IndexOf(door);
+                _generator.UnlockDoor(CurrentFloor, doorIndex);
+                // Reconstruir el piso es necesario para que la pared recien abierta deje de
+                // renderizarse como solida; el marcador rojo de la puerta se recrea en ese rebuild
+                // (el CellType sigue siendo LockedDoor), asi que el cambio a verde va DESPUES.
+                BuildActiveFloor();
+                levelBuilder.UnlockDoorVisual(door.DoorX, door.DoorY);
+                if (hud != null) hud.SetLastMessage("¡Activaste la palanca! El candado se abrio de forma permanente.");
+            }
+            else if (cell.Type == CellType.Treasure)
+            {
+                if (cell.EventConsumed)
+                {
+                    if (hud != null) hud.SetLastMessage("Este cofre ya esta vacio.");
+                    return;
+                }
+                cell.EventConsumed = true;
+                _meta.BankedPoints += TreasurePointsReward;
+                MetaSaveService.Save(_meta);
+                if (hud != null) hud.SetLastMessage($"¡Encontraste un cofre! +{TreasurePointsReward} puntos.");
+            }
+            else if (cell.Type == CellType.LockedDoor)
+            {
+                if (hud != null) hud.SetLastMessage("Un mecanismo sella el paso. Hace falta encontrar la palanca que lo abre.");
             }
         }
 

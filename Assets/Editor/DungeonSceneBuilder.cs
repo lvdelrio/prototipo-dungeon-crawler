@@ -44,14 +44,15 @@ public static class DungeonSceneBuilder
         RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
         RenderSettings.ambientLight = new Color(0.5f, 0.5f, 0.55f);
 
-        // Niebla de distancia: los pasillos lejanos y las paredes del fondo se pierden en la
-        // penumbra en vez de verse nitidos de punta a punta -- da sensacion de "todavia no sé qué
-        // hay ahí" en vez de que el mapa entero quede a la vista apenas se dobla una esquina.
+        // Niebla de distancia: limita lo que se puede ver hacia adelante a unas 4 celdas (cellSize
+        // = 4 -> 16 unidades), para dar sensacion real de exploracion -- mas alla de eso, todo se
+        // pierde en la penumbra en vez de que el pasillo entero quede a la vista de punta a punta.
+        const float cellSizeForFog = 4f;
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.Linear;
         RenderSettings.fogColor = new Color(0.05f, 0.05f, 0.08f);
-        RenderSettings.fogStartDistance = 8f;
-        RenderSettings.fogEndDistance = 26f;
+        RenderSettings.fogStartDistance = cellSizeForFog * 1.5f;
+        RenderSettings.fogEndDistance = cellSizeForFog * 4f;
 
         var managerGo = new GameObject("DungeonManager");
         var manager = managerGo.AddComponent<DungeonManager>();

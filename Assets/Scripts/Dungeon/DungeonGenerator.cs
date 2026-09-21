@@ -27,6 +27,14 @@ namespace DungeonGen
                         : $"Piso {i}: se pidio sala de jefe pero no hubo espacio libre (mapa muy chico).");
                 }
 
+                // Los 3 pilares de pacing (candado+palanca obligatorios y cofre opcional) tienen
+                // que colocarse ANTES de podar, para poder marcar sus celdas como protegidas y que
+                // la poda no se las coma como puntas muertas sueltas.
+                bool pillarsAdded = PlacePacingPillars(floor, rng);
+                log.Add(pillarsAdded
+                    ? $"Piso {i}: candado en {floor.LockedDoors[0].DoorX},{floor.LockedDoors[0].DoorY} (palanca en {floor.LockedDoors[0].LeverX},{floor.LockedDoors[0].LeverY}){(floor.TreasurePos.HasValue ? $", cofre en {floor.TreasurePos}" : "")}."
+                    : $"Piso {i}: camino critico muy corto/sin tramo libre, sin candado este piso.");
+
                 int voided = PruneToSparseMaze(floor, rng, voidFraction);
                 log.Add($"Piso {i}: poda de pasillos -> {voided} celdas convertidas en vacio (roca solida).");
 
@@ -295,6 +303,13 @@ namespace DungeonGen
         {
             if (voidFraction <= 0f) return 0;
 
+            // Podar tiene que "ver" el arbol como si todos los candados ya estuvieran abiertos: si
+            // se poda con la puerta todavia cerrada, el subarbol entero que queda del otro lado
+            // aparenta ser una cadena de puntas muertas (cada celda pierde su unica conexion "de
+            // entrada") y la poda se lo come en cascada convirtiendolo en Void PERMANENTE -- ni
+            // siquiera activar la palanca despues puede recuperar celdas que ya son roca solida.
+            foreach (var door in floor.LockedDoors) SetDoorWallState(floor, door, true);
+
             var protectedCells = new HashSet<(int, int)> { floor.StartPos, floor.EndPos, floor.SecondaryQuestPos };
             if (floor.HasBossRoom)
                 foreach (var c in floor.BossRoomCells) protectedCells.Add(c);
@@ -303,6 +318,12 @@ namespace DungeonGen
                 protectedCells.Add((gate.SwitchX, gate.SwitchY));
                 protectedCells.Add((gate.LandingX, gate.LandingY));
             }
+            foreach (var door in floor.LockedDoors)
+            {
+                protectedCells.Add((door.DoorX, door.DoorY));
+                protectedCells.Add((door.LeverX, door.LeverY));
+            }
+            if (floor.TreasurePos.HasValue) protectedCells.Add(floor.TreasurePos.Value);
 
             int totalNormal = 0;
             for (int x = 0; x < floor.Width; x++)
@@ -335,6 +356,8 @@ namespace DungeonGen
                     voided++;
                 }
             }
+
+            foreach (var door in floor.LockedDoors) SetDoorWallState(floor, door, false);
 
             return voided;
         }
@@ -754,6 +777,221 @@ namespace DungeonGen
             return null;
         }
 
+        // Los 3 pilares de pacing de un dungeon crawler "interesante" (ver el analisis de Etrian
+        // Odyssey vs. Bravely Default en el articulo de Aevee Bee, "Pacing And Level Design In
+        // JRPGs"): en vez de ir de Start a End en linea recta,
+        //   1) hay que activar una PALANCA para desbloquear un tramo del camino (CellType.Lever /
+        //      LockedDoor), 2) esa palanca esta en un PUNTO MUERTO real (nunca sobre el camino
+        //      principal), asi que hay backtracking de verdad al volver, y 3) opcionalmente hay un
+        //      COFRE (CellType.Treasure) en otro punto muerto, fuera del camino, para el que se
+        //      desvia. El candado es sobre una arista del camino Start->End: como el mapa base es
+        //      un arbol (sin ciclos), cortar esa arista SIEMPRE desconecta End de Start hasta
+        //      activar la palanca -- no hace falta un candado "artificial", es estructural.
+        // Devuelve false (sin tocar nada) si el camino es demasiado corto para que tenga sentido.
+        private bool PlacePacingPillars(DungeonFloor floor, Random rng)
+        {
+            var path = FindPath(floor, floor.StartPos, floor.EndPos);
+            if (path.Count < 5) return false;
+
+            // Candado dentro del primer 60% del camino (nunca pegado al final) y nunca sobre una
+            // celda que ya sea especial (Start/End/SecundariaQuest/Switch/Landing) o de sala de
+            // jefe (ahi puede haber ciclos por la fusion de la sala, y cortar una arista podria no
+            // desconectar nada de verdad).
+            int maxIdx = Math.Max(1, (int)(path.Count * 0.6f) - 1);
+            var candidateIndices = new List<int>();
+            for (int idx = 1; idx <= maxIdx; idx++)
+            {
+                var a = floor.Cells[path[idx].x, path[idx].y];
+                var b = floor.Cells[path[idx + 1].x, path[idx + 1].y];
+                if (a.Type == CellType.Normal && b.Type == CellType.Normal && !a.IsBossRoom && !b.IsBossRoom)
+                    candidateIndices.Add(idx);
+            }
+            if (candidateIndices.Count == 0) return false;
+
+            // Una sala de jefe fusiona varias celdas en una sola habitacion abierta (ver
+            // AddBossRoom): si dos de esas celdas ya tenian, cada una, su propia arista de arbol
+            // hacia afuera de la sala, fusionarlas crea un CICLO en lo que hasta entonces era un
+            // arbol puro. Eso rompe la garantia de "cortar cualquier arista del camino desconecta
+            // todo lo que sigue" en la que se basa este candado -- puede existir un rodeo por la
+            // sala de jefe que la esquive por completo. Por eso no basta con elegir un candidato
+            // cualquiera: hay que probarlo de verdad (cerrar la pared y comprobar con BFS que
+            // beyondPos deja de ser alcanzable) y, si un ciclo lo esquiva, descartarlo y probar
+            // otro tramo del camino.
+            Shuffle(candidateIndices, rng);
+            (int x, int y) doorPos = default, beyondPos = default;
+            Direction doorDirValue = default;
+            bool doorFound = false;
+            foreach (var idx in candidateIndices)
+            {
+                var candidateDoorPos = path[idx];
+                var candidateBeyondPos = path[idx + 1];
+                var candidateDir = DirectionTo(candidateDoorPos, candidateBeyondPos);
+                if (candidateDir == null) continue; // no deberia pasar: son consecutivas en el camino
+
+                floor.Cells[candidateDoorPos.x, candidateDoorPos.y].SetWall(candidateDir.Value, true);
+                floor.Cells[candidateBeyondPos.x, candidateBeyondPos.y].SetWall(candidateDir.Value.Opposite(), true);
+
+                bool actuallyDisconnects = !BfsReachable(floor, floor.StartPos).Contains(candidateBeyondPos);
+                if (actuallyDisconnects)
+                {
+                    doorPos = candidateDoorPos;
+                    beyondPos = candidateBeyondPos;
+                    doorDirValue = candidateDir.Value;
+                    doorFound = true;
+                    break;
+                }
+
+                // Hay un ciclo (probablemente via una sala de jefe) que esquiva este tramo: deshacer
+                // y probar el siguiente candidato.
+                floor.Cells[candidateDoorPos.x, candidateDoorPos.y].SetWall(candidateDir.Value, false);
+                floor.Cells[candidateBeyondPos.x, candidateBeyondPos.y].SetWall(candidateDir.Value.Opposite(), false);
+            }
+            if (!doorFound) return false;
+            Direction? doorDir = doorDirValue;
+
+            floor.Cells[doorPos.x, doorPos.y].Type = CellType.LockedDoor;
+
+            // beyondPos tambien queda reservado: si el cofre cayera justo ahi, conseguirlo no
+            // exigiria ningun desvio real -- bastaria con cruzar la puerta que ya se iba a cruzar.
+            var usedPositions = new HashSet<(int, int)> { floor.StartPos, floor.EndPos, floor.SecondaryQuestPos, doorPos, beyondPos };
+            foreach (var gate in floor.Gates)
+            {
+                usedPositions.Add((gate.SwitchX, gate.SwitchY));
+                usedPositions.Add((gate.LandingX, gate.LandingY));
+            }
+
+            // Palanca: un punto muerto alcanzable SIN cruzar la puerta que se acaba de cerrar.
+            var reachableBeforeDoor = BfsReachable(floor, floor.StartPos);
+            var leverCandidates = FindLeavesWithin(floor, reachableBeforeDoor, usedPositions);
+            if (leverCandidates.Count == 0)
+            {
+                // No hay donde poner la palanca: mejor sin candado que con un piso irresoluble.
+                floor.Cells[doorPos.x, doorPos.y].SetWall(doorDir.Value, false);
+                floor.Cells[beyondPos.x, beyondPos.y].SetWall(doorDir.Value.Opposite(), false);
+                floor.Cells[doorPos.x, doorPos.y].Type = CellType.Normal;
+                return false;
+            }
+            Shuffle(leverCandidates, rng);
+            var leverPos = leverCandidates[0];
+            floor.Cells[leverPos.x, leverPos.y].Type = CellType.Lever;
+            usedPositions.Add(leverPos);
+
+            floor.LockedDoors.Add(new LockedDoor
+            {
+                DoorX = doorPos.x,
+                DoorY = doorPos.y,
+                DoorDir = doorDir.Value,
+                LeverX = leverPos.x,
+                LeverY = leverPos.y,
+                IsUnlocked = false,
+            });
+
+            // Cofre opcional: otro punto muerto cualquiera (antes o despues de la puerta, no
+            // importa) distinto de todo lo ya usado. Si no hay lugar, el piso se queda sin cofre
+            // (no es obligatorio para que el piso sea resoluble).
+            var treasureCandidates = FindLeavesWithin(floor, null, usedPositions);
+            if (treasureCandidates.Count > 0)
+            {
+                Shuffle(treasureCandidates, rng);
+                var treasurePos = treasureCandidates[0];
+                floor.Cells[treasurePos.x, treasurePos.y].Type = CellType.Treasure;
+                floor.TreasurePos = treasurePos;
+            }
+
+            return true;
+        }
+
+        // Abre (o vuelve a cerrar) la pared de una puerta bloqueada especifica -- usado tanto por
+        // el desbloqueo real (UnlockDoor) como por la validacion (simular abrir/cerrar de a una).
+        private void SetDoorWallState(DungeonFloor floor, LockedDoor door, bool open)
+        {
+            floor.Cells[door.DoorX, door.DoorY].SetWall(door.DoorDir, !open);
+            var (dx, dy) = door.DoorDir.Offset();
+            int nx = door.DoorX + dx, ny = door.DoorY + dy;
+            if (floor.InBounds(nx, ny)) floor.Cells[nx, ny].SetWall(door.DoorDir.Opposite(), !open);
+        }
+
+        // Activa la palanca de esta puerta bloqueada: a diferencia del ShortcutGate (que nunca abre
+        // una pared, solo teletransporta), esto SI abre un paso real y permanente en el camino
+        // principal -- una vez activada, el candado desaparece para el resto de la run.
+        public void UnlockDoor(DungeonFloor floor, int doorIndex)
+        {
+            var door = floor.LockedDoors[doorIndex];
+            if (door.IsUnlocked) return;
+            door.IsUnlocked = true;
+            SetDoorWallState(floor, door, true);
+        }
+
+        // Camino unico de Start a End (el mapa base es un arbol: no hay ciclos, asi que solo puede
+        // haber un camino simple entre dos celdas cualesquiera). Devuelve la lista vacia si por
+        // algun motivo no son alcanzables entre si (no deberia pasar).
+        private List<(int x, int y)> FindPath(DungeonFloor floor, (int x, int y) from, (int x, int y) to)
+        {
+            var parent = new Dictionary<(int, int), (int, int)>();
+            var visited = new HashSet<(int, int)> { from };
+            var queue = new Queue<(int, int)>();
+            queue.Enqueue(from);
+            while (queue.Count > 0)
+            {
+                var cur = queue.Dequeue();
+                if (cur == to) break;
+                var cell = floor.Cells[cur.Item1, cur.Item2];
+                foreach (var dir in DirectionExtensions.All)
+                {
+                    if (cell.HasWall(dir)) continue;
+                    var (ox, oy) = dir.Offset();
+                    var next = (cur.Item1 + ox, cur.Item2 + oy);
+                    if (!floor.InBounds(next.Item1, next.Item2) || visited.Contains(next)) continue;
+                    visited.Add(next);
+                    parent[next] = cur;
+                    queue.Enqueue(next);
+                }
+            }
+
+            var path = new List<(int, int)>();
+            if (!visited.Contains(to)) return path;
+            var walk = to;
+            path.Add(walk);
+            while (walk != from)
+            {
+                walk = parent[walk];
+                path.Add(walk);
+            }
+            path.Reverse();
+            return path;
+        }
+
+        // Direccion de a hacia b si son vecinas en la grilla; null si no lo son.
+        private Direction? DirectionTo((int x, int y) a, (int x, int y) b)
+        {
+            foreach (var dir in DirectionExtensions.All)
+            {
+                var (ox, oy) = dir.Offset();
+                if (a.x + ox == b.x && a.y + oy == b.y) return dir;
+            }
+            return null;
+        }
+
+        // Celdas Normal de grado 1 (puntas muertas reales), excluyendo salas de jefe y lo que ya
+        // este en uso; si "within" no es null, ademas exige que la celda este en ese conjunto
+        // (para pedir "un punto muerto alcanzable SIN cruzar tal puerta", por ejemplo).
+        private List<(int x, int y)> FindLeavesWithin(DungeonFloor floor, HashSet<(int, int)> within, HashSet<(int, int)> exclude)
+        {
+            var result = new List<(int x, int y)>();
+            for (int x = 0; x < floor.Width; x++)
+            {
+                for (int y = 0; y < floor.Height; y++)
+                {
+                    var cell = floor.Cells[x, y];
+                    if (cell.Type != CellType.Normal || cell.IsBossRoom) continue;
+                    if (exclude.Contains((x, y))) continue;
+                    if (within != null && !within.Contains((x, y))) continue;
+                    if (Degree(floor, x, y) == 1) result.Add((x, y));
+                }
+            }
+            return result;
+        }
+
         private EventEntry RollFromPool(IList<EventEntry> pool, Random rng)
         {
             int total = 0;
@@ -773,19 +1011,66 @@ namespace DungeonGen
         public (bool ok, List<string> issues) ValidateFloor(DungeonFloor floor)
         {
             var issues = new List<string>();
-            var reachableClosed = BfsReachable(floor, floor.StartPos);
+
+            // "Locked" = estado real con el que arranca el piso (candados obligatorios cerrados,
+            // atajos opcionales cerrados). "Unlocked" simula TODOS los candados obligatorios ya
+            // activados (los atajos opcionales se dejan cerrados a proposito: nunca deberian hacer
+            // falta para la conectividad base) -- asi se puede comprobar por separado que (a) no se
+            // llega a nada del otro lado de un candado sin activarlo, y (b) jugando normal (activando
+            // las palancas que hagan falta) se termina llegando a absolutamente todo.
+            var reachableLocked = BfsReachable(floor, floor.StartPos);
+
+            foreach (var door in floor.LockedDoors) SetDoorWallState(floor, door, true);
+            var reachableUnlocked = BfsReachable(floor, floor.StartPos);
+            foreach (var door in floor.LockedDoors) SetDoorWallState(floor, door, false);
 
             // Las celdas Void son vacio intencional (podado): no cuentan como "deberian ser alcanzables".
             int totalCells = CountNonVoid(floor);
 
-            if (reachableClosed.Count != totalCells)
-                issues.Add($"Piso {floor.Index}: solo {reachableClosed.Count}/{totalCells} celdas (no-vacias) alcanzables con el atajo cerrado.");
+            if (reachableUnlocked.Count != totalCells)
+                issues.Add($"Piso {floor.Index}: activando TODAS las palancas solo se llega a {reachableUnlocked.Count}/{totalCells} celdas (no-vacias).");
 
-            if (!reachableClosed.Contains(floor.EndPos))
-                issues.Add($"Piso {floor.Index}: End {floor.EndPos} NO alcanzable desde Start.");
+            if (!reachableUnlocked.Contains(floor.EndPos))
+                issues.Add($"Piso {floor.Index}: End {floor.EndPos} NO alcanzable ni activando todas las palancas.");
 
-            if (!reachableClosed.Contains(floor.SecondaryQuestPos))
-                issues.Add($"Piso {floor.Index}: mision secundaria {floor.SecondaryQuestPos} NO alcanzable desde Start.");
+            if (!reachableUnlocked.Contains(floor.SecondaryQuestPos))
+                issues.Add($"Piso {floor.Index}: mision secundaria {floor.SecondaryQuestPos} NO alcanzable ni activando todas las palancas.");
+
+            for (int di = 0; di < floor.LockedDoors.Count; di++)
+            {
+                var door = floor.LockedDoors[di];
+                if (!floor.Cells[door.DoorX, door.DoorY].HasWall(door.DoorDir))
+                    issues.Add($"Piso {floor.Index}: la puerta bloqueada {di} en ({door.DoorX},{door.DoorY}) esta abierta de entrada (deberia arrancar cerrada).");
+
+                var (dx, dy) = door.DoorDir.Offset();
+                var beyondPos = (door.DoorX + dx, door.DoorY + dy);
+
+                if (reachableLocked.Contains(beyondPos))
+                    issues.Add($"Piso {floor.Index}: se llega a {beyondPos} SIN activar la palanca {di} (el candado no esta bloqueando nada real).");
+
+                if (!reachableLocked.Contains((door.LeverX, door.LeverY)))
+                    issues.Add($"Piso {floor.Index}: la palanca {di} en ({door.LeverX},{door.LeverY}) NO es alcanzable sin cruzar su propia puerta (softlock).");
+
+                if (door.LeverX == beyondPos.Item1 && door.LeverY == beyondPos.Item2)
+                    issues.Add($"Piso {floor.Index}: la palanca {di} quedo DEL OTRO LADO de su propia puerta.");
+
+                // Activar SOLO esta puerta (dejando las demas como estaban) debe abrir de verdad el
+                // paso hacia beyondPos, sin depender de que otras palancas tambien esten activadas.
+                SetDoorWallState(floor, door, true);
+                var reachableWithThisDoor = BfsReachable(floor, floor.StartPos);
+                SetDoorWallState(floor, door, false);
+                if (!reachableWithThisDoor.Contains(beyondPos))
+                    issues.Add($"Piso {floor.Index}: activar la palanca {di} no abrio un paso real hacia {beyondPos}.");
+            }
+
+            if (floor.TreasurePos.HasValue)
+            {
+                var treasurePos = floor.TreasurePos.Value;
+                if (!reachableUnlocked.Contains(treasurePos))
+                    issues.Add($"Piso {floor.Index}: el cofre en {treasurePos} NO es alcanzable ni activando todas las palancas.");
+                if (Degree(floor, treasurePos.Item1, treasurePos.Item2) != 1)
+                    issues.Add($"Piso {floor.Index}: el cofre en {treasurePos} no quedo en un punto muerto real (grado != 1) -- no exige desviarse del camino.");
+            }
 
             if (floor.HasBossRoom)
             {
@@ -838,9 +1123,9 @@ namespace DungeonGen
                 if (switchCell.Value == landingCell.Value)
                     issues.Add($"Piso {floor.Index}: switch y punto de llegada del atajo {gi} son la misma celda.");
 
-                if (!reachableClosed.Contains(switchCell.Value))
+                if (!reachableUnlocked.Contains(switchCell.Value))
                     issues.Add($"Piso {floor.Index}: switch del atajo {gi} en {switchCell.Value} NO alcanzable (deberia serlo via la entrada larga).");
-                if (!reachableClosed.Contains(landingCell.Value))
+                if (!reachableUnlocked.Contains(landingCell.Value))
                     issues.Add($"Piso {floor.Index}: punto de llegada del atajo {gi} en {landingCell.Value} NO alcanzable desde Start.");
 
                 // La pared entre ambos lados del gate debe seguir cerrada SIEMPRE (el vacio es
@@ -873,7 +1158,7 @@ namespace DungeonGen
                     }
                     else
                     {
-                        if (!reachableClosed.Contains(loreCell.Value))
+                        if (!reachableUnlocked.Contains(loreCell.Value))
                             issues.Add($"Piso {floor.Index}: la celda Lore '{gate.RequiredLoreId}' en {loreCell.Value} no es alcanzable.");
                         if (floor.IsInIsolatedZone(loreCell.Value.Item1, loreCell.Value.Item2))
                             issues.Add($"Piso {floor.Index}: la celda Lore '{gate.RequiredLoreId}' esta DENTRO de la zona que su propio atajo acorta (el jugador no podria encontrarla sin ya haber cruzado).");
@@ -924,6 +1209,13 @@ namespace DungeonGen
             }
 
             // Cross-floor reachability: BFS across floors using stair links, starting at floor0 Start.
+            // Se simula TODAS las palancas activadas en TODOS los pisos (igual criterio que en
+            // ValidateFloor): la conectividad de base nunca depende de los atajos opcionales, pero
+            // SI depende de haber activado cada candado obligatorio en algun momento de la run.
+            foreach (var f in floors)
+                foreach (var door in f.LockedDoors)
+                    SetDoorWallState(f, door, true);
+
             var visited = new HashSet<(int floorIdx, int x, int y)>();
             var queue = new Queue<(int, int, int)>();
             var startTuple = (0, floors[0].StartPos.x, floors[0].StartPos.y);
@@ -958,7 +1250,11 @@ namespace DungeonGen
 
             int totalAllCells = floors.Sum(f => CountNonVoid(f));
             if (visited.Count != totalAllCells)
-                issues.Add($"Multi-piso: solo {visited.Count}/{totalAllCells} celdas alcanzables cruzando todos los pisos desde el Start del piso 0.");
+                issues.Add($"Multi-piso: solo {visited.Count}/{totalAllCells} celdas alcanzables cruzando todos los pisos desde el Start del piso 0 (con todas las palancas activadas).");
+
+            foreach (var f in floors)
+                foreach (var door in f.LockedDoors)
+                    SetDoorWallState(f, door, false);
 
             return (issues.Count == 0, issues);
         }
