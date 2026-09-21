@@ -24,6 +24,9 @@ namespace Gameplay
         [Header("Efecto de impacto elemental (shader simple, en TODOS los golpes -- basicos y habilidades)")]
         public Material elementalBurstMaterial;
 
+        [Header("Hit spark estilo Tekken 8 (flash + puntas radiales, en TODOS los golpes)")]
+        public Material impactBurstMaterial;
+
         [Header("Shaders de habilidad por elemento (mas elaborados: SOLO en golpes de HABILIDAD)")]
         [Tooltip("Cada habilidad tiene su propio shader de ataque segun su elemento (no por personaje). Los ataques basicos solo usan el shader simple de arriba.")]
         public Material slashSkillMaterial;
@@ -323,11 +326,16 @@ namespace Gameplay
             var view = _activeViews[index];
             if (view == null) return;
 
+            Quaternion elementalFacing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
             if (elementalBurstMaterial != null)
-            {
-                Quaternion facing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
-                ElementalBurstEffect.Spawn(elementalBurstMaterial, view.transform.position, ElementVisuals.ColorFor(element), facing);
-            }
+                ElementalBurstEffect.Spawn(elementalBurstMaterial, view.transform.position, ElementVisuals.ColorFor(element), elementalFacing);
+
+            // Hit spark estilo Tekken 8 (flash + puntas radiales): se dispara SIEMPRE, con el mismo
+            // color que el anillo elemental de arriba (naranjo "golpe" en ataques basicos, color
+            // propio en habilidades), para que cualquier golpe se sienta con mas peso/impacto.
+            if (impactBurstMaterial != null)
+                ImpactBurstEffect.Spawn(impactBurstMaterial, view.transform.position, ElementVisuals.ColorFor(element), elementalFacing);
+
             ElementalParticleEffect.Spawn(view.transform.position, element);
         }
 
@@ -343,13 +351,15 @@ namespace Gameplay
         // activos a la vez, para que se sienta como un golpe de equipo y no un golpe mas.
         private void HandleAllOutAttackUsed()
         {
-            if (elementalBurstMaterial == null) return;
             Quaternion facing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
             foreach (var view in _activeViews)
             {
                 if (view == null) continue;
                 view.PlayHitPulse();
-                ElementalBurstEffect.Spawn(elementalBurstMaterial, view.transform.position, AllOutBurstColor, facing);
+                if (elementalBurstMaterial != null)
+                    ElementalBurstEffect.Spawn(elementalBurstMaterial, view.transform.position, AllOutBurstColor, facing);
+                if (impactBurstMaterial != null)
+                    ImpactBurstEffect.Spawn(impactBurstMaterial, view.transform.position, AllOutBurstColor, facing);
             }
         }
 

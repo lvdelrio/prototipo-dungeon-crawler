@@ -121,6 +121,7 @@ public static class BattleBatchValidator
                     Check("La camara de la mazmorra quedo apagada durante el combate", _battleStage.dungeonCamera != null && !_battleStage.dungeonCamera.enabled);
                     Check("Los 6 frames del efecto de impacto quedaron asignados", _battleStage.hitImpactFrames != null && _battleStage.hitImpactFrames.Length == 6 && _battleStage.hitImpactFrames[0] != null);
                     Check("El material del efecto elemental (shader) quedo asignado", _battleStage.elementalBurstMaterial != null);
+                    Check("El material del hit spark estilo Tekken 8 (shader) quedo asignado", _battleStage.impactBurstMaterial != null);
                     TestSkillShaders();
                     TestHollowBackdrop();
 
@@ -352,23 +353,27 @@ public static class BattleBatchValidator
         Check("El personaje vuelve a quedar en el fondo", !backMember.IsFrontRow);
     }
 
-    // Confirma que cada habilidad tiene su PROPIO shader (por elemento, no por personaje): 6
-    // materiales distintos, cada uno con el shader que le corresponde.
+    // Confirma que las 6 habilidades comparten EL MISMO shader (Custom/SkillBurst) -- la
+    // diferencia entre ellas es solo el color de cada material, nunca la forma/silueta. Antes cada
+    // elemento tenia un shader con una forma distinta, lo que en la practica (como cada personaje
+    // de esta party usa un elemento distinto) se sentia como "cada personaje tiene su propio
+    // efecto" en vez de "cada habilidad tiene su color".
     private static void TestSkillShaders()
     {
-        var materials = new (string name, Material mat, string expectedShader)[]
+        var materials = new (string name, Material mat)[]
         {
-            ("slashSkillMaterial", _battleStage.slashSkillMaterial, "Custom/SlashBurst"),
-            ("strikeSkillMaterial", _battleStage.strikeSkillMaterial, "Custom/StrikeBurst"),
-            ("pierceSkillMaterial", _battleStage.pierceSkillMaterial, "Custom/PierceBurst"),
-            ("fireSkillMaterial", _battleStage.fireSkillMaterial, "Custom/FireBurst"),
-            ("iceSkillMaterial", _battleStage.iceSkillMaterial, "Custom/IceBurst"),
-            ("voltSkillMaterial", _battleStage.voltSkillMaterial, "Custom/VoltBurst"),
+            ("slashSkillMaterial", _battleStage.slashSkillMaterial),
+            ("strikeSkillMaterial", _battleStage.strikeSkillMaterial),
+            ("pierceSkillMaterial", _battleStage.pierceSkillMaterial),
+            ("fireSkillMaterial", _battleStage.fireSkillMaterial),
+            ("iceSkillMaterial", _battleStage.iceSkillMaterial),
+            ("voltSkillMaterial", _battleStage.voltSkillMaterial),
         };
-        foreach (var (name, mat, expectedShader) in materials)
+        const string expectedShader = "Custom/SkillBurst";
+        foreach (var (name, mat) in materials)
         {
             string realShader = mat != null && mat.shader != null ? mat.shader.name : "null";
-            Check($"{name} esta asignado con el shader {expectedShader}", realShader == expectedShader, $"real={realShader}");
+            Check($"{name} esta asignado con el shader compartido {expectedShader} (no uno propio)", realShader == expectedShader, $"real={realShader}");
         }
     }
 

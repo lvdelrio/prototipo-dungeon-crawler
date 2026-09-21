@@ -67,7 +67,7 @@ namespace Gameplay
         // solo un color pintado en las particulas.
         private IEnumerator FlashLight(Light light, float duration)
         {
-            const float peakIntensity = 7f;
+            const float peakIntensity = 3.5f;
             const float riseTime = 0.03f;
 
             float t = 0f;
@@ -111,12 +111,18 @@ namespace Gameplay
             shape.radius = 0.05f;
         }
 
+        // El color de cada capa sale siempre de ElementVisuals.ColorFor (misma fuente que el
+        // anillo de shader, el sprite de impacto y la luz de este mismo efecto) para que ningun
+        // efecto tenga su propio color "suelto" que se desalinee del resto. Lo unico que varia
+        // por elemento aca es el MOVIMIENTO de las particulas (velocidad/forma/gravedad), no el
+        // color.
         private static void ConfigureForElement(ParticleSystem ps, Element element)
         {
             var main = ps.main;
             var emission = ps.emission;
             var shape = ps.shape;
 
+            main.startColor = ElementVisuals.ColorFor(element);
             emission.rateOverTime = 0f;
             emission.SetBursts(new[] { new ParticleSystem.Burst(0f, 24, 34) });
             shape.shapeType = ParticleSystemShapeType.Sphere;
@@ -125,7 +131,6 @@ namespace Gameplay
             switch (element)
             {
                 case Element.Fire:
-                    main.startColor = new Color(1f, 0.45f, 0.1f);
                     main.startSpeed = new ParticleSystem.MinMaxCurve(1.6f, 2.8f);
                     main.startSize = new ParticleSystem.MinMaxCurve(0.15f, 0.28f);
                     main.startLifetime = new ParticleSystem.MinMaxCurve(0.4f, 0.55f);
@@ -133,7 +138,6 @@ namespace Gameplay
                     break;
 
                 case Element.Ice:
-                    main.startColor = new Color(0.6f, 0.9f, 1f);
                     main.startSpeed = new ParticleSystem.MinMaxCurve(1.1f, 2f);
                     main.startSize = new ParticleSystem.MinMaxCurve(0.1f, 0.2f);
                     main.startLifetime = new ParticleSystem.MinMaxCurve(0.4f, 0.6f);
@@ -141,7 +145,6 @@ namespace Gameplay
                     break;
 
                 case Element.Volt:
-                    main.startColor = new Color(1f, 0.95f, 0.3f);
                     main.startSpeed = new ParticleSystem.MinMaxCurve(2.8f, 4.2f);
                     main.startSize = new ParticleSystem.MinMaxCurve(0.05f, 0.1f);
                     main.startLifetime = new ParticleSystem.MinMaxCurve(0.15f, 0.28f);
@@ -150,7 +153,6 @@ namespace Gameplay
                     break;
 
                 case Element.Slash:
-                    main.startColor = new Color(0.9f, 0.92f, 1f);
                     main.startSpeed = new ParticleSystem.MinMaxCurve(2f, 3f);
                     main.startSize = new ParticleSystem.MinMaxCurve(0.18f, 0.35f);
                     main.startLifetime = new ParticleSystem.MinMaxCurve(0.15f, 0.22f);
@@ -159,7 +161,6 @@ namespace Gameplay
                     break;
 
                 case Element.Strike:
-                    main.startColor = new Color(0.78f, 0.63f, 0.42f);
                     main.startSpeed = new ParticleSystem.MinMaxCurve(1f, 1.9f);
                     main.startSize = new ParticleSystem.MinMaxCurve(0.12f, 0.24f);
                     main.startLifetime = new ParticleSystem.MinMaxCurve(0.3f, 0.45f);
@@ -167,7 +168,6 @@ namespace Gameplay
                     break;
 
                 case Element.Pierce:
-                    main.startColor = new Color(0.55f, 0.95f, 0.55f);
                     main.startSpeed = new ParticleSystem.MinMaxCurve(3f, 4.3f);
                     main.startSize = new ParticleSystem.MinMaxCurve(0.03f, 0.07f);
                     main.startLifetime = new ParticleSystem.MinMaxCurve(0.15f, 0.25f);
@@ -177,7 +177,6 @@ namespace Gameplay
                     break;
 
                 default:
-                    main.startColor = Color.white;
                     main.startSpeed = new ParticleSystem.MinMaxCurve(1f, 1.6f);
                     main.startSize = new ParticleSystem.MinMaxCurve(0.08f, 0.14f);
                     main.startLifetime = new ParticleSystem.MinMaxCurve(0.3f, 0.4f);

@@ -20,7 +20,10 @@ namespace Gameplay
         private static readonly int ColorId = Shader.PropertyToID("_Color");
         private static readonly int DissolveAmountId = Shader.PropertyToID("_DissolveAmount");
         private static readonly int EdgeColorId = Shader.PropertyToID("_EdgeColor");
-        private static readonly Color DefaultEdgeColor = new Color(1f, 0.55f, 0.1f, 1f);
+        // Mismo naranjo de "golpe" que Element.Strike en ElementVisuals: este pulso es generico
+        // (se dispara en CUALQUIER golpe, no segun elemento), asi que usa el color canonico de
+        // golpe fisico en vez de un naranjo propio que se podia desalinear con el resto.
+        private static readonly Color DefaultEdgeColor = new Color(ElementVisuals.GolpeColor.r, ElementVisuals.GolpeColor.g, ElementVisuals.GolpeColor.b, 1f);
         private static readonly Color BreakEdgeColor = new Color(1f, 0.95f, 0.25f, 1f);
 
         // Posicion (mundo) justo arriba de la cabeza del enemigo, para anclar ahi la barra de

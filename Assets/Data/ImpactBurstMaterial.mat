@@ -7,8 +7,8 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: VoltSkillMaterial
-  m_Shader: {fileID: 4800000, guid: 2c76619a2932b654ba5713cbb5873f2d, type: 3}
+  m_Name: ImpactBurstMaterial
+  m_Shader: {fileID: 4800000, guid: bfc12c696165c0b4a9324054161c7e54, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords: []
@@ -25,8 +25,8 @@ Material:
     m_TexEnvs: []
     m_Ints: []
     m_Floats:
-    - _NoiseScale: 14
     - _Progress: 0
+    - _SpikeCount: 10
     m_Colors:
     - _Color: {r: 1, g: 1, b: 1, a: 1}
   m_BuildTextureStacks: []

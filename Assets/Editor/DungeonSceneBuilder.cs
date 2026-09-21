@@ -120,12 +120,17 @@ public static class DungeonSceneBuilder
         HitEffectImporter.EnsureSliced();
         battleStage.hitImpactFrames = HitEffectImporter.LoadFrames();
         battleStage.elementalBurstMaterial = GetOrCreateElementalBurstMaterial();
-        battleStage.slashSkillMaterial = GetOrCreateMaterial("Assets/Data/SlashSkillMaterial.mat", "Custom/SlashBurst");
-        battleStage.strikeSkillMaterial = GetOrCreateMaterial("Assets/Data/StrikeSkillMaterial.mat", "Custom/StrikeBurst");
-        battleStage.pierceSkillMaterial = GetOrCreateMaterial("Assets/Data/PierceSkillMaterial.mat", "Custom/PierceBurst");
-        battleStage.fireSkillMaterial = GetOrCreateMaterial("Assets/Data/FireSkillMaterial.mat", "Custom/FireBurst");
-        battleStage.iceSkillMaterial = GetOrCreateMaterial("Assets/Data/IceSkillMaterial.mat", "Custom/IceBurst");
-        battleStage.voltSkillMaterial = GetOrCreateMaterial("Assets/Data/VoltSkillMaterial.mat", "Custom/VoltBurst");
+        battleStage.impactBurstMaterial = GetOrCreateMaterial("Assets/Data/ImpactBurstMaterial.mat", "Custom/ImpactBurst");
+        // Los 6 comparten EL MISMO shader (Custom/SkillBurst): la diferencia entre habilidades es
+        // solo el color con el que se tiñe cada material, nunca la forma. Son 6 assets de
+        // material separados (no 1 solo) para que cada uno pueda tener su propio _Color fijo en
+        // el Inspector si hiciera falta ajustarlo a mano mas adelante.
+        battleStage.slashSkillMaterial = GetOrCreateMaterial("Assets/Data/SlashSkillMaterial.mat", "Custom/SkillBurst");
+        battleStage.strikeSkillMaterial = GetOrCreateMaterial("Assets/Data/StrikeSkillMaterial.mat", "Custom/SkillBurst");
+        battleStage.pierceSkillMaterial = GetOrCreateMaterial("Assets/Data/PierceSkillMaterial.mat", "Custom/SkillBurst");
+        battleStage.fireSkillMaterial = GetOrCreateMaterial("Assets/Data/FireSkillMaterial.mat", "Custom/SkillBurst");
+        battleStage.iceSkillMaterial = GetOrCreateMaterial("Assets/Data/IceSkillMaterial.mat", "Custom/SkillBurst");
+        battleStage.voltSkillMaterial = GetOrCreateMaterial("Assets/Data/VoltSkillMaterial.mat", "Custom/SkillBurst");
         playerController.dialogueManager = dialogueManager;
         dialogueHud.dialogueManager = dialogueManager;
         enemyBarsHud.combatManager = combatManager;

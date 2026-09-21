@@ -66,7 +66,7 @@ Shader "Custom/ElementalBurst"
                 float fade = 1.0 - _Progress;
                 float alpha = saturate(ring) * fade;
 
-                fixed3 col = _Color.rgb * (1.0 + ring * 0.6);
+                fixed3 col = _Color.rgb * (1.0 + ring * 0.4);
                 return fixed4(col, alpha * _Color.a);
             }
             ENDCG

@@ -13,32 +13,35 @@ namespace Gameplay
     {
         public Shader flashShader;
 
+        // Mismo naranjo canonico de "golpe" que Element.Strike y EnemyView (ver ElementVisuals),
+        // asi la pantalla, el borde del enemigo y el anillo de shader coinciden siempre.
         [Header("Flash al golpear a un enemigo")]
-        public Color enemyHitFlashColor = new Color(1f, 0.95f, 0.6f, 0.35f);
+        public Color enemyHitFlashColor = new Color(ElementVisuals.GolpeColor.r, ElementVisuals.GolpeColor.g, ElementVisuals.GolpeColor.b, 0.22f);
         public float enemyHitFlashDuration = 0.12f;
         public float enemyHitShakeDuration = 0.12f;
-        public float enemyHitShakeMagnitude = 0.06f;
+        public float enemyHitShakeMagnitude = 0.05f;
 
         [Header("Flash al recibir dano la party")]
-        public Color partyHitFlashColor = new Color(0.85f, 0.1f, 0.1f, 0.55f);
+        public Color partyHitFlashColor = new Color(0.85f, 0.1f, 0.1f, 0.38f);
         public float partyHitFlashDuration = 0.18f;
-        public float partyHitShakeDuration = 0.22f;
-        public float partyHitShakeMagnitude = 0.12f;
+        public float partyHitShakeDuration = 0.2f;
+        public float partyHitShakeMagnitude = 0.09f;
 
+        // Mismo verde canonico de curacion que ElementVisuals.HealColor.
         [Header("Flash al curar (sin sacudida: curar no es un golpe)")]
-        public Color healFlashColor = new Color(0.35f, 1f, 0.55f, 0.3f);
+        public Color healFlashColor = new Color(ElementVisuals.HealColor.r, ElementVisuals.HealColor.g, ElementVisuals.HealColor.b, 0.22f);
         public float healFlashDuration = 0.3f;
 
         [Header("Flash del Ataque en Conjunto (mas fuerte y dorado)")]
-        public Color allOutFlashColor = new Color(1f, 0.85f, 0.25f, 0.6f);
+        public Color allOutFlashColor = new Color(1f, 0.85f, 0.25f, 0.45f);
         public float allOutFlashDuration = 0.35f;
         public float allOutShakeDuration = 0.35f;
         public float allOutShakeMagnitude = 0.18f;
 
         [Header("Brillo de borde por elemento (fuego/hielo/etc, ver ElementVisuals)")]
         public Shader edgeGlowShader;
-        public float elementalEdgeDuration = 0.4f;
-        public float elementalEdgeIntensity = 1.3f;
+        public float elementalEdgeDuration = 0.35f;
+        public float elementalEdgeIntensity = 0.75f;
 
         private Material _flashMat;
         private float _flashIntensity;

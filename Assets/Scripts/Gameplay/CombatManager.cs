@@ -288,13 +288,18 @@ namespace Gameplay
                 Log.AddRange(turnLog);
 
                 // Golpe de habilidad (no ataque basico, no curacion) contra un enemigo: dispara el
-                // efecto de impacto especial ademas del feedback normal. El elemento del golpe (de
-                // la habilidad, o del ataque basico) se usa ademas para el efecto de shader, que se
-                // ve en CUALQUIER golpe, no solo en habilidades.
+                // efecto de impacto especial (shader unico por elemento) ademas del feedback normal.
+                // Un ataque BASICO nunca usa Party[idx].AttackElement para el feedback visual: sin
+                // importar el arma/elemento propio de cada personaje, todo ataque basico se reporta
+                // como Element.Strike (el "golpe" naranjo generico y comun a todos, ver
+                // ElementVisuals.GolpeColor). Solo las HABILIDADES conservan su elemento real y por
+                // lo tanto su shader unico (SkillMaterialFor en BattleStageController) -- la
+                // distincion visual por elemento es exclusiva de las habilidades, nunca del ataque
+                // basico de cada personaje.
                 bool isSkillHit = isParty && currentPartyAction != null && currentPartyAction.Type == ActionType.Skill && !Party[idx].IsHealSkill;
                 Element hitElement = Element.None;
                 if (isSkillHit) hitElement = Party[idx].SkillElement;
-                else if (isParty && currentPartyAction != null && currentPartyAction.Type == ActionType.Attack) hitElement = Party[idx].AttackElement;
+                else if (isParty && currentPartyAction != null && currentPartyAction.Type == ActionType.Attack) hitElement = Element.Strike;
                 ReportHitFeedback(partyHpBefore, enemyHpBefore, enemyBrokenBefore, isSkillHit, hitElement);
 
                 // En cuanto la pelea queda decidida no se esperan mas turnos ni personajes: se corta
