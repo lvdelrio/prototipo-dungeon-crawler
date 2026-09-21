@@ -296,29 +296,50 @@ namespace Gameplay
             if (index >= 0 && index < _activeViews.Count) _activeViews[index]?.PlayHitPulse();
         }
 
+        // Adelanta el punto de aparicion de un efecto hacia la camara, hasta mas o menos la
+        // superficie del modelo (en vez de su centro): un efecto en el centro exacto queda medio
+        // tapado por la propia mitad cercana del modelo del enemigo, y se ve como si estuviera
+        // "atras" en vez de "al frente" -- justo lo que pidio el usuario que se corrigiera.
+        private Vector3 EffectAnchor(EnemyView view)
+        {
+            if (view == null) return Vector3.zero;
+            Vector3 pos = view.transform.position;
+            if (_battleCamera == null) return pos;
+
+            Vector3 toCamera = (_battleCamera.transform.position - pos).normalized;
+            Vector3 ext = view.Extents;
+            // Distancia (a lo largo de toCamera) hasta el borde de la caja que envuelve al modelo:
+            // trata al modelo como una caja alineada a los ejes, que para las formas primitivas
+            // actuales (esfera/capsula/cubo) es una aproximacion mas que suficiente.
+            float radius = Mathf.Abs(toCamera.x) * ext.x + Mathf.Abs(toCamera.y) * ext.y + Mathf.Abs(toCamera.z) * ext.z;
+            return pos + toCamera * radius;
+        }
+
         // Golpe de habilidad: ademas del pulso de disolucion, aparece el efecto de impacto (sprite
         // HitImpact.png) sobre el enemigo, teñido segun el elemento para que se note la diferencia
         // entre habilidades, Y el shader propio de esa habilidad (SkillMaterialFor) -- cada
         // habilidad tiene su propio shader de ataque segun su elemento (no por personaje: dos
         // habilidades del mismo elemento comparten shader). Los ataques basicos NUNCA llegan aca;
-        // solo usan el shader simple de HandleEnemyElementalHit.
-        private void HandleEnemySkillHit(int index, Element element)
+        // solo usan el shader simple de HandleEnemyElementalHit. "intensity" (SkillPower de quien
+        // la uso) agranda el efecto para las habilidades mas fuertes.
+        private void HandleEnemySkillHit(int index, Element element, float intensity)
         {
             if (index < 0 || index >= _activeViews.Count) return;
             var view = _activeViews[index];
             if (view == null) return;
 
             Quaternion facing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
+            Vector3 anchor = EffectAnchor(view);
 
             if (hitImpactFrames != null && hitImpactFrames.Length > 0)
             {
                 Color tint = Color.Lerp(Color.white, ElementVisuals.ColorFor(element), 0.55f);
-                HitImpactEffect.Spawn(hitImpactFrames, view.transform.position, tint, facing);
+                HitImpactEffect.Spawn(hitImpactFrames, anchor, tint, facing);
             }
 
             var skillMaterial = SkillMaterialFor(element);
             if (skillMaterial != null)
-                ElementalBurstEffect.Spawn(skillMaterial, view.transform.position, ElementVisuals.ColorFor(element), facing);
+                ElementalBurstEffect.Spawn(skillMaterial, anchor, ElementVisuals.ColorFor(element), facing, intensity);
         }
 
         private Material SkillMaterialFor(Element element)
@@ -338,23 +359,26 @@ namespace Gameplay
         // Efecto de shader + rafaga de particulas reales (sin sprite) que se ven en CUALQUIER
         // golpe -- basico o de habilidad -- para que el elemento del ataque siempre tenga algun
         // feedback visual, no solo las habilidades (que ademas tienen el sprite de HitImpactEffect).
-        private void HandleEnemyElementalHit(int index, Element element)
+        // "intensity" (SkillPower de la habilidad, o 1 en un ataque basico) agranda y hace mas
+        // intensas las chispas cuanto mas fuerte es el golpe.
+        private void HandleEnemyElementalHit(int index, Element element, float intensity)
         {
             if (index < 0 || index >= _activeViews.Count) return;
             var view = _activeViews[index];
             if (view == null) return;
 
             Quaternion elementalFacing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
+            Vector3 anchor = EffectAnchor(view);
             if (elementalBurstMaterial != null)
-                ElementalBurstEffect.Spawn(elementalBurstMaterial, view.transform.position, ElementVisuals.ColorFor(element), elementalFacing);
+                ElementalBurstEffect.Spawn(elementalBurstMaterial, anchor, ElementVisuals.ColorFor(element), elementalFacing, intensity);
 
             // Hit spark estilo Tekken 8 (flash + puntas radiales): se dispara SIEMPRE, con el mismo
             // color que el anillo elemental de arriba (naranjo "golpe" en ataques basicos, color
             // propio en habilidades), para que cualquier golpe se sienta con mas peso/impacto.
             if (impactBurstMaterial != null)
-                ImpactBurstEffect.Spawn(impactBurstMaterial, view.transform.position, ElementVisuals.ColorFor(element), elementalFacing);
+                ImpactBurstEffect.Spawn(impactBurstMaterial, anchor, ElementVisuals.ColorFor(element), elementalFacing, intensity);
 
-            ElementalParticleEffect.Spawn(view.transform.position, element);
+            ElementalParticleEffect.Spawn(anchor, element);
         }
 
         // Se le rompio el aguante a este enemigo: pulso mas fuerte con el borde en amarillo
@@ -386,10 +410,14 @@ namespace Gameplay
                 if (isDead) continue;
 
                 view.PlayHitPulse();
+                Vector3 anchor = EffectAnchor(view);
+                // El golpe mas grande del juego (toda la party a la vez): intensidad fija bien alta,
+                // mas grande y llamativo que cualquier habilidad individual.
+                const float allOutIntensity = 2.4f;
                 if (elementalBurstMaterial != null)
-                    ElementalBurstEffect.Spawn(elementalBurstMaterial, view.transform.position, AllOutBurstColor, facing);
+                    ElementalBurstEffect.Spawn(elementalBurstMaterial, anchor, AllOutBurstColor, facing, allOutIntensity);
                 if (impactBurstMaterial != null)
-                    ImpactBurstEffect.Spawn(impactBurstMaterial, view.transform.position, AllOutBurstColor, facing);
+                    ImpactBurstEffect.Spawn(impactBurstMaterial, anchor, AllOutBurstColor, facing, allOutIntensity);
             }
         }
 

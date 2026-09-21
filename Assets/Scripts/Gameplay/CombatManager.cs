@@ -82,11 +82,13 @@ namespace Gameplay
         public event Action<int> OnEnemyDefeated;
         // Enemigo nuevo agregado a Enemies a mitad de combate (p.ej. crias de un Slime dividido).
         public event Action<int> OnEnemyAdded;
-        // Golpe de HABILIDAD (no ataque basico) contra un enemigo: indice + elemento de la habilidad.
-        public event Action<int, Element> OnEnemySkillHit;
+        // Golpe de HABILIDAD (no ataque basico) contra un enemigo: indice + elemento + intensidad
+        // (SkillPower de quien la uso, tipicamente 1.4-2 -- mas fuerte la habilidad, mas grande y
+        // llamativo el efecto). Un ataque basico siempre usa intensidad 1 (ver ReportHitFeedback).
+        public event Action<int, Element, float> OnEnemySkillHit;
         // CUALQUIER golpe contra un enemigo (ataque basico o habilidad, no curacion): indice +
-        // elemento de ese golpe. Para el efecto de shader elemental, que se ve en todos los golpes.
-        public event Action<int, Element> OnEnemyElementalHit;
+        // elemento + intensidad. Para el efecto de shader elemental, que se ve en todos los golpes.
+        public event Action<int, Element, float> OnEnemyElementalHit;
         // Se le acaba de romper el aguante a este enemigo (indice): pierde su proximo turno.
         public event Action<int> OnEnemyPoiseBroken;
         // Se rompio el aguante de TODOS los enemigos a la vez: aparece el aviso de Ataque en Conjunto.
@@ -335,9 +337,10 @@ namespace Gameplay
                 // basico de cada personaje.
                 bool isSkillHit = isParty && currentPartyAction != null && currentPartyAction.Type == ActionType.Skill && !Party[idx].IsHealSkill;
                 Element hitElement = Element.None;
-                if (isSkillHit) hitElement = Party[idx].SkillElement;
+                float hitIntensity = 1f;
+                if (isSkillHit) { hitElement = Party[idx].SkillElement; hitIntensity = Party[idx].SkillPower; }
                 else if (isParty && currentPartyAction != null && currentPartyAction.Type == ActionType.Attack) hitElement = Element.Strike;
-                ReportHitFeedback(partyHpBefore, enemyHpBefore, enemyBrokenBefore, isSkillHit, hitElement);
+                ReportHitFeedback(partyHpBefore, enemyHpBefore, enemyBrokenBefore, isSkillHit, hitElement, hitIntensity);
 
                 // En cuanto la pelea queda decidida no se esperan mas turnos ni personajes: se corta
                 // la ronda ahi mismo en vez de seguir resolviendo al resto del orden de turnos.
@@ -475,7 +478,7 @@ namespace Gameplay
         // rompio el aguante, para que la escena de batalla (BattleStageController/EnemyView) anime
         // el golpe, la disolucion de muerte o el flash de ruptura. El motor de combate puro no sabe
         // nada de esto.
-        private void ReportHitFeedback(int[] partyHpBefore, int[] enemyHpBefore, bool[] enemyBrokenBefore, bool isSkillHit, Element hitElement)
+        private void ReportHitFeedback(int[] partyHpBefore, int[] enemyHpBefore, bool[] enemyBrokenBefore, bool isSkillHit, Element hitElement, float hitIntensity)
         {
             for (int i = 0; i < Party.Count; i++)
             {
@@ -496,8 +499,8 @@ namespace Gameplay
                 feedback?.OnEnemyHit(dmg);
                 if (hitElement != Element.None) feedback?.OnElementalHit(hitElement);
                 OnEnemyDamaged?.Invoke(i);
-                OnEnemyElementalHit?.Invoke(i, hitElement);
-                if (isSkillHit) OnEnemySkillHit?.Invoke(i, hitElement);
+                OnEnemyElementalHit?.Invoke(i, hitElement, hitIntensity);
+                if (isSkillHit) OnEnemySkillHit?.Invoke(i, hitElement, hitIntensity);
                 if (!enemyBrokenBefore[i] && Enemies[i].IsBroken)
                     OnEnemyPoiseBroken?.Invoke(i);
                 if (enemyHpBefore[i] > 0 && Enemies[i].HP <= 0)

@@ -32,6 +32,13 @@ namespace Gameplay
             ? new Vector3(transform.position.x, _renderer.bounds.max.y + 0.25f, transform.position.z)
             : transform.position + Vector3.up;
 
+        // Medio-tamaño (mundo, por eje) del modelo, para poder adelantar un efecto hacia la camara
+        // hasta la superficie del modelo en vez de dejarlo enterrado en su centro -- ver
+        // BattleStageController.EffectAnchor, que lo usa para que los golpes/chispas se vean AL
+        // FRENTE del enemigo (la mitad cercana a camara tapa cualquier cosa que quede justo en el
+        // centro, que es lo que se veia como "atras" del enemigo).
+        public Vector3 Extents => _renderer != null ? _renderer.bounds.extents : Vector3.one * 0.8f;
+
         public void Initialize(EnemyStats stats, Renderer renderer, Color baseColor)
         {
             Stats = stats;
