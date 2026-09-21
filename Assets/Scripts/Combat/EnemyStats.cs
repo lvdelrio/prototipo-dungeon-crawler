@@ -12,8 +12,15 @@ namespace Combat
         public int Defense;
         public int Speed;
         public Element AttackElement;
-        public Element Weakness;
+
+        // La mayoria de los enemigos comparte 2 debilidades (ver EnemyFactory: fuego + corte, para
+        // que el jugador aprenda rapido que esas 2 opciones casi siempre funcionan), pero unos
+        // pocos rompen a proposito el patron con debilidades propias distintas -- asi hay que
+        // fijarse en cada enemigo en vez de spamear siempre lo mismo.
+        public Element[] Weaknesses = Array.Empty<Element>();
         public Element Resistance;
+
+        public bool IsWeakTo(Element element) => element != Element.None && Array.IndexOf(Weaknesses, element) >= 0;
 
         // Barra de "aguante": se gasta con cada golpe recibido (el mismo numero de dano que se le
         // hace a la vida) y al llegar a 0 el enemigo queda "roto" (IsBroken): pierde su proximo

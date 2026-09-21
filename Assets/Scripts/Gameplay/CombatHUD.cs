@@ -107,8 +107,11 @@ namespace Gameplay
             {
                 bool isTurn = combatManager.IsResolvingRound && !combatManager.CurrentTurnIsParty && combatManager.CurrentTurnActorName == enemy.Name;
                 string status = enemy.IsAlive ? $"HP {enemy.HP}/{enemy.MaxHP}{(enemy.IsBroken ? " [ROTO: pierde su turno]" : "")}" : "derrotado";
+                string weaknessLabel = enemy.Weaknesses != null && enemy.Weaknesses.Length > 0
+                    ? string.Join("/", enemy.Weaknesses.Select(ElementLabel))
+                    : ElementLabel(Element.None);
                 string inspect = _inspecting
-                    ? $"  |  Debil: {ElementLabel(enemy.Weakness)}  Resiste: {ElementLabel(enemy.Resistance)}  DEF {enemy.Defense}  VEL {enemy.Speed}"
+                    ? $"  |  Debil: {weaknessLabel}  Resiste: {ElementLabel(enemy.Resistance)}  DEF {enemy.Defense}  VEL {enemy.Speed}"
                     : "";
                 DrawTurnLine(panelX + 20, y, panelW - 40, $"{enemy.Name} - {status}{inspect}", isTurn, isEnemyTurn: true);
                 var (popupX, popupY) = EnemyPopupPosition(combatManager.Enemies.IndexOf(enemy), panelX + panelW - 60, y);

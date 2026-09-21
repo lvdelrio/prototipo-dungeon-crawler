@@ -368,7 +368,7 @@ namespace Combat
         {
             int dmg = Math.Max(1, power - enemy.Defense / 2);
             note = "";
-            if (element != Element.None && element == enemy.Weakness)
+            if (enemy.IsWeakTo(element))
             {
                 dmg *= 2;
                 note = " ¡Débil!";
