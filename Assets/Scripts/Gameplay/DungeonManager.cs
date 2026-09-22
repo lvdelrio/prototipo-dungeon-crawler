@@ -181,13 +181,17 @@ namespace Gameplay
         // Se llama cada vez que se (re)construye la geometria del piso activo (entrar/cambiar de
         // piso, perforar una pared con el Perforador). Si ya hay un FOE instanciado PARA ESTE
         // MISMO piso, lo deja como esta (no le resetea la patrulla solo porque perforaste una
-        // pared); si cambio de piso, lo destruye y crea uno nuevo si CurrentFloor.HasFoe.
+        // pared). Si cambio de piso, el FOE NO desaparece: guarda su estado en vivo en el piso que
+        // se deja (ver FoeController.SaveStateTo) antes de destruir el GameObject, asi que si el
+        // piso nuevo tambien tiene FOE (o el jugador vuelve mas tarde al que se dejo), retoma
+        // exactamente donde quedo en vez de reaparecer reseteado.
         private void RefreshActiveFoe()
         {
             if (_activeFoe != null && _activeFoeFloorIndex == _currentFloorIndex) return;
 
             if (_activeFoe != null)
             {
+                _activeFoe.SaveStateTo(_floors[_activeFoeFloorIndex]);
                 Destroy(_activeFoe.gameObject);
                 _activeFoe = null;
             }

@@ -69,6 +69,18 @@ namespace DungeonGen
         public List<(int x, int y)> FoePatrolRoute;
         public bool HasFoe => FoePatrolRoute != null && FoePatrolRoute.Count > 0;
 
+        // Estado en vivo del FOE de este piso, guardado por Gameplay/FoeController.SaveStateTo
+        // cada vez que el jugador se va a otro piso: el FOE nunca "desaparece" salvo que lo
+        // derrotes en combate (eso pone FoePatrolRoute = null arriba) -- si volves a este piso mas
+        // tarde, retoma exactamente donde quedo (posicion, HP, si te estaba persiguiendo, etc.) en
+        // vez de reaparecer reseteado. FoeSavedX = -1 significa "todavia nunca se instancio".
+        public int FoeSavedX = -1, FoeSavedY = -1;
+        public int FoeSavedHp = -1;
+        public bool FoeSavedIsChasing;
+        public int FoeSavedRouteIndex;
+        public int FoeSavedRouteDir = 1;
+        public int FoeSavedStunnedSteps;
+
         // rectangle bounds of the isolated zone (inclusive)
         public int IsoMinX, IsoMinY, IsoMaxX, IsoMaxY;
 

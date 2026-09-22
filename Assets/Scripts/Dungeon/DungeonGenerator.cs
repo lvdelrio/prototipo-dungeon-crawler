@@ -1101,11 +1101,11 @@ namespace DungeonGen
         // INTERNA de un camino entre 2 puntos protegidos tiene grado >= 2 por construccion (ver el
         // comentario de PruneToSparseMaze mas abajo), asi que la ruta sobrevive la poda sola, sin
         // necesitar proteccion extra como el candado/cofre. El FOE aparece SI O SI cada 2 pisos,
-        // empezando por el primero (Index par = "Piso 1", "Piso 3", etc. para el jugador): los
-        // pisos con Index impar nunca tienen -- alternancia fija, no probabilidad.
+        // pero nunca en el primero (Index 0, piso de respiro): Index 1, 3, 5... si tienen, Index
+        // 0, 2, 4... no -- alternancia fija, no probabilidad.
         private void PlaceFoeRoute(DungeonFloor floor, Random rng)
         {
-            if (floor.Index % 2 != 0) return;
+            if (floor.Index % 2 != 1) return;
 
             var path = FindPath(floor, floor.StartPos, floor.EndPos);
             const int desiredLen = 6;
