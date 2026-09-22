@@ -27,13 +27,38 @@ namespace DungeonGen
                         : $"Piso {i}: se pidio sala de jefe pero no hubo espacio libre (mapa muy chico).");
                 }
 
-                // Los 3 pilares de pacing (candado+palanca obligatorios y cofre opcional) tienen
-                // que colocarse ANTES de podar, para poder marcar sus celdas como protegidas y que
-                // la poda no se las coma como puntas muertas sueltas.
+                // Sala de trampas: no en el primer piso (respiro) ni siempre (variedad -- que no
+                // toda bajada tenga una), 50% del resto. Va ANTES de podar por la misma razon que
+                // la sala de jefe (sus celdas quedan protegidas al fusionarse en una sola sala).
+                if (i > 0 && rng.NextDouble() < 0.5)
+                {
+                    bool trapAdded = AddTrapRoom(floor, rng);
+                    log.Add(trapAdded
+                        ? $"Piso {i}: sala de trampas ({floor.TrapKind}), {floor.TrapCells.Count} celdas peligrosas."
+                        : $"Piso {i}: se intento sala de trampas pero no hubo espacio libre.");
+                }
+
+                // El candado+palanca obligatorios tienen que colocarse ANTES de podar, para poder
+                // marcar sus celdas como protegidas y que la poda no se las coma como puntas
+                // muertas sueltas (mismo motivo por el que el cofre, mas abajo, tambien va antes).
                 bool pillarsAdded = PlacePacingPillars(floor, rng);
                 log.Add(pillarsAdded
-                    ? $"Piso {i}: candado en {floor.LockedDoors[0].DoorX},{floor.LockedDoors[0].DoorY} (palanca en {floor.LockedDoors[0].LeverX},{floor.LockedDoors[0].LeverY}){(floor.TreasurePos.HasValue ? $", cofre en {floor.TreasurePos}" : "")}."
+                    ? $"Piso {i}: candado en {floor.LockedDoors[0].DoorX},{floor.LockedDoors[0].DoorY} (palanca en {floor.LockedDoors[0].LeverX},{floor.LockedDoors[0].LeverY})."
                     : $"Piso {i}: camino critico muy corto/sin tramo libre, sin candado este piso.");
+
+                // Cofre GARANTIZADO por piso (a diferencia del opcional de arriba, que solo aparece
+                // si PlacePacingPillars encontro lugar): todo piso tiene que darle al jugador algo
+                // que facilite la exploracion. Tiene que ir ANTES de podar, por la misma razon que
+                // los pilares de pacing arriba.
+                bool treasureAdded = EnsureTreasure(floor, rng);
+                log.Add(treasureAdded
+                    ? $"Piso {i}: cofre en {floor.TreasurePos}."
+                    : $"Piso {i}: sin punto muerto libre para el cofre (mapa demasiado chico/denso).");
+
+                PlaceFoeRoute(floor, rng);
+                log.Add(floor.HasFoe
+                    ? $"Piso {i}: FOE patrullando {floor.FoePatrolRoute.Count} celdas."
+                    : $"Piso {i}: sin FOE este piso.");
 
                 int voided = PruneToSparseMaze(floor, rng, voidFraction);
                 log.Add($"Piso {i}: poda de pasillos -> {voided} celdas convertidas en vacio (roca solida).");
@@ -292,6 +317,123 @@ namespace DungeonGen
             return false;
         }
 
+        // ---------- Sala de trampas ----------
+
+        // Fusiona un bloque rectangular GRANDE (4x4, 4x3 o mas -- el lado mayor nunca es menor a 4)
+        // en una sala abierta, mismo mecanismo que AddBossRoom, y le pone una trampa adentro al
+        // azar (ver DungeonFloor.TrapKind): ArrowSweep (una fila o columna entera de la sala es la
+        // linea de tiro de una maquina de flechas) o SpikeCells (~40% de las celdas de la sala,
+        // sueltas al azar, son picos). Opcional -- no todos los pisos tienen una (ver
+        // GenerateDungeon) y puede no encontrar lugar en mapas chicos/ya ocupados (false, sin tocar
+        // nada).
+        private bool AddTrapRoom(DungeonFloor floor, Random rng)
+        {
+            int minSide = 3, maxSide = 5;
+            if (Math.Min(floor.Width, floor.Height) - 1 < minSide) return false;
+
+            for (int attempt = 0; attempt < 40; attempt++)
+            {
+                int rw = rng.Next(minSide, maxSide + 1);
+                int rh = rng.Next(minSide, maxSide + 1);
+                if (Math.Max(rw, rh) < 4) continue; // nunca un cuadrante chico tipo 3x3: 4x4/4x3 o mas
+                if (rw > floor.Width || rh > floor.Height) continue;
+
+                int rx = rng.Next(0, floor.Width - rw + 1);
+                int ry = rng.Next(0, floor.Height - rh + 1);
+
+                if (RectOverlapsIsolatedZone(floor, rx, ry, rw, rh)) continue;
+                if (RectOverlapsSpecialCells(floor, rx, ry, rw, rh)) continue;
+
+                bool blocked = false;
+                for (int x = rx; x < rx + rw && !blocked; x++)
+                    for (int y = ry; y < ry + rh; y++)
+                        if (floor.Cells[x, y].IsBossRoom) { blocked = true; break; }
+                if (blocked) continue;
+
+                // TrapKind y (si es ArrowSweep) la geometria/pared del disparador se deciden ANTES
+                // de mutar nada del piso: si el disparador no puede quedar sobre una pared de
+                // verdad, descartamos este intento entero y probamos otra ubicacion mas abajo, sin
+                // dejar celdas o paredes a medio abrir de un intento fallido.
+                var trapKind = rng.Next(2) == 0 ? TrapKind.ArrowSweep : TrapKind.SpikeCells;
+                bool horizontal = rng.Next(2) == 0;
+                var lineCells = new List<(int, int)>();
+                Direction startDir = default, endDir = default;
+                bool fromStart = true;
+                if (trapKind == TrapKind.ArrowSweep)
+                {
+                    if (horizontal)
+                    {
+                        int sweepY = ry + rh / 2;
+                        for (int x = rx; x < rx + rw; x++) lineCells.Add((x, sweepY));
+                    }
+                    else
+                    {
+                        int sweepX = rx + rw / 2;
+                        for (int y = ry; y < ry + rh; y++) lineCells.Add((sweepX, y));
+                    }
+
+                    // El disparador (ver Gameplay/TrapDisparadorController) vive en la pared de UNO
+                    // de los dos extremos de la linea, disparando hacia el otro extremo -- asi la
+                    // flecha recorre TODA la sala y el jugador tiene el tiempo real de vuelo para
+                    // salir de la linea antes de que llegue. TIENE que quedar sobre una pared de
+                    // verdad (HasWall == true), nunca sobre un hueco ya abierto por un corredor,
+                    // para que el Perforador siempre pueda apuntarle y destruirlo.
+                    startDir = horizontal ? Direction.East : Direction.North;
+                    endDir = horizontal ? Direction.West : Direction.South;
+                    var startCell = lineCells[0];
+                    var endCell = lineCells[lineCells.Count - 1];
+                    bool startHasWall = floor.Cells[startCell.Item1, startCell.Item2].HasWall(startDir.Opposite());
+                    bool endHasWall = floor.Cells[endCell.Item1, endCell.Item2].HasWall(endDir.Opposite());
+                    if (!startHasWall && !endHasWall) continue; // ningun extremo tiene pared solida: reintentar en otra ubicacion
+
+                    fromStart = startHasWall && endHasWall ? rng.Next(2) == 0 : startHasWall;
+                }
+
+                var cells = new List<(int, int)>();
+                for (int x = rx; x < rx + rw; x++)
+                {
+                    for (int y = ry; y < ry + rh; y++)
+                    {
+                        cells.Add((x, y));
+                        var cell = floor.Cells[x, y];
+                        cell.IsTrapRoom = true;
+                        foreach (var dir in DirectionExtensions.All)
+                        {
+                            var (ox, oy) = dir.Offset();
+                            int nx = x + ox, ny = y + oy;
+                            if (nx >= rx && nx < rx + rw && ny >= ry && ny < ry + rh)
+                                cell.SetWall(dir, false);
+                        }
+                    }
+                }
+
+                floor.TrapRoomCells = cells;
+                floor.TrapKind = trapKind;
+
+                var trapCells = new List<(int, int)>();
+                if (trapKind == TrapKind.ArrowSweep)
+                {
+                    trapCells = lineCells;
+                    floor.TrapDisparadorPos = fromStart ? lineCells[0] : lineCells[lineCells.Count - 1];
+                    floor.TrapDisparadorDir = fromStart ? startDir : endDir;
+                    floor.TrapArrowPath = new List<(int, int)>(lineCells);
+                    if (!fromStart) floor.TrapArrowPath.Reverse();
+                }
+                else
+                {
+                    var shuffled = new List<(int, int)>(cells);
+                    Shuffle(shuffled, rng);
+                    int count = Math.Max(2, cells.Count * 2 / 5);
+                    trapCells.AddRange(shuffled.GetRange(0, Math.Min(count, shuffled.Count)));
+                }
+
+                foreach (var (tx, ty) in trapCells) floor.Cells[tx, ty].IsTrapCell = true;
+                floor.TrapCells = trapCells;
+                return true;
+            }
+            return false;
+        }
+
         // ---------- Poda de pasillos (asi el mapa deja celdas como vacio real, no un laberinto perfecto) ----------
 
         // Convierte en "Void" (roca solida, no caminable, no se renderiza) puntas muertas del arbol
@@ -313,6 +455,8 @@ namespace DungeonGen
             var protectedCells = new HashSet<(int, int)> { floor.StartPos, floor.EndPos, floor.SecondaryQuestPos };
             if (floor.HasBossRoom)
                 foreach (var c in floor.BossRoomCells) protectedCells.Add(c);
+            if (floor.HasTrapRoom)
+                foreach (var c in floor.TrapRoomCells) protectedCells.Add(c);
             foreach (var gate in floor.Gates)
             {
                 protectedCells.Add((gate.SwitchX, gate.SwitchY));
@@ -323,7 +467,8 @@ namespace DungeonGen
                 protectedCells.Add((door.DoorX, door.DoorY));
                 protectedCells.Add((door.LeverX, door.LeverY));
             }
-            if (floor.TreasurePos.HasValue) protectedCells.Add(floor.TreasurePos.Value);
+            if (floor.TreasureRoomCells != null)
+                foreach (var c in floor.TreasureRoomCells) protectedCells.Add(c);
 
             int totalNormal = 0;
             for (int x = 0; x < floor.Width; x++)
@@ -440,6 +585,22 @@ namespace DungeonGen
             if (floor.Cells[nx, ny].Type == CellType.Void) return false;
 
             OpenWallBetween(floor, x, y, dir);
+            return true;
+        }
+
+        // Perforador apuntado exactamente a la pared donde vive el disparador de flechas de la
+        // sala de trampas (ver DungeonFloor.TrapDisparadorPos/Dir). A diferencia de TryDrillWall,
+        // esto NO exige que haya una celda real del otro lado (la maquina suele estar montada
+        // sobre roca solida de borde) -- destruye la maquina sin abrir ningun paso, apagando esa
+        // trampa para el resto de la run. Devuelve false si esa pared no es la del disparador, si
+        // el piso no es ArrowSweep, o si ya estaba destruido.
+        public bool TryDestroyTrapDisparador(DungeonFloor floor, int x, int y, Direction dir)
+        {
+            if (!floor.HasTrapRoom || floor.TrapKind != TrapKind.ArrowSweep || floor.TrapDisabled) return false;
+            if (floor.TrapDisparadorPos.x != x || floor.TrapDisparadorPos.y != y) return false;
+            if (dir != floor.TrapDisparadorDir.Opposite()) return false;
+
+            floor.TrapDisabled = true;
             return true;
         }
 
@@ -709,7 +870,7 @@ namespace DungeonGen
             var list = new List<(int, int)>();
             for (int x = 0; x < floor.Width; x++)
                 for (int y = 0; y < floor.Height; y++)
-                    if (floor.Cells[x, y].Type == CellType.Normal && !floor.Cells[x, y].IsBossRoom)
+                    if (floor.Cells[x, y].Type == CellType.Normal && !floor.Cells[x, y].IsBossRoom && !floor.Cells[x, y].IsTreasureRoom && !floor.Cells[x, y].IsTrapRoom)
                         list.Add((x, y));
             return list;
         }
@@ -777,16 +938,16 @@ namespace DungeonGen
             return null;
         }
 
-        // Los 3 pilares de pacing de un dungeon crawler "interesante" (ver el analisis de Etrian
+        // Los pilares de pacing de un dungeon crawler "interesante" (ver el analisis de Etrian
         // Odyssey vs. Bravely Default en el articulo de Aevee Bee, "Pacing And Level Design In
-        // JRPGs"): en vez de ir de Start a End en linea recta,
-        //   1) hay que activar una PALANCA para desbloquear un tramo del camino (CellType.Lever /
-        //      LockedDoor), 2) esa palanca esta en un PUNTO MUERTO real (nunca sobre el camino
-        //      principal), asi que hay backtracking de verdad al volver, y 3) opcionalmente hay un
-        //      COFRE (CellType.Treasure) en otro punto muerto, fuera del camino, para el que se
-        //      desvia. El candado es sobre una arista del camino Start->End: como el mapa base es
-        //      un arbol (sin ciclos), cortar esa arista SIEMPRE desconecta End de Start hasta
-        //      activar la palanca -- no hace falta un candado "artificial", es estructural.
+        // JRPGs"): en vez de ir de Start a End en linea recta, hay que activar una PALANCA para
+        // desbloquear un tramo del camino (CellType.Lever / LockedDoor), y esa palanca esta en un
+        // PUNTO MUERTO real (nunca sobre el camino principal), asi que hay backtracking de verdad
+        // al volver. El candado es sobre una arista del camino Start->End: como el mapa base es un
+        // arbol (sin ciclos), cortar esa arista SIEMPRE desconecta End de Start hasta activar la
+        // palanca -- no hace falta un candado "artificial", es estructural.
+        // (El cofre YA NO se coloca aca -- es GARANTIZADO por piso via EnsureTreasure, sin importar
+        // si este candado se pudo colocar o no, ver GenerateDungeon.)
         // Devuelve false (sin tocar nada) si el camino es demasiado corto para que tenga sentido.
         private bool PlacePacingPillars(DungeonFloor floor, Random rng)
         {
@@ -886,19 +1047,146 @@ namespace DungeonGen
                 IsUnlocked = false,
             });
 
-            // Cofre opcional: otro punto muerto cualquiera (antes o despues de la puerta, no
-            // importa) distinto de todo lo ya usado. Si no hay lugar, el piso se queda sin cofre
-            // (no es obligatorio para que el piso sea resoluble).
-            var treasureCandidates = FindLeavesWithin(floor, null, usedPositions);
-            if (treasureCandidates.Count > 0)
+            // El cofre YA NO se coloca aca: EnsureTreasure (llamado siempre despues, ver
+            // GenerateDungeon) es la UNICA fuente del cofre garantizado de cada piso, para que el
+            // intento de agrandarlo a un cuadrante 2x2 (TryGrowTreasureRoom) se aplique siempre por
+            // el mismo camino, sin importar si este candado se pudo colocar o no.
+            return true;
+        }
+
+        // Cofre GARANTIZADO por piso: PlacePacingPillars de arriba solo pone uno si el candado se
+        // pudo colocar Y sobraba otro punto muerto libre despues de reservar el suyo -- en la
+        // practica bastantes pisos (camino corto, mapa chico) se quedaban sin ninguno. Este metodo
+        // se llama SIEMPRE despues (ver GenerateDungeon) y no hace nada si ya hay uno; si no, busca
+        // cualquier otro punto muerto libre del piso completo (sin restringir a "antes/despues de
+        // la puerta" como el otro) y pone el cofre ahi. Solo puede fallar si el piso no tiene NINGUN
+        // punto muerto libre, algo muy raro salvo mapas degenerados.
+        private bool EnsureTreasure(DungeonFloor floor, Random rng)
+        {
+            if (floor.TreasurePos.HasValue) return true;
+
+            var used = new HashSet<(int, int)> { floor.StartPos, floor.EndPos, floor.SecondaryQuestPos };
+            foreach (var door in floor.LockedDoors)
             {
-                Shuffle(treasureCandidates, rng);
-                var treasurePos = treasureCandidates[0];
-                floor.Cells[treasurePos.x, treasurePos.y].Type = CellType.Treasure;
-                floor.TreasurePos = treasurePos;
+                used.Add((door.DoorX, door.DoorY));
+                used.Add((door.LeverX, door.LeverY));
+            }
+            foreach (var gate in floor.Gates)
+            {
+                used.Add((gate.SwitchX, gate.SwitchY));
+                used.Add((gate.LandingX, gate.LandingY));
             }
 
+            var candidates = FindLeavesWithin(floor, null, used);
+            if (candidates.Count == 0) return false;
+
+            Shuffle(candidates, rng);
+            var pos = candidates[0];
+
+            // Intento (best-effort) de agrandar el cofre a un cuadrante 2x2, mas notorio que una
+            // sola celda; si no hay forma segura de hacerlo, TryGrowTreasureRoom no toca nada y se
+            // sigue con el cofre de 1 sola celda de siempre.
+            TryGrowTreasureRoom(floor, pos, used, rng);
+
+            floor.Cells[pos.x, pos.y].Type = CellType.Treasure;
+            floor.Cells[pos.x, pos.y].IsTreasureRoom = true;
+            floor.TreasurePos = pos;
+            if (floor.TreasureRoomCells == null) floor.TreasureRoomCells = new List<(int, int)> { pos };
             return true;
+        }
+
+        // Ruta fija de patrulla para el FOE de este piso (enemigo fuerte que se pasea, ver
+        // Gameplay/FoeController): un TRAMO del camino critico Start->End (nunca el camino entero,
+        // deja margen antes/despues para no pisar los marcadores de Start/End). Cualquier celda
+        // INTERNA de un camino entre 2 puntos protegidos tiene grado >= 2 por construccion (ver el
+        // comentario de PruneToSparseMaze mas abajo), asi que la ruta sobrevive la poda sola, sin
+        // necesitar proteccion extra como el candado/cofre. El FOE aparece SI O SI cada 2 pisos,
+        // empezando por el primero (Index par = "Piso 1", "Piso 3", etc. para el jugador): los
+        // pisos con Index impar nunca tienen -- alternancia fija, no probabilidad.
+        private void PlaceFoeRoute(DungeonFloor floor, Random rng)
+        {
+            if (floor.Index % 2 != 0) return;
+
+            var path = FindPath(floor, floor.StartPos, floor.EndPos);
+            const int desiredLen = 6;
+            const int margin = 1;
+            int usable = path.Count - margin * 2;
+            if (usable < 4) return; // camino critico muy corto, sin FOE este piso
+
+            int len = Math.Min(desiredLen, usable);
+            int maxStartIdx = path.Count - margin - len;
+            if (maxStartIdx < margin) return;
+            int startIdx = rng.Next(margin, maxStartIdx + 1);
+            floor.FoePatrolRoute = path.GetRange(startIdx, len);
+        }
+
+        // Prueba las 4 orientaciones posibles de un cuadrante 2x2 que incluyan `pos` (arriba-
+        // derecha, arriba-izquierda, abajo-derecha, abajo-izquierda) y se queda con la primera que
+        // cumple TODO esto:
+        //  - Las 3 celdas extra estan dentro del mapa, son Normal, no son sala de jefe, no estan en
+        //    la zona aislada y no estan en `used` (Start/End/mision secundaria/candados/atajos).
+        //  - El grado EXTERNO del bloque completo (aristas que cruzan del cuadrante hacia afuera)
+        //    es exactamente 1 -- la MISMA garantia que un cofre de 1 sola celda (punto muerto real:
+        //    hay que desviarse del camino a proposito, nunca se puede entrar "de paso" ni queda
+        //    flotando desconectado). Fusionar celdas nunca cierra paredes existentes (solo abre las
+        //    internas, igual que AddBossRoom), asi que esto no puede romper la conectividad general.
+        // Si ninguna orientacion cumple, no hace nada (el cofre se queda de 1 sola celda).
+        private void TryGrowTreasureRoom(DungeonFloor floor, (int x, int y) pos, HashSet<(int, int)> used, Random rng)
+        {
+            var orientations = new (int dx, int dy)[][]
+            {
+                new[] { (0, 0), (1, 0), (0, 1), (1, 1) },
+                new[] { (0, 0), (-1, 0), (0, 1), (-1, 1) },
+                new[] { (0, 0), (1, 0), (0, -1), (1, -1) },
+                new[] { (0, 0), (-1, 0), (0, -1), (-1, -1) },
+            };
+            Shuffle(orientations, rng);
+
+            foreach (var offsets in orientations)
+            {
+                var block = new List<(int x, int y)>();
+                bool valid = true;
+                foreach (var (dx, dy) in offsets)
+                {
+                    int nx = pos.x + dx, ny = pos.y + dy;
+                    if (!floor.InBounds(nx, ny)) { valid = false; break; }
+                    if ((nx, ny) != pos)
+                    {
+                        var extra = floor.Cells[nx, ny];
+                        if (extra.Type != CellType.Normal || extra.IsBossRoom || extra.IsTrapRoom
+                            || used.Contains((nx, ny)) || floor.IsInIsolatedZone(nx, ny))
+                        { valid = false; break; }
+                    }
+                    block.Add((nx, ny));
+                }
+                if (!valid) continue;
+
+                var blockSet = new HashSet<(int, int)>(block);
+                int externalDegree = 0;
+                foreach (var (bx, by) in block)
+                    foreach (var dir in DirectionExtensions.All)
+                    {
+                        var (ox, oy) = dir.Offset();
+                        if (blockSet.Contains((bx + ox, by + oy))) continue;
+                        if (!floor.Cells[bx, by].HasWall(dir)) externalDegree++;
+                    }
+                if (externalDegree != 1) continue;
+
+                foreach (var (bx, by) in block)
+                {
+                    var cell = floor.Cells[bx, by];
+                    cell.IsTreasureRoom = true;
+                    foreach (var dir in DirectionExtensions.All)
+                    {
+                        var (ox, oy) = dir.Offset();
+                        if (blockSet.Contains((bx + ox, by + oy)))
+                            cell.SetWall(dir, false);
+                    }
+                }
+
+                floor.TreasureRoomCells = block;
+                return;
+            }
         }
 
         // Abre (o vuelve a cerrar) la pared de una puerta bloqueada especifica -- usado tanto por
@@ -1068,8 +1356,28 @@ namespace DungeonGen
                 var treasurePos = floor.TreasurePos.Value;
                 if (!reachableUnlocked.Contains(treasurePos))
                     issues.Add($"Piso {floor.Index}: el cofre en {treasurePos} NO es alcanzable ni activando todas las palancas.");
-                if (Degree(floor, treasurePos.Item1, treasurePos.Item2) != 1)
+
+                if (floor.HasTreasureRoom2x2)
+                {
+                    // Cuadrante 2x2 (TryGrowTreasureRoom): la garantia de "punto muerto real" se
+                    // mide sobre el BLOQUE completo, no celda por celda -- tiene que tener
+                    // exactamente una arista que cruce hacia afuera del cuadrante.
+                    var blockSet = new HashSet<(int, int)>(floor.TreasureRoomCells);
+                    int externalDegree = 0;
+                    foreach (var (bx, by) in floor.TreasureRoomCells)
+                        foreach (var dir in DirectionExtensions.All)
+                        {
+                            var (ox, oy) = dir.Offset();
+                            if (blockSet.Contains((bx + ox, by + oy))) continue;
+                            if (!floor.Cells[bx, by].HasWall(dir)) externalDegree++;
+                        }
+                    if (externalDegree != 1)
+                        issues.Add($"Piso {floor.Index}: el cuadrante 2x2 del cofre no quedo como un unico punto muerto real (grado externo del bloque = {externalDegree}, deberia ser 1).");
+                }
+                else if (Degree(floor, treasurePos.Item1, treasurePos.Item2) != 1)
+                {
                     issues.Add($"Piso {floor.Index}: el cofre en {treasurePos} no quedo en un punto muerto real (grado != 1) -- no exige desviarse del camino.");
+                }
             }
 
             if (floor.HasBossRoom)

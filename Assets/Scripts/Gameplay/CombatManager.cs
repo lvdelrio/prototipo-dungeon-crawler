@@ -32,8 +32,13 @@ namespace Gameplay
         public float fleeChancePerCharacter = 10f;
 
         // Chance total de huir: la suma de lo que aporta cada personaje vivo (menos personajes
-        // vivos = mas dificil escapar), nunca mas de 100%.
-        public float FleeChancePercent => Mathf.Min(100f, (Party?.Count(p => p.IsAlive) ?? 0) * fleeChancePerCharacter);
+        // vivos = mas dificil escapar), nunca mas de 100% -- salvo contra un FOE (ver
+        // StartFoeEncounter), donde queda fija en FoeFleeChancePercent sin importar cuantos
+        // personajes sigan vivos: es un enemigo fuerte de proposito, escapar tiene que costar.
+        public const float FoeFleeChancePercent = 30f;
+        public float FleeChancePercent => IsFoeFight
+            ? FoeFleeChancePercent
+            : Mathf.Min(100f, (Party?.Count(p => p.IsAlive) ?? 0) * fleeChancePerCharacter);
 
         public List<CharacterStats> Party { get; private set; }
         public List<EnemyStats> Enemies { get; private set; }
@@ -41,6 +46,12 @@ namespace Gameplay
 
         public bool IsActive { get; private set; }
         public bool IsBossFight { get; private set; }
+        // No se resetea al terminar el combate (ver EndCombat/EndCombatFled): queda leible por
+        // DungeonManager.HandleCombatFinished/HandleCombatFled, que se llaman DESDE el mismo evento
+        // que dispara el fin del combate, para saber si hay que empujar al FOE hacia atras
+        // (huida exitosa) o despawnearlo (victoria) -- recien se pisa en el proximo StartEncounter/
+        // StartFoeEncounter.
+        public bool IsFoeFight { get; private set; }
         public bool IsResolvingRound { get; private set; }
         public string CurrentTurnActorName { get; private set; }
         public bool CurrentTurnIsParty { get; private set; }
@@ -107,7 +118,11 @@ namespace Gameplay
         // una run nueva (tras la pantalla de tienda/mejoras post-derrota).
         public void InitializeParty(MetaProgress meta)
         {
-            Party = PartyFactory.CreateDefaultParty();
+            // meta.PartyClasses vacio = guardado viejo o todavia no se eligio nunca una party propia
+            // (ver PartyCreationHUD) -- cae de vuelta a la composicion clasica de siempre.
+            Party = meta.PartyClasses != null && meta.PartyClasses.Count > 0
+                ? PartyFactory.CreateParty(meta.PartyClasses)
+                : PartyFactory.CreateDefaultParty();
             meta.ApplyUpgradesToParty(Party);
         }
 
@@ -119,7 +134,27 @@ namespace Gameplay
             if (IsActive) return;
 
             IsBossFight = isBoss;
+            IsFoeFight = false;
             Enemies = isBoss ? new List<EnemyStats> { EnemyFactory.CreateBoss(floorIndex) } : EnemyFactory.CreateRandomEncounter(_rng, floorIndex);
+            StartEncounterCommon(isBoss ? "¡Aparece el Guardián de Piedra!" : "¡Un grupo de enemigos aparece!");
+        }
+
+        // Colision con un FOE (ver Gameplay/FoeController): pelea 1 contra 1 con un enemigo fuerte
+        // de proposito, huida mas dificil (ver FleeChancePercent) -- no cuenta como jefe (IsBossFight
+        // sigue en false, SI se puede huir), pero DungeonManager reacciona distinto al terminar
+        // (empuja al FOE si escapaste, lo despawnea si lo venciste).
+        public void StartFoeEncounter(EnemyStats foe)
+        {
+            if (IsActive || foe == null) return;
+
+            IsBossFight = false;
+            IsFoeFight = true;
+            Enemies = new List<EnemyStats> { foe };
+            StartEncounterCommon($"¡{foe.Name} te alcanzó!");
+        }
+
+        private void StartEncounterCommon(string openingLogLine)
+        {
             _engine = new CombatEngine(Party, Enemies, _rng);
             _queuedActions.Clear();
             _chooserIndex = 0;
@@ -139,7 +174,7 @@ namespace Gameplay
             }
 
             Log.Clear();
-            Log.Add(isBoss ? "¡Aparece el Guardián de Piedra!" : "¡Un grupo de enemigos aparece!");
+            Log.Add(openingLogLine);
             OnCombatStarted?.Invoke();
             AdvanceChooser();
         }
@@ -258,12 +293,45 @@ namespace Gameplay
         // CombatEngine.FrontRowAggroWeight), si el cambio desbalancea la formacion se intercambia
         // automaticamente con el primero que encuentre del lado que queda de mas: asi el jugador
         // solo elige "quiero a este adelante/atras" sin tener que armar el par a mano.
+        // Curar fuera de combate (menu de pausa, pestana Habilidades): misma cuenta que la rama
+        // IsHealSkill de CombatEngine.ExecutePartyAction (TP -= SkillTpCost, curar hasta HealAmount
+        // sin pasarse del maximo), pero sin QTE ni orden de turnos -- es aritmetica directa sobre
+        // los MISMOS CharacterStats persistentes que ve el jugador al entrar en combate, asi que el
+        // resultado se nota de inmediato. Devuelve cuanto se curo de verdad (0 si no se pudo: sin
+        // TP suficiente, objetivo caido, o el que cura no tiene habilidad de curacion).
+        public int UseHealSkillOutOfCombat(CharacterStats healer, CharacterStats target)
+        {
+            if (!CanChangeFormation || healer == null || target == null) return 0;
+            if (!healer.IsHealSkill || !healer.IsAlive || !target.IsAlive) return 0;
+            if (healer.TP < healer.SkillTpCost) return 0;
+
+            healer.TP -= healer.SkillTpCost;
+            // Misma cuenta que el heal en combate (CombatEngine.ExecutePartyAction, rama
+            // IsHealSkill): el MagicAttack de quien cura suma un extra sobre el flat HealAmount.
+            int healAmount = healer.HealAmount + healer.MagicAttack / 2;
+            int healed = Math.Max(0, Math.Min(target.MaxHP - target.HP, healAmount));
+            target.HP += healed;
+            return healed;
+        }
+
         public void SetFrontRow(CharacterStats target, bool front)
         {
             if (!CanChangeFormation || target == null || target.IsFrontRow == front) return;
             var partner = Party.FirstOrDefault(p => p != target && p.IsFrontRow == front);
             target.IsFrontRow = front;
             if (partner != null) partner.IsFrontRow = !front;
+        }
+
+        // Intercambio EXPLICITO entre 2 integrantes puntuales (click en uno, click en el otro --
+        // ver PauseMenuHUD.DrawFormation), a diferencia de SetFrontRow (que mueve a uno solo y le
+        // busca pareja cualquiera del otro lado). Mantiene el balance 3/3 siempre, sin importar si
+        // "a" y "b" ya estaban del mismo lado (en ese caso no cambia nada).
+        public void SwapFormation(CharacterStats a, CharacterStats b)
+        {
+            if (!CanChangeFormation || a == null || b == null || a == b) return;
+            bool aWasFront = a.IsFrontRow;
+            a.IsFrontRow = b.IsFrontRow;
+            b.IsFrontRow = aWasFront;
         }
 
         // Cambia el accesorio equipado de una clase (menu de pausa, fuera de combate) y ajusta al
@@ -317,8 +385,11 @@ namespace Gameplay
                 if (isParty) _queuedActions.TryGetValue(Party[idx], out currentPartyAction);
 
                 // Si a este personaje le toca ejecutar una habilidad, el QTE se juega justo ahora
-                // (en el momento real de su turno), no cuando se elige el objetivo.
-                if (isParty && qteManager != null && Party[idx].IsAlive && currentPartyAction != null && currentPartyAction.Type == ActionType.Skill)
+                // (en el momento real de su turno), no cuando se elige el objetivo. Se salta para
+                // la postura propia del Berserker (IsSelfStanceSkill): no hay ningun numero que un
+                // QTE exitoso pueda mejorar ahi, jugarlo igual se sentiria como una trampa.
+                if (isParty && qteManager != null && Party[idx].IsAlive && currentPartyAction != null
+                    && currentPartyAction.Type == ActionType.Skill && !Party[idx].IsSelfStanceSkill)
                     yield return RunSkillQte(Party[idx], currentPartyAction);
 
                 int[] partyHpBefore = Party.Select(p => p.HP).ToArray();
@@ -357,7 +428,18 @@ namespace Gameplay
                     _allOutOfferedThisRound = true;
                     yield return OfferAllOutAttack();
                     if (AllOutAttackMashCount > 0)
-                        break; // el golpe en conjunto consume el resto de la ronda
+                    {
+                        // A proposito, no es un bug de estado: el resto del orden de turnos de ESTA
+                        // ronda se descarta (junto con _queuedActions.Clear() de mas abajo, asi que
+                        // ninguna accion en cola se arrastra a la ronda siguiente) porque el Ataque
+                        // en Conjunto YA les pego a todos los enemigos vivos. Antes esto pasaba en
+                        // silencio y se sentia como que a esos personajes "se les cancelo el turno"
+                        // sin explicacion -- este log aclara que fue el Ataque en Conjunto. Todos
+                        // los personajes que se quedaron sin actuar vuelven a elegir accion normal
+                        // en la ronda siguiente (AdvanceChooser mas abajo).
+                        Log.Add("¡El resto de la ronda se salta: el Ataque en Conjunto ya definio el turno!");
+                        break;
+                    }
                 }
             }
 
@@ -368,7 +450,7 @@ namespace Gameplay
 
             if (_engine.AllEnemiesDefeated())
             {
-                Log.Add(IsBossFight ? "¡Venciste al Guardián de Piedra!" : "¡Victoria!");
+                Log.Add(IsBossFight ? "¡Venciste al Guardián de Piedra!" : IsFoeFight ? "¡Venciste al FOE!" : "¡Victoria!");
                 // Le da tiempo a la animacion de disolucion del ultimo enemigo caido antes de
                 // mostrar el resumen de la pelea. El combate NO termina todavia (EndCombat recien
                 // se llama desde DismissVictorySummary, cuando el jugador confirma haber visto el

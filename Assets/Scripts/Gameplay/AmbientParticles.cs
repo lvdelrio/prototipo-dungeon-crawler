@@ -1,9 +1,21 @@
+using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
+using DungeonGen;
 
 namespace Gameplay
 {
     // Particulas de ambiente en la mazmorra, para dar dinamismo y sensacion de profundidad
-    // mientras se explora, en 2 capas (como el fondo de un escenario tipo Tekken):
+    // mientras se explora. Antes ciclaba entre 3 "biomas" de color segun el piso (Polvo/Hojas/
+    // Brasas, piso % 3): en la practica varios de esos tonos se leian amarillentos y NO daban la
+    // sensacion de misterio buscada. Ahora el motivo es SIEMPRE el mismo polvo blanco/celeste palido
+    // en TODOS los pisos normales (consistente, no cambia con el piso), reforzado por una tercera
+    // capa de motas que titilan (el "algo mas" aparte del blanco liso) para que se sienta con vida
+    // sin necesitar variar el color. Lo UNICO que cambia de verdad es la sala de JEFE: ahi el motivo
+    // se reemplaza por una tormenta electrica (rayos + chispas), bien distinta del resto, para que
+    // el jugador sienta que algo mas peligroso esta cerca apenas entra.
+    //
+    // 4 elementos (como el fondo de un escenario tipo Tekken, mas la tormenta del jefe):
     //  - Cerca: motas nitidas y relativamente rapidas, en un volumen que sigue la posicion Y LA
     //    DIRECCION en la que mira la camara (no solo la posicion) -- asi siempre hay algo
     //    flotando mas o menos adelante, sin importar hacia donde se gire, en vez de quedar
@@ -12,8 +24,12 @@ namespace Gameplay
     //    z-buffer, igual que cualquier objeto transparente) -- no hace falta logica extra para eso.
     //  - Lejos: un volumen mucho mas grande de particulas grandes, tenues y lentas (neblina/calina)
     //    que solo sigue la posicion, dando la sensacion de que el fondo se pierde en la distancia.
-    // El tipo cambia ciclando segun el indice de piso, y se reemplaza por brasas intensas apenas
-    // el jugador entra a la sala de un jefe.
+    //  - Destellos: motas dispersas y MUY lentas cuyo brillo titila varias veces durante su vida
+    //    (colorOverLifetime con varios picos de alpha, no solo un fade in/out) -- como luciernagas o
+    //    polvo magico en la oscuridad, el detalle que le da presencia al blanco sin volverlo un
+    //    color distinto por piso.
+    //  - Tormenta (solo sala de jefe): relampagos reales (flash de Light + rafaga de chispas
+    //    electricas) a intervalos random, ver StormRoutine.
     public class AmbientParticles : MonoBehaviour
     {
         public DungeonManager dungeonManager;
@@ -23,25 +39,82 @@ namespace Gameplay
         // Cuanto se adelanta el volumen "cerca" en la direccion en la que mira la camara.
         private const float NearForwardOffset = 1.1f;
 
-        private enum Biome { Dust, Leaves, Embers }
+        private static readonly Color MysteryNearColor = new Color(0.85f, 0.9f, 0.95f, 0.4f);
+        private static readonly Color MysteryFarColor = new Color(0.55f, 0.62f, 0.7f, 0.09f);
+        private static readonly Color StormNearColor = new Color(0.6f, 0.68f, 0.85f, 0.4f);
+        private static readonly Color StormFarColor = new Color(0.18f, 0.2f, 0.3f, 0.16f);
+        private static readonly Color LightningColor = new Color(0.75f, 0.85f, 1f);
+
+        // Radio (en celdas, distancia Chebyshev -- permite diagonal) dentro del cual la tormenta ya
+        // se activa aunque el jugador todavia no haya PISADO la sala de jefe: asi las luces/rayos
+        // se ven desde un pasillo cercano, de afuera, como aviso de que hay algo peligroso ahi.
+        private const int BossProximityRadius = 4;
 
         private ParticleSystem _near;
         private ParticleSystem _far;
-        private int _lastFloorIndex = int.MinValue;
-        private bool _lastInBossRoom;
+        private ParticleSystem _wisps;
+        // Sistema dedicado para el rayo: renderMode Stretch (particulas "estiradas" segun su
+        // velocidad, se ven como rayas/lineas) en vez del Billboard redondo de _wisps -- antes el
+        // rayo se armaba con puntitos redondos de _wisps, que no se leian como un relampago de
+        // verdad por mas que se los encadenara en zigzag.
+        private ParticleSystem _lightningStreaks;
+        private Light _stormLight;
+        private Coroutine _stormRoutine;
+        private bool _lastNearBossRoom;
+        private bool _biomeInitialized;
+        private Vector3 _bossRoomAnchor;
 
         void Awake()
         {
             _near = ParticleLayerFactory.CreateLayer(transform, "AmbientNear");
             _far = ParticleLayerFactory.CreateLayer(transform, "AmbientFar");
+            _wisps = ParticleLayerFactory.CreateLayer(transform, "AmbientWisps");
+            _lightningStreaks = ParticleLayerFactory.CreateLayer(transform, "LightningStreaks");
 
             ConfigureCommon(_near, maxParticles: 220, boxScale: new Vector3(2.6f, 2.2f, 2.6f));
             ConfigureCommon(_far, maxParticles: 120, boxScale: new Vector3(16f, 7f, 16f));
+            ConfigureCommon(_wisps, maxParticles: 40, boxScale: new Vector3(5f, 2.6f, 5f));
+            ConfigureWispFlicker(_wisps);
+            ConfigureStreakLayer(_lightningStreaks);
 
-            ApplyBiome(Biome.Dust, false);
+            var stormGo = new GameObject("StormLight");
+            stormGo.transform.SetParent(transform, false);
+            _stormLight = stormGo.AddComponent<Light>();
+            _stormLight.type = LightType.Point;
+            _stormLight.color = LightningColor;
+            _stormLight.range = 20f;
+            _stormLight.intensity = 0f;
+            _stormLight.shadows = LightShadows.None;
+
+            ApplyBiome(nearBossRoom: false);
 
             ParticleLayerFactory.Activate(_near);
             ParticleLayerFactory.Activate(_far);
+            ParticleLayerFactory.Activate(_wisps);
+            ParticleLayerFactory.Activate(_lightningStreaks);
+        }
+
+        // Sistema SOLO para rafagas por Emit() (el rayo y sus chispas): sin emision ambiente propia
+        // (rateOverTime en 0) y en modo Stretch, que dibuja cada particula como una raya orientada
+        // segun SU velocidad -- eso es lo que hace que se vea como un relampago/chispazo en vez de
+        // puntos sueltos.
+        private void ConfigureStreakLayer(ParticleSystem ps)
+        {
+            var main = ps.main;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.loop = true;
+            main.playOnAwake = true;
+            main.maxParticles = 200;
+            main.startSpeed = 0f;
+            main.gravityModifier = 0f;
+
+            var emission = ps.emission;
+            emission.rateOverTime = 0f;
+
+            var renderer = ps.GetComponent<ParticleSystemRenderer>();
+            renderer.renderMode = ParticleSystemRenderMode.Stretch;
+            renderer.lengthScale = 4.5f;
+            renderer.velocityScale = 0.16f;
         }
 
         private void ConfigureCommon(ParticleSystem ps, int maxParticles, Vector3 boxScale)
@@ -60,30 +133,85 @@ namespace Gameplay
             vel.enabled = true;
         }
 
+        // Pulso de brillo real (no un simple fade in/out): el alpha sube y baja varias veces
+        // durante la vida de cada particula, como si titilara -- eso es lo que las distingue del
+        // polvo comun y les da el "aire de misterio" pedido.
+        private void ConfigureWispFlicker(ParticleSystem ps)
+        {
+            var col = ps.colorOverLifetime;
+            col.enabled = true;
+            var gradient = new Gradient();
+            gradient.SetKeys(
+                new[] { new GradientColorKey(Color.white, 0f), new GradientColorKey(Color.white, 1f) },
+                new[]
+                {
+                    new GradientAlphaKey(0f, 0f),
+                    new GradientAlphaKey(1f, 0.12f),
+                    new GradientAlphaKey(0.1f, 0.32f),
+                    new GradientAlphaKey(1f, 0.52f),
+                    new GradientAlphaKey(0.1f, 0.72f),
+                    new GradientAlphaKey(0.8f, 0.88f),
+                    new GradientAlphaKey(0f, 1f),
+                });
+            col.color = gradient;
+        }
+
         void LateUpdate()
         {
             if (followTarget != null)
             {
                 _far.transform.position = followTarget.position;
                 _near.transform.position = followTarget.position + followTarget.forward * NearForwardOffset;
+                _wisps.transform.position = followTarget.position;
             }
-            if (dungeonManager == null || player == null) return;
+            if (dungeonManager == null || player == null || !dungeonManager.IsReady) return;
 
-            int floorIndex = dungeonManager.CurrentFloorIndex;
-            bool inBossRoom = false;
             var floor = dungeonManager.CurrentFloor;
-            if (floor != null && floor.InBounds(player.CellX, player.CellY))
-                inBossRoom = floor.Cells[player.CellX, player.CellY].IsBossRoom;
+            bool nearBossRoom = false;
+            if (floor != null && floor.HasBossRoom)
+            {
+                // El ancla de la tormenta (luz + rayos) es la sala del jefe, NO el jugador: asi el
+                // relampago se ve desde afuera (un pasillo cercano) tal cual es, en vez de
+                // "seguirte" a donde vayas -- ademas la luz no tiene sombras (LightShadows.None),
+                // asi que se filtra por las paredes cercanas como un buen indicio de peligro.
+                _bossRoomAnchor = dungeonManager.CellToWorld(floor.BossPos.x, floor.BossPos.y) + Vector3.up * 1.6f;
+                _stormLight.transform.position = _bossRoomAnchor;
 
-            if (floorIndex == _lastFloorIndex && inBossRoom == _lastInBossRoom) return;
-            _lastFloorIndex = floorIndex;
-            _lastInBossRoom = inBossRoom;
+                if (floor.InBounds(player.CellX, player.CellY))
+                    nearBossRoom = IsNearBossRoom(floor, player.CellX, player.CellY);
+            }
 
-            var biome = inBossRoom ? Biome.Embers : (Biome)(((floorIndex % 3) + 3) % 3);
-            ApplyBiome(biome, inBossRoom);
+            if (_biomeInitialized && nearBossRoom == _lastNearBossRoom) return;
+            _biomeInitialized = true;
+            _lastNearBossRoom = nearBossRoom;
+            ApplyBiome(nearBossRoom);
+
+            if (nearBossRoom)
+            {
+                if (_stormRoutine == null) _stormRoutine = StartCoroutine(StormRoutine());
+            }
+            else if (_stormRoutine != null)
+            {
+                StopCoroutine(_stormRoutine);
+                _stormRoutine = null;
+                _stormLight.intensity = 0f;
+            }
         }
 
-        private void ApplyBiome(Biome biome, bool intense)
+        // Distancia Chebyshev (la que importa en una grilla con movimiento en 8 direcciones/vision)
+        // del jugador a la celda MAS CERCANA de la sala de jefe; true si esta a BossProximityRadius
+        // celdas o menos (incluye estar parado adentro, distancia 0).
+        private static bool IsNearBossRoom(DungeonFloor floor, int px, int py)
+        {
+            foreach (var (bx, by) in floor.BossRoomCells)
+            {
+                int dist = Mathf.Max(Mathf.Abs(px - bx), Mathf.Abs(py - by));
+                if (dist <= BossProximityRadius) return true;
+            }
+            return false;
+        }
+
+        private void ApplyBiome(bool nearBossRoom)
         {
             var nearMain = _near.main;
             var nearEmission = _near.emission;
@@ -92,37 +220,155 @@ namespace Gameplay
             var farEmission = _far.emission;
             var farVel = _far.velocityOverLifetime;
 
-            switch (biome)
+            if (nearBossRoom)
             {
-                case Biome.Leaves:
-                    // Vida mas corta que antes: como el volumen "cerca" ahora sigue hacia donde se
-                    // mira (no solo la posicion), conviene que se renueve rapido al girar en vez de
-                    // dejar hojas viejas colgando de la vez anterior.
-                    SetLayer(nearMain, nearEmission, nearVel,
-                        color: new Color(0.5f, 0.68f, 0.24f, 0.95f), speed: (0.15f, 0.4f), size: (0.16f, 0.3f),
-                        life: (3f, 4.5f), gravity: 0.06f, rate: 14f, drift: (-0.15f, 0.15f));
-                    SetLayer(farMain, farEmission, farVel,
-                        color: new Color(0.35f, 0.48f, 0.22f, 0.1f), speed: (0.02f, 0.06f), size: (0.6f, 1.1f),
-                        life: (14f, 20f), gravity: 0.01f, rate: 3f, drift: (-0.06f, 0.06f));
-                    break;
+                SetLayer(nearMain, nearEmission, nearVel,
+                    color: StormNearColor, speed: (0.25f, 0.6f), size: (0.05f, 0.1f),
+                    life: (1.2f, 2f), gravity: 0.02f, rate: 20f, drift: (-0.25f, 0.25f));
+                SetLayer(farMain, farEmission, farVel,
+                    color: StormFarColor, speed: (0.04f, 0.1f), size: (0.7f, 1.4f),
+                    life: (8f, 12f), gravity: 0f, rate: 5f, drift: (-0.08f, 0.08f));
+            }
+            else
+            {
+                SetLayer(nearMain, nearEmission, nearVel,
+                    color: MysteryNearColor, speed: (0.05f, 0.15f), size: (0.06f, 0.13f),
+                    life: (3f, 4.5f), gravity: 0f, rate: 18f, drift: (-0.05f, 0.05f));
+                SetLayer(farMain, farEmission, farVel,
+                    color: MysteryFarColor, speed: (0.02f, 0.05f), size: (0.5f, 0.9f),
+                    life: (12f, 18f), gravity: 0f, rate: 3f, drift: (-0.04f, 0.04f));
+            }
 
-                case Biome.Embers:
-                    SetLayer(nearMain, nearEmission, nearVel,
-                        color: new Color(1f, 0.48f, 0.14f, 1f), speed: (0.3f, 0.7f), size: (0.07f, 0.15f),
-                        life: (1.8f, 2.8f), gravity: -0.04f, rate: intense ? 40f : 22f, drift: (-0.1f, 0.1f));
-                    SetLayer(farMain, farEmission, farVel,
-                        color: new Color(0.5f, 0.24f, 0.1f, 0.12f), speed: (0.03f, 0.08f), size: (0.7f, 1.3f),
-                        life: (10f, 15f), gravity: -0.015f, rate: intense ? 6f : 4f, drift: (-0.05f, 0.05f));
-                    break;
+            var wispMain = _wisps.main;
+            var wispEmission = _wisps.emission;
+            var wispVel = _wisps.velocityOverLifetime;
+            SetLayer(wispMain, wispEmission, wispVel,
+                color: nearBossRoom ? LightningColor : Color.white,
+                speed: (0.02f, 0.06f), size: (0.09f, 0.16f),
+                life: (4f, 6f), gravity: 0f, rate: nearBossRoom ? 4f : 2.2f, drift: (-0.03f, 0.03f));
+        }
 
-                default: // Dust
-                    SetLayer(nearMain, nearEmission, nearVel,
-                        color: new Color(0.88f, 0.85f, 0.75f, 0.5f), speed: (0.05f, 0.15f), size: (0.06f, 0.13f),
-                        life: (3f, 4.5f), gravity: 0f, rate: 18f, drift: (-0.05f, 0.05f));
-                    SetLayer(farMain, farEmission, farVel,
-                        color: new Color(0.6f, 0.58f, 0.52f, 0.1f), speed: (0.02f, 0.05f), size: (0.5f, 0.9f),
-                        life: (12f, 18f), gravity: 0f, rate: 3f, drift: (-0.04f, 0.04f));
-                    break;
+        // Relampago real de sala de jefe: espera un intervalo random y despues dispara un flash de
+        // luz (sube a full brillo casi de inmediato y cae rapido, como FlashLight en
+        // ElementalParticleEffect) mas 2-3 rayos en puntos DISTINTOS de la sala (ver
+        // PickBoltOrigins) -- se repite mientras el jugador siga cerca, para que la tormenta no
+        // pare nunca del todo.
+        private IEnumerator StormRoutine()
+        {
+            while (true)
+            {
+                yield return new WaitForSeconds(Random.Range(3f, 7f));
+                yield return StartCoroutine(LightningStrike());
+            }
+        }
+
+        private IEnumerator LightningStrike()
+        {
+            const float peakIntensity = 9f;
+            const float riseTime = 0.03f;
+            const float fallTime = 0.35f;
+
+            // Varios rayos "aca y alla" (no siempre el mismo punto) ADEMAS del flash de luz y las
+            // chispas: antes esto era solo un Light parpadeando -- se sentia mas a un fogonazo que
+            // a un rayo de verdad. Ahora hay particulas Stretch (rayas, ver ConfigureStreakLayer)
+            // que dibujan trazos de verdad, apareciendo en distintos rincones de la sala.
+            foreach (var origin in PickBoltOrigins(Random.Range(2, 4))) EmitLightningBolt(origin);
+            EmitSparkBurst(_bossRoomAnchor);
+
+            float t = 0f;
+            while (t < riseTime)
+            {
+                t += Time.deltaTime;
+                _stormLight.intensity = Mathf.Lerp(0f, peakIntensity, t / riseTime);
+                yield return null;
+            }
+            // Segundo destello mas corto, como el rebote de un trueno real, antes de apagarse del
+            // todo -- con SUS PROPIOS rayos, en otros puntos de la sala.
+            yield return new WaitForSeconds(0.05f);
+            foreach (var origin in PickBoltOrigins(Random.Range(1, 3))) EmitLightningBolt(origin);
+            EmitSparkBurst(_bossRoomAnchor);
+            _stormLight.intensity = peakIntensity * 0.7f;
+
+            t = 0f;
+            while (t < fallTime)
+            {
+                t += Time.deltaTime;
+                _stormLight.intensity = Mathf.Lerp(peakIntensity * 0.7f, 0f, t / fallTime);
+                yield return null;
+            }
+            _stormLight.intensity = 0f;
+        }
+
+        // `count` posiciones en el mundo dentro de la sala de jefe ACTUAL (celdas al azar de
+        // floor.BossRoomCells, convertidas via DungeonManager.CellToWorld) para que cada rayo caiga
+        // en un rincon distinto de la sala en vez de siempre el mismo punto.
+        private List<Vector3> PickBoltOrigins(int count)
+        {
+            var origins = new List<Vector3>();
+            var floor = dungeonManager.CurrentFloor;
+            if (floor == null || !floor.HasBossRoom)
+            {
+                origins.Add(_bossRoomAnchor);
+                return origins;
+            }
+
+            var cells = floor.BossRoomCells;
+            for (int i = 0; i < count; i++)
+            {
+                var (cx, cy) = cells[Random.Range(0, cells.Count)];
+                origins.Add(dungeonManager.CellToWorld(cx, cy) + Vector3.up * Random.Range(1.2f, 2.4f));
+            }
+            return origins;
+        }
+
+        // Trazo en zigzag hecho de RAYAS (particulas Stretch de _lightningStreaks) desde un techo
+        // imaginario hasta el piso, cada segmento orientado segun SU PROPIA direccion (no siempre
+        // derecho hacia abajo) -- asi se lee como un relampago quebrado de verdad, no una fila de
+        // puntos redondos.
+        private void EmitLightningBolt(Vector3 origin)
+        {
+            Vector3 top = origin + Vector3.up * 1.6f;
+            Vector3 bottom = origin - Vector3.up * 1.4f;
+
+            var emitParams = new ParticleSystem.EmitParams { startColor = LightningColor };
+
+            const int segments = 9;
+            Vector3 prev = top;
+            for (int i = 1; i <= segments; i++)
+            {
+                float t = i / (float)segments;
+                Vector3 basePos = Vector3.Lerp(top, bottom, t);
+                Vector3 jitter = new Vector3(Random.Range(-1f, 1f), 0f, Random.Range(-1f, 1f)) * (0.4f * (1f - t) + 0.05f);
+                Vector3 next = basePos + jitter;
+
+                Vector3 dir = (next - prev).sqrMagnitude > 0.0001f ? (next - prev).normalized : Vector3.down;
+                emitParams.position = prev;
+                emitParams.velocity = dir * Random.Range(9f, 14f); // el modulo Stretch dibuja la raya en esta direccion
+                emitParams.startLifetime = Random.Range(0.08f, 0.13f);
+                emitParams.startSize = Random.Range(0.05f, 0.09f);
+                _lightningStreaks.Emit(emitParams, 1);
+
+                prev = next;
+            }
+        }
+
+        // Chispas radiando hacia afuera desde el punto de impacto: con velocidad (no quietas como
+        // antes) para que el modulo Stretch las dibuje como rayitas cortas, no puntos.
+        private void EmitSparkBurst(Vector3 center)
+        {
+            var emitParams = new ParticleSystem.EmitParams
+            {
+                startColor = LightningColor,
+                startSize = 0.07f,
+                startLifetime = 0.18f,
+            };
+            int count = Random.Range(8, 14);
+            for (int i = 0; i < count; i++)
+            {
+                Vector3 dir = Random.insideUnitSphere.normalized;
+                emitParams.position = center + dir * 0.3f;
+                emitParams.velocity = dir * Random.Range(4f, 7f);
+                _lightningStreaks.Emit(emitParams, 1);
             }
         }
 

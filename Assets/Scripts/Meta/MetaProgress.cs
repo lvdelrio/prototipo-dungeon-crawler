@@ -13,7 +13,18 @@ namespace Meta
         public int BankedPoints;
         public int MapCharges;
         public int DrillCharges;
+        // Carga de Incienso: al usarse (ver DungeonManager.TryUseIncense) reduce a la mitad el
+        // peligro que acumulan los pasos durante un tramo de exploracion, asi tardas mas en
+        // toparte con un encuentro -- util para cruzar rapido un piso sin pelear tanto.
+        public int IncenseCharges;
         public List<CharacterUpgrade> Upgrades = new List<CharacterUpgrade>();
+
+        // Las 6 clases elegidas en la pantalla de creacion de party de la partida actual (ver
+        // Gameplay/PartyCreationHUD). Vacia = todavia no se eligio nunca (guardado viejo, o recien
+        // "Nueva Partida" sin terminar) -- en ese caso CombatManager.InitializeParty cae de vuelta a
+        // PartyFactory.DefaultClasses. Se conserva entre runs de la MISMA partida (no se pide de
+        // nuevo cada vez que se pierde/gana, solo al arrancar una partida realmente nueva).
+        public List<CharacterClass> PartyClasses = new List<CharacterClass>();
 
         // Equipamiento: items comprados (catalogo en Combat/EquipmentItem.cs) y cual (si alguno)
         // tiene puesto cada clase -- un solo accesorio por personaje, sin slots de arma/armadura.
@@ -32,12 +43,18 @@ namespace Meta
         public const int UpgradeMaxLevel = 5;
         public const int MapCost = 30;
         public const int DrillCost = 40;
+        public const int IncenseCost = 35;
 
         private const int PerLevelAttack = 1;
         private const int PerLevelDefense = 1;
         private const int PerLevelSpeed = 1;
         private const int PerLevelMaxHp = 8;
         private const int PerLevelMaxTp = 4;
+        private const int PerLevelMagicAttack = 1;
+        // Evasion/Luck son porcentajes (0-100): subir de a 1 por nivel para que 5 niveles (el tope,
+        // UpgradeMaxLevel) sea un +5% notorio pero nunca desequilibrante por si solo.
+        private const int PerLevelEvasion = 1;
+        private const int PerLevelLuck = 1;
 
         public static int ComputeRunPoints(int deepestFloorIndexReached, int enemiesDefeated, int bossesDefeated)
         {
@@ -100,6 +117,14 @@ namespace Meta
             return true;
         }
 
+        public bool TryPurchaseIncense()
+        {
+            if (BankedPoints < IncenseCost) return false;
+            BankedPoints -= IncenseCost;
+            IncenseCharges++;
+            return true;
+        }
+
         public bool OwnsItem(string itemId) => !string.IsNullOrEmpty(itemId) && OwnedItemIds.Contains(itemId);
 
         public bool TryPurchaseItem(string itemId)
@@ -153,6 +178,9 @@ namespace Meta
                     character.Speed += upgrade.SpeedLevel * PerLevelSpeed;
                     character.MaxHP += upgrade.MaxHpLevel * PerLevelMaxHp;
                     character.MaxTP += upgrade.MaxTpLevel * PerLevelMaxTp;
+                    character.MagicAttack += upgrade.MagicAttackLevel * PerLevelMagicAttack;
+                    character.Evasion += upgrade.EvasionLevel * PerLevelEvasion;
+                    character.Luck += upgrade.LuckLevel * PerLevelLuck;
                 }
 
                 var item = EquipmentCatalog.Find(GetEquippedItemId(character.Class));

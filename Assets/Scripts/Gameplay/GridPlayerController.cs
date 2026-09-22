@@ -50,7 +50,7 @@ namespace Gameplay
 
         void Update()
         {
-            if (_busy || dungeonManager == null) return;
+            if (_busy || dungeonManager == null || !dungeonManager.IsReady) return; // IsReady en false = todavia esta el menu inicial (Continuar/Nueva Partida)
             if (dungeonManager.IsCombatActive || dungeonManager.IsGameOverShopActive) return; // congelado en combate o en la tienda post-derrota
             if (dialogueManager != null && dialogueManager.IsActive) return; // congelado mientras hay un dialogo en pantalla
 
@@ -66,6 +66,7 @@ namespace Gameplay
 
             if (Input.GetKeyDown(KeyCode.M)) { dungeonManager.TryUseMap(); return; }
             if (Input.GetKeyDown(KeyCode.P)) { dungeonManager.TryUseDrill(_x, _y, _facing); return; }
+            if (Input.GetKeyDown(KeyCode.N)) { dungeonManager.TryUseIncense(); return; }
 
             // DEMO del sistema de dialogo (tecla T): reemplazar este trigger por uno real (un NPC,
             // una celda de taberna, etc.) cuando se construya el bazar/taberna de verdad.

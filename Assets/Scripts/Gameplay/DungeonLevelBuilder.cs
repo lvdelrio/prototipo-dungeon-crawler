@@ -26,6 +26,7 @@ namespace Gameplay
         public Material lockedDoorMarkerMaterial;
         public Material leverMarkerMaterial;
         public Material treasureMarkerMaterial;
+        public Material trapMarkerMaterial;
 
         // Tinte distinto (piso/pared/techo) para la zona aislada de cada piso: en BotW un mundo con
         // regiones visualmente distinguibles hace que el jugador arme su propio mapa mental
@@ -102,7 +103,55 @@ namespace Gameplay
                     }
 
                     BuildMarker(cell, center, cellSize, wallHeight);
+                    if (cell.IsTrapCell && !floor.TrapDisabled) BuildTrapMarker(center, cellSize, floor.TrapKind);
                 }
+            }
+        }
+
+        // Marcador de peligro, chato y pegado al piso (no un marcador "de interaccion" como los de
+        // BuildMarker), para que el jugador pueda LEER el patron de la sala y decidir si cruzar o
+        // no en vez de que sea una sorpresa invisible. Cada TrapKind se ve claramente distinto:
+        // ArrowSweep es una placa lisa (la trayectoria de la flecha), SpikeCells son picos
+        // sueltos que sobresalen del piso (ver BuildSpikeMarker) -- de un vistazo se nota si el
+        // peligro es "una linea que cruza" o "no pises esta celda puntual".
+        private void BuildTrapMarker(Vector3 center, float cellSize, TrapKind kind)
+        {
+            if (kind == TrapKind.ArrowSweep) BuildArrowLineMarker(center, cellSize);
+            else BuildSpikeMarker(center, cellSize);
+        }
+
+        private void BuildArrowLineMarker(Vector3 center, float cellSize)
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = "TrapMarker";
+            go.transform.SetParent(_root.transform, false);
+            go.transform.position = center + new Vector3(0, 0.03f, 0);
+            go.transform.localScale = new Vector3(cellSize * 0.85f, 0.05f, cellSize * 0.85f);
+
+            var col = go.GetComponent<Collider>();
+            if (col != null) Destroy(col);
+
+            ApplyMaterial(go, trapMarkerMaterial, new Color(0.75f, 0.1f, 0.05f));
+        }
+
+        // Picos sueltos: un par de cunas oscuras y filosas asomando del piso en vez de la placa
+        // lisa de la linea de flechas, asi la sala se lee distinto a primera vista.
+        private void BuildSpikeMarker(Vector3 center, float cellSize)
+        {
+            var offsets = new[] { new Vector2(-0.2f, -0.15f), new Vector2(0.18f, -0.2f), new Vector2(0.02f, 0.2f) };
+            foreach (var off in offsets)
+            {
+                var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                go.name = "SpikeMarker";
+                go.transform.SetParent(_root.transform, false);
+                go.transform.position = center + new Vector3(off.x * cellSize, cellSize * 0.13f, off.y * cellSize);
+                go.transform.rotation = Quaternion.Euler(0f, 45f, 0f);
+                go.transform.localScale = new Vector3(cellSize * 0.16f, cellSize * 0.28f, cellSize * 0.16f);
+
+                var col = go.GetComponent<Collider>();
+                if (col != null) Destroy(col);
+
+                ApplyMaterial(go, trapMarkerMaterial, new Color(0.3f, 0.06f, 0.05f));
             }
         }
 

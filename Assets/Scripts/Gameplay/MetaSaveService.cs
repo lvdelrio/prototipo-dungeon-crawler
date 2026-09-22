@@ -11,6 +11,9 @@ namespace Gameplay
         private const string FileName = "meta_save.json";
         private static string SavePath => Path.Combine(Application.persistentDataPath, FileName);
 
+        // Para el menu inicial: si hay guardado, se ofrece "Continuar"; si no, solo "Nueva Partida".
+        public static bool SaveExists() => File.Exists(SavePath);
+
         public static MetaProgress Load()
         {
             if (!File.Exists(SavePath)) return new MetaProgress();

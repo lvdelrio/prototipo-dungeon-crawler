@@ -99,6 +99,15 @@ public static class BattleBatchValidator
                     Finish();
                     return;
                 }
+                // DungeonManager.Awake() ya NO genera la mazmorra sola (ahora espera a que el
+                // jugador elija Continuar/Nueva Partida en MainMenuHUD) -- el test simula el click
+                // de "Continuar" para arrancar exactamente igual que antes.
+                _dungeonManager.ContinueRun();
+                if (!Check("ContinueRun() genero la mazmorra (IsReady) para el resto del test", _dungeonManager.IsReady))
+                {
+                    Finish();
+                    return;
+                }
                 _preCombatFogEndDistance = RenderSettings.fogEndDistance;
                 TestDialogue();
                 TestAmbientParticles();
@@ -552,11 +561,15 @@ public static class BattleBatchValidator
         var ambient = Object.FindObjectOfType<AmbientParticles>();
         if (!Check("AmbientParticles presente en la escena de mazmorra", ambient != null)) return;
         var layers = ambient.GetComponentsInChildren<ParticleSystem>();
-        if (!Check("AmbientParticles tiene sus 2 capas (cerca + lejos)", layers.Length == 2, $"encontradas={layers.Length}")) return;
+        if (!Check("AmbientParticles tiene sus 4 capas (cerca + lejos + destellos + rayos)", layers.Length == 4, $"encontradas={layers.Length}")) return;
 
         foreach (var ps in layers)
         {
             Check($"{ps.name}: esta reproduciendose", ps.isPlaying);
+            // LightningStreaks es 100% por Emit() (los rayos de la sala de jefe, ver
+            // ConfigureStreakLayer: rateOverTime en 0): no tiene emision ambiente propia, asi que
+            // no se espera que junte particulas solo con Simulate() fuera de esa sala.
+            if (ps.name == "LightningStreaks") continue;
             ps.Simulate(2f, true, false);
             Check($"{ps.name}: realmente emite particulas tras un rato (no se queda en 0)", ps.particleCount > 0, $"particleCount={ps.particleCount}");
         }

@@ -169,17 +169,37 @@ namespace Gameplay
                     }
                     y += 24;
 
+                    // Gunner: selector de bala cargada, arriba de todo el resto del menu de
+                    // acciones (Atacar/Habilidades ya usan la que este cargada, ver
+                    // CombatEngine.ResolveElement). Ocupa su propia fila solo para esta clase.
+                    if (chooser.Class == CharacterClass.Gunner)
+                    {
+                        DrawGunnerBulletSelector(panelX, y, chooser);
+                        y += 30;
+                    }
+
                     if (_showingAbilities)
                     {
                         // Mismo lugar que el boton "Habilidades" (mover lo menos posible): solo las
                         // habilidades de ESTE personaje, cada una con su costo de TP y su boton.
                         string skillLabel = chooser.IsHealSkill
-                            ? $"{chooser.SkillName} - cura {chooser.HealAmount} HP ({chooser.SkillTpCost} TP)"
-                            : $"{chooser.SkillName} - {ElementLabel(chooser.SkillElement)} x{chooser.SkillPower:F1} ({chooser.SkillTpCost} TP)";
+                            ? $"{chooser.SkillName} - cura {chooser.HealAmount + chooser.MagicAttack / 2} HP ({chooser.SkillTpCost} TP)"
+                            : chooser.IsSelfStanceSkill
+                                ? $"{chooser.SkillName} - postura propia, {(chooser.IsEnraged ? "desactivar" : "activar")} ({chooser.SkillTpCost} TP)"
+                                : chooser.IsVersatileBuffSkill
+                                    ? $"{chooser.SkillName} - buffea aliado / debuffea enemigo ({chooser.SkillTpCost} TP)"
+                                    : chooser.AttacksAreAoe
+                                        ? $"{chooser.SkillName} - {ElementLabel(chooser.SkillElement)} x{chooser.SkillPower:F1} a TODOS ({chooser.SkillTpCost} TP)"
+                                        : $"{chooser.SkillName} - {ElementLabel(chooser.SkillElement)} x{chooser.SkillPower:F1} ({chooser.SkillTpCost} TP)";
                         if (UIButton.Draw(new Rect(panelX + 20, y, 340, 26), skillLabel))
                         {
-                            _pendingType = ActionType.Skill;
                             _showingAbilities = false;
+                            if (chooser.IsSelfStanceSkill)
+                                combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.Skill });
+                            else if (chooser.AttacksAreAoe)
+                                combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.Skill });
+                            else
+                                _pendingType = ActionType.Skill;
                         }
 
                         if (chooser.CanProtectAll)
@@ -200,7 +220,12 @@ namespace Gameplay
                         TrackActionMenuReveal(chooser);
 
                         if (DrawP5Button(new Rect(panelX + 20, y, 120, 30), "Atacar", 0))
-                            _pendingType = ActionType.Attack;
+                        {
+                            if (chooser.AttacksAreAoe)
+                                combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.Attack });
+                            else
+                                _pendingType = ActionType.Attack;
+                        }
 
                         if (DrawP5Button(new Rect(panelX + 150, y, 150, 30), "Habilidades", 1))
                             _showingAbilities = true;
@@ -227,6 +252,38 @@ namespace Gameplay
                             if (UIButton.Draw(new Rect(bx, y, 150, 26), ally.Name))
                             {
                                 var action = new PartyAction { Actor = chooser, Type = ActionType.Skill, TargetAllyIndex = combatManager.Party.IndexOf(ally) };
+                                combatManager.SubmitAction(action);
+                                _pendingType = null;
+                            }
+                            bx += 160;
+                        }
+                        if (UIButton.Draw(new Rect(panelX + 20, y + 34, 100, 24), "Cancelar")) _pendingType = null;
+                    }
+                    else if (_pendingType == ActionType.Skill && chooser.IsVersatileBuffSkill)
+                    {
+                        // Trovador: se puede tirar sobre CUALQUIER aliado (buff) o enemigo (debuff)
+                        // -- ambas listas juntas, ver PartyAction.TargetIsAlly para distinguir cual.
+                        GUI.Label(new Rect(panelX + 20, y, 400, 20), "Elegí a quién buffear (aliado) o debuffear (enemigo):");
+                        y += 22;
+                        float bx = panelX + 20;
+                        foreach (var ally in combatManager.Party.Where(p => p.IsAlive))
+                        {
+                            if (UIButton.Draw(new Rect(bx, y, 150, 26), $"{ally.Name} (buff)"))
+                            {
+                                var action = new PartyAction { Actor = chooser, Type = ActionType.Skill, TargetIsAlly = true, TargetAllyIndex = combatManager.Party.IndexOf(ally) };
+                                combatManager.SubmitAction(action);
+                                _pendingType = null;
+                            }
+                            bx += 160;
+                        }
+                        y += 30;
+                        bx = panelX + 20;
+                        foreach (var enemy in combatManager.Enemies.Where(e => e.IsAlive))
+                        {
+                            int idx = combatManager.Enemies.IndexOf(enemy);
+                            if (UIButton.Draw(new Rect(bx, y, 150, 26), $"{enemy.Name} (debuff)"))
+                            {
+                                var action = new PartyAction { Actor = chooser, Type = ActionType.Skill, TargetIsAlly = false, TargetEnemyIndex = idx };
                                 combatManager.SubmitAction(action);
                                 _pendingType = null;
                             }
@@ -341,6 +398,35 @@ namespace Gameplay
                 // flotando desde la posicion de origen -- sobre el enemigo si vino de
                 // EnemyPopupPosition, o junto a la fila del panel para la party.
                 GUI.Label(new Rect(popup.X - w / 2f, popup.Y - frac * 24f - h / 2f, w, h), popup.Text, _popupStyle);
+            }
+        }
+
+        // Gunner: fila de botones para cargar una bala elemental (o volver a las normales). El
+        // elemento cargado se guarda directo en CharacterStats.LoadedBulletElement -- CombatEngine
+        // lo lee al resolver el ataque basico Y la habilidad (ver ResolveElement), y gasta 1 bala
+        // de stock cada vez que de verdad pega con el.
+        private void DrawGunnerBulletSelector(float panelX, float y, CharacterStats gunner)
+        {
+            (Element element, string label, int stock)[] options =
+            {
+                (Element.None, "Normal", -1),
+                (Element.Fire, "Fuego", gunner.FireBullets),
+                (Element.Ice, "Hielo", gunner.IceBullets),
+                (Element.Volt, "Rayo", gunner.VoltBullets),
+            };
+
+            float bx = panelX + 20;
+            foreach (var (element, label, stock) in options)
+            {
+                bool loaded = gunner.LoadedBulletElement == element;
+                bool enabled = element == Element.None || stock > 0;
+                string text = element == Element.None ? label : $"{label} ({stock})";
+                var old = GUI.color;
+                if (loaded) GUI.color = new Color(1f, 0.85f, 0.3f);
+                if (UIButton.Draw(new Rect(bx, y, 130, 24), text, enabled: enabled))
+                    gunner.LoadedBulletElement = element;
+                GUI.color = old;
+                bx += 136;
             }
         }
 

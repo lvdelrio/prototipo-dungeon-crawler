@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using DungeonGen;
 using Combat;
@@ -17,13 +18,35 @@ namespace Gameplay
         public CombatManager combat;
 
         private const int TreasurePointsReward = 25;
+        // Fraccion del HP maximo que una trampa (ver DungeonGenerator.AddTrapRoom) le saca a CADA
+        // integrante vivo cuando se activa. Ya no hay probabilidad de por medio: SpikeCells duele
+        // apenas se pisa, y ArrowSweep dispara una flecha real (ver TrapDisparadorController) que
+        // el jugador puede esquivar moviendose fuera de la linea antes de que llegue.
+        private const float TrapDamageFraction = 0.15f;
 
         private readonly DungeonGenerator _generator = new DungeonGenerator();
         private List<DungeonFloor> _floors;
         private int _currentFloorIndex;
         private int _walkingCounter;
         private int _encounterThreshold;
+        // Cuantos pasos "peligrosos" (Normal/Event) le quedan al efecto del Incienso: mientras sea
+        // > 0, AccumulateDangerAndMaybeEncounter suma la mitad del peligro de cada celda en vez del
+        // total, y se descuenta de a 1 por paso (no por unidad de peligro).
+        private int _incenseStepsRemaining;
+        private const int IncenseDurationSteps = 60;
         private readonly HashSet<int> _bossDefeatedFloors = new HashSet<int>();
+
+        // FOE activo del piso actual (ver Gameplay/FoeController), null si este piso no tiene o ya
+        // se lo vencio. _activeFoeFloorIndex es el piso para el que se creo, para no resetearlo al
+        // reconstruir la geometria del MISMO piso (p.ej. al perforar una pared).
+        private FoeController _activeFoe;
+        private int _activeFoeFloorIndex = -1;
+
+        // Disparador de flechas activo del piso actual (ver Gameplay/TrapDisparadorController),
+        // null si este piso no tiene sala de trampas ArrowSweep o si ya fue destruido. Mismo
+        // patron que _activeFoe/_activeFoeFloorIndex de arriba.
+        private TrapDisparadorController _activeTrapDisparador;
+        private int _activeTrapDisparadorFloorIndex = -1;
 
         private MetaProgress _meta;
         private int _deepestFloorReachedThisRun;
@@ -38,22 +61,61 @@ namespace Gameplay
         public int CurrentWalkingCounter => _walkingCounter;
         public int CurrentEncounterThreshold => _encounterThreshold;
 
+        // FOE activo del piso actual, para que el mapa (MinimapUI / PauseMenuHUD) lo pueda dibujar.
+        public FoeController ActiveFoe => _activeFoe;
+
+        [Header("Debug")]
+        [Tooltip("DEBUG/testeo: si esta prendido, el FOE se ve en el mapa aunque este parado en una celda que todavia no descubriste. Apagalo para el comportamiento real (niebla de guerra tambien lo tapa a el).")]
+        public bool debugFoeAlwaysVisibleOnMap = true;
+
         public MetaProgress Meta => _meta;
         public bool IsGameOverShopActive { get; private set; }
         public bool LastRunWasVictory { get; private set; }
         public int LastRunPointsEarned => _lastRunPointsEarned;
+
+        // false hasta que se genera la PRIMERA mazmorra (recien despues de que el jugador elige
+        // Continuar/Nueva Partida en MainMenuHUD, ver ContinueRun/BeginBrandNewGame): mientras este
+        // en false, CurrentFloor todavia no existe -- MinimapUI/AmbientParticles/DebugHUD/
+        // GridPlayerController lo chequean antes de tocar cualquier cosa que dependa del piso, para
+        // no explotar con un NullReferenceException mientras el menu inicial sigue abierto.
+        public bool IsReady { get; private set; }
+        public bool HasExistingSave => MetaSaveService.SaveExists();
 
         void Awake()
         {
             _meta = MetaSaveService.Load();
             if (combat != null)
             {
-                combat.InitializeParty(_meta);
                 combat.OnCombatFinished += HandleCombatFinished;
                 combat.OnCombatFled += HandleCombatFled;
             }
+            // La party y la mazmorra YA NO se generan aca: MainMenuHUD llama a ContinueRun() o
+            // BeginBrandNewGame() segun lo que elija el jugador en el menu inicial.
+        }
 
+        // "Continuar": misma party/progreso ya guardados (meta.PartyClasses, si el jugador ya habia
+        // elegido una party antes; si no, PartyFactory.DefaultClasses via CombatManager.InitializeParty).
+        public void ContinueRun()
+        {
+            if (combat == null) return;
+            combat.InitializeParty(_meta);
             int seed = settings.seed != 0 ? settings.seed : System.Environment.TickCount;
+            GenerateAndEnterDungeon(seed);
+        }
+
+        // "Nueva Partida": pisa el progreso guardado (banco de puntos, mejoras, items, todo) con
+        // uno completamente nuevo, arma la party con las clases que el jugador acaba de elegir en
+        // PartyCreationHUD, y la guarda ya mismo -- para que si cierra el juego a mitad de esta
+        // primera mazmorra, "Continuar" la proxima vez use ESTA composicion, no la anterior.
+        public void BeginBrandNewGame(IList<CharacterClass> chosenClasses)
+        {
+            if (combat == null) return;
+            _meta = new MetaProgress();
+            _meta.PartyClasses = new List<CharacterClass>(chosenClasses);
+            MetaSaveService.Save(_meta);
+
+            combat.InitializeParty(_meta);
+            int seed = System.Environment.TickCount;
             GenerateAndEnterDungeon(seed);
         }
 
@@ -70,7 +132,7 @@ namespace Gameplay
                 settings.voidFraction,
                 settings.dangerValueMin,
                 settings.dangerValueMax,
-                System.Array.ConvertAll(LoreCatalog.All, e => e.Id));
+                BuildLorePool());
 
             foreach (var line in log) Debug.Log(line);
 
@@ -86,11 +148,94 @@ namespace Gameplay
             var start = CurrentFloor.StartPos;
             player.Warp(start.x, start.y, Direction.North);
             OnPlayerEnterCell(start.x, start.y);
+            IsReady = true;
+        }
+
+        // Prioriza fragmentos de lore que el jugador TODAVIA NO descubrio en runs anteriores
+        // (AssignLoreLock en DungeonGenerator asigna por indice de piso sobre este pool, en orden):
+        // los no descubiertos van primero, asi los pisos de una run nueva casi siempre ofrecen algo
+        // realmente nuevo para encontrar, en vez de repetir uno ya leido en el Codex mientras
+        // todavia queden otros sin leer. Los ya descubiertos quedan al final, como relleno para
+        // cuando floorCount supera la cantidad de fragmentos que existen o ya estan todos leidos --
+        // en ese caso, OnPlayerEnterCell avisa que "ya lo conocias" en vez de tratarlo como nuevo.
+        private string[] BuildLorePool()
+        {
+            var undiscovered = new List<string>();
+            var discovered = new List<string>();
+            foreach (var entry in LoreCatalog.All)
+            {
+                if (_meta.IsLoreUnlocked(entry.Id)) discovered.Add(entry.Id);
+                else undiscovered.Add(entry.Id);
+            }
+            undiscovered.AddRange(discovered);
+            return undiscovered.ToArray();
         }
 
         private void BuildActiveFloor()
         {
             levelBuilder.Build(CurrentFloor, settings.cellSize, settings.wallHeight, settings.wallThickness);
+            RefreshActiveFoe();
+            RefreshActiveTrapDisparador();
+        }
+
+        // Se llama cada vez que se (re)construye la geometria del piso activo (entrar/cambiar de
+        // piso, perforar una pared con el Perforador). Si ya hay un FOE instanciado PARA ESTE
+        // MISMO piso, lo deja como esta (no le resetea la patrulla solo porque perforaste una
+        // pared); si cambio de piso, lo destruye y crea uno nuevo si CurrentFloor.HasFoe.
+        private void RefreshActiveFoe()
+        {
+            if (_activeFoe != null && _activeFoeFloorIndex == _currentFloorIndex) return;
+
+            if (_activeFoe != null)
+            {
+                Destroy(_activeFoe.gameObject);
+                _activeFoe = null;
+            }
+            _activeFoeFloorIndex = _currentFloorIndex;
+            if (!CurrentFloor.HasFoe) return;
+
+            var foeGo = new GameObject("Foe");
+            _activeFoe = foeGo.AddComponent<FoeController>();
+            _activeFoe.Initialize(CurrentFloor, CanMove, CellToWorld, settings.cellSize, EnemyFactory.CreateFoe(_currentFloorIndex).MaxHP);
+        }
+
+        // Mismo patron que RefreshActiveFoe: solo recrea el disparador si cambio de piso (perforar
+        // una pared no lo debe resetear). No crea nada si el piso no tiene sala ArrowSweep, o si
+        // ya fue destruido (ver DungeonGenerator.TryDestroyTrapDisparador).
+        private void RefreshActiveTrapDisparador()
+        {
+            if (_activeTrapDisparador != null && _activeTrapDisparadorFloorIndex == _currentFloorIndex) return;
+
+            if (_activeTrapDisparador != null)
+            {
+                Destroy(_activeTrapDisparador.gameObject);
+                _activeTrapDisparador = null;
+            }
+            _activeTrapDisparadorFloorIndex = _currentFloorIndex;
+            if (!CurrentFloor.HasTrapRoom || CurrentFloor.TrapKind != TrapKind.ArrowSweep || CurrentFloor.TrapDisabled) return;
+
+            var go = new GameObject("TrapDisparador");
+            _activeTrapDisparador = go.AddComponent<TrapDisparadorController>();
+            _activeTrapDisparador.Initialize(CurrentFloor, CellToWorld, () => (player.CellX, player.CellY),
+                () => ApplyTrapDamage("¡Una flecha te atraviesa el paso!"),
+                () => _activeFoe != null ? ((int x, int y)?)(_activeFoe.X, _activeFoe.Y) : null,
+                OnTrapArrowHitFoe, settings.cellSize);
+        }
+
+        // La flecha (ya en vuelo, disparada por el jugador o por el FOE pisando la linea) alcanzo
+        // la celda donde esta parado el FOE en ese instante: a diferencia del jugador, el FOE SI
+        // puede morir de esto (ver FoeController.ApplyTrapDamage).
+        private void OnTrapArrowHitFoe()
+        {
+            if (_activeFoe == null) return;
+            bool died = _activeFoe.ApplyTrapDamage(TrapDamageFraction);
+            if (died)
+            {
+                Destroy(_activeFoe.gameObject);
+                _activeFoe = null;
+                CurrentFloor.FoePatrolRoute = null;
+                if (hud != null) hud.SetLastMessage("¡El FOE cayo en su propia trampa!");
+            }
         }
 
         public Vector3 CellToWorld(int x, int y) => levelBuilder.CellCenter(x, y, settings.cellSize);
@@ -113,6 +258,30 @@ namespace Gameplay
 
             if ((cell.Type == CellType.Normal || cell.Type == CellType.Event) && !IsCombatActive)
                 AccumulateDangerAndMaybeEncounter(cell);
+
+            // El FOE (ver Gameplay/FoeController) da UN paso por cada paso del jugador -- si eso lo
+            // deja en la MISMA celda, colisiona y arranca un combate 1 contra 1 (huida mas dificil,
+            // ver CombatManager.StartFoeEncounter). No avanza mientras ya hay un combate en curso
+            // (p.ej. el encuentro random de esta misma celda ya empezo primero).
+            if (_activeFoe != null && !IsCombatActive)
+            {
+                bool collided = _activeFoe.AdvanceStep(x, y);
+                if (collided) combat.StartFoeEncounter(EnemyFactory.CreateFoe(_currentFloorIndex));
+                else HandleFoeSteppedOnTrap();
+            }
+
+            // Sala de trampas (ver DungeonGenerator.AddTrapRoom): SpikeCells duele apenas se pisa
+            // (no hay forma de esquivar un pico que ya esta bajo tus pies). ArrowSweep en cambio
+            // solo ARRANCA el disparo (ver TrapDisparadorController.Fire) -- el dano real llega
+            // despues, cuando la flecha recorre la sala y de verdad te alcanza; hasta entonces hay
+            // tiempo real para salir de la linea.
+            if (cell.IsTrapCell && !IsCombatActive && !CurrentFloor.TrapDisabled)
+            {
+                if (CurrentFloor.TrapKind == TrapKind.ArrowSweep)
+                    _activeTrapDisparador?.Fire();
+                else
+                    ApplyTrapDamage("¡Pisaste una trampa de picos!");
+            }
 
             string message = null;
             switch (cell.Type)
@@ -155,14 +324,24 @@ namespace Gameplay
                     }
                     break;
                 case CellType.Lore:
-                    bool isNew = _meta.UnlockLore(cell.AssignedLoreId);
-                    if (isNew)
+                    // "Ya lo conocias" se decide ANTES de UnlockLore (que es idempotente y no
+                    // devuelve si ya estaba desbloqueado de una run anterior, solo si esta celda en
+                    // particular era nueva). BuildLorePool ya prioriza que esto casi nunca pase,
+                    // pero si floorCount supera la cantidad de fragmentos que existen, o el jugador
+                    // ya los leyo TODOS, no queda otra que repetir uno -- avisa distinto en vez de
+                    // quedarse en silencio como antes.
+                    bool wasAlreadyKnown = _meta.IsLoreUnlocked(cell.AssignedLoreId);
+                    _meta.UnlockLore(cell.AssignedLoreId);
+                    if (!cell.EventConsumed)
                     {
+                        cell.EventConsumed = true;
                         MetaSaveService.Save(_meta);
                         var entry = LoreCatalog.Find(cell.AssignedLoreId);
-                        message = entry != null
-                            ? $"¡Nuevo fragmento de lore! \"{entry.Title}\" (revisa el Códex en el menú de pausa)."
-                            : "¡Encontraste un fragmento de lore!";
+                        message = wasAlreadyKnown
+                            ? $"Ya conocías este fragmento de lore: \"{(entry != null ? entry.Title : cell.AssignedLoreId)}\" (no había ninguno nuevo para este piso)."
+                            : entry != null
+                                ? $"¡Nuevo fragmento de lore! \"{entry.Title}\" (revisa el Códex en el menú de pausa)."
+                                : "¡Encontraste un fragmento de lore!";
                     }
                     break;
                 case CellType.LockedDoor:
@@ -196,19 +375,86 @@ namespace Gameplay
         private LockedDoor FindDoorForLever(int x, int y) =>
             CurrentFloor.LockedDoors.Find(d => d.LeverX == x && d.LeverY == y);
 
+        // Mismo disparador que activa el jugador (ver OnPlayerEnterCell): si el FOE pisa la linea
+        // de flechas, tambien la dispara, y si pisa picos, le duele al toque -- a diferencia del
+        // jugador, el FOE SI puede morir de esto (ver OnTrapArrowHitFoe / FoeController.ApplyTrapDamage).
+        private void HandleFoeSteppedOnTrap()
+        {
+            if (_activeFoe == null || CurrentFloor.TrapDisabled) return;
+            var foeCell = CurrentFloor.Cells[_activeFoe.X, _activeFoe.Y];
+            if (!foeCell.IsTrapCell) return;
+
+            if (CurrentFloor.TrapKind == TrapKind.ArrowSweep)
+            {
+                _activeTrapDisparador?.Fire();
+            }
+            else
+            {
+                bool died = _activeFoe.ApplyTrapDamage(TrapDamageFraction);
+                if (died)
+                {
+                    Destroy(_activeFoe.gameObject);
+                    _activeFoe = null;
+                    CurrentFloor.FoePatrolRoute = null;
+                    if (hud != null) hud.SetLastMessage("¡El FOE cayo en su propia trampa!");
+                }
+            }
+        }
+
         // Sistema real de encuentros de Etrian Odyssey: cada celda tiene un valor de peligro
         // (0-5) oculto que se suma a un contador de pasos. Cuando el contador supera un limite
         // tambien oculto (elegido al azar tras cada combate o al entrar a un piso nuevo), aparece
         // un encuentro de inmediato y el contador se reinicia a 0.
+        // Sala de trampas: flechas o picos (ver DungeonFloor.TrapKind) le sacan TrapDamageFraction
+        // del HP MAXIMO a CADA integrante vivo de la party, de golpe (no es un ataque de combate,
+        // no pasa por Defensa/Evasion) -- pero nunca por debajo de 1: una trampa duele en serio,
+        // pero nunca termina la run por si sola (a diferencia del FOE, que SI puede matarte en
+        // combate si colisiona con vos). Reusa el mismo flash/sacudida de camara roja que un golpe
+        // en combate (ver CombatFeedback.OnPartyHit) para que el dano se sienta igual de real
+        // caminando por la mazmorra.
+        private void ApplyTrapDamage(string message)
+        {
+            int lastDmg = 0;
+            foreach (var p in combat.Party.Where(p => p.IsAlive))
+            {
+                lastDmg = Mathf.Max(1, Mathf.RoundToInt(p.MaxHP * TrapDamageFraction));
+                p.HP = Mathf.Max(1, p.HP - lastDmg);
+            }
+
+            if (combat.feedback != null) combat.feedback.OnPartyHit(lastDmg);
+            if (hud != null) hud.SetLastMessage($"{message} Toda la party recibe {TrapDamageFraction:P0} de su HP máximo de daño.");
+        }
+
         private void AccumulateDangerAndMaybeEncounter(DungeonCell cell)
         {
             if (combat == null) return;
-            _walkingCounter += cell.DangerValue;
+
+            int danger = cell.DangerValue;
+            if (_incenseStepsRemaining > 0)
+            {
+                danger /= 2;
+                _incenseStepsRemaining--;
+            }
+            _walkingCounter += danger;
+
             if (_walkingCounter >= _encounterThreshold)
             {
                 _walkingCounter = 0;
                 combat.StartEncounter(isBoss: false, floorIndex: _currentFloorIndex);
             }
+        }
+
+        // Item "Incienso": mientras dura (IncenseDurationSteps pasos "peligrosos"), el peligro que
+        // acumula cada paso se reduce a la mitad -- no elimina los encuentros, solo hace que tarden
+        // bastante mas en aparecer, para cruzar rapido un tramo sin pelear tanto.
+        public bool TryUseIncense()
+        {
+            if (_meta.IncenseCharges <= 0) return false;
+            _meta.IncenseCharges--;
+            MetaSaveService.Save(_meta);
+            _incenseStepsRemaining = IncenseDurationSteps;
+            if (hud != null) hud.SetLastMessage($"Encendiste el Incienso: el peligro de cada paso baja a la mitad por los proximos {IncenseDurationSteps} pasos.");
+            return true;
         }
 
         private void RollNewEncounterThreshold()
@@ -220,6 +466,16 @@ namespace Gameplay
         private void HandleCombatFinished(bool victory, bool wasBoss)
         {
             RollNewEncounterThreshold();
+
+            // combat.IsFoeFight NO se pisa hasta el proximo StartEncounter/StartFoeEncounter (ver
+            // ese comentario en CombatManager), asi que todavia describe el combate que se acaba de
+            // terminar. Vencer al FOE lo saca del piso para siempre (FoePatrolRoute a null: que
+            // RefreshActiveFoe no lo vuelva a crear si el jugador sale y vuelve a entrar al piso).
+            if (victory && combat.IsFoeFight)
+            {
+                if (_activeFoe != null) { Destroy(_activeFoe.gameObject); _activeFoe = null; }
+                CurrentFloor.FoePatrolRoute = null;
+            }
 
             if (victory && wasBoss)
             {
@@ -244,6 +500,10 @@ namespace Gameplay
         private void HandleCombatFled()
         {
             RollNewEncounterThreshold();
+            // Huida exitosa de un FOE: se lo empuja de vuelta a su ruta (ver FoeController.PushBack)
+            // en vez de dejarlo exactamente donde colisiono, para no volver a chocar apenas el
+            // jugador de un paso mas.
+            if (combat.IsFoeFight && _activeFoe != null) _activeFoe.PushBack();
             if (hud != null) hud.SetLastMessage("Escapaste del combate.");
         }
 
@@ -281,10 +541,28 @@ namespace Gameplay
         }
 
         // Item "Perforador": intenta abrir un paso permanente (para esta run) en la pared que el
-        // jugador tiene enfrente. Solo se gasta si realmente hay algo del otro lado (no Void).
+        // jugador tiene enfrente. Solo se gasta si realmente hay algo del otro lado (no Void) --
+        // SALVO que esa pared sea exactamente la del disparador de flechas de una sala de trampas
+        // (ver DungeonGenerator.TryDestroyTrapDisparador), en cuyo caso lo destruye y desactiva esa
+        // trampa para siempre en vez de abrir un paso.
         public bool TryUseDrill(int x, int y, Direction facing)
         {
             if (_meta.DrillCharges <= 0) return false;
+
+            if (_generator.TryDestroyTrapDisparador(CurrentFloor, x, y, facing))
+            {
+                _meta.DrillCharges--;
+                MetaSaveService.Save(_meta);
+                if (_activeTrapDisparador != null)
+                {
+                    Destroy(_activeTrapDisparador.gameObject);
+                    _activeTrapDisparador = null;
+                }
+                BuildActiveFloor();
+                if (hud != null) hud.SetLastMessage("¡Destruiste el disparador de flechas! Esa trampa ya no va a disparar.");
+                return true;
+            }
+
             if (!_generator.TryDrillWall(CurrentFloor, x, y, facing))
             {
                 if (hud != null) hud.SetLastMessage("El Perforador no encontro nada solido detras de esa pared.");
@@ -374,8 +652,13 @@ namespace Gameplay
                 }
                 cell.EventConsumed = true;
                 _meta.BankedPoints += TreasurePointsReward;
+                // El cofre garantizado de cada piso (ver DungeonGenerator.EnsureTreasure) siempre
+                // suma ademas una carga de Perforador utilizable YA en esta run (no solo puntos
+                // para gastar despues en la tienda): facilita la exploracion del resto del piso
+                // dandole al jugador una forma de cortar camino justo cuando mas lo puede aprovechar.
+                _meta.DrillCharges++;
                 MetaSaveService.Save(_meta);
-                if (hud != null) hud.SetLastMessage($"¡Encontraste un cofre! +{TreasurePointsReward} puntos.");
+                if (hud != null) hud.SetLastMessage($"¡Encontraste un cofre! +{TreasurePointsReward} puntos y +1 carga de Perforador.");
             }
             else if (cell.Type == CellType.LockedDoor)
             {

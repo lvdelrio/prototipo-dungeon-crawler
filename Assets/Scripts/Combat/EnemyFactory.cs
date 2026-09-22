@@ -92,6 +92,27 @@ namespace Combat
                 AttackElement = Element.Strike,
                 Weaknesses = CommonWeaknesses, Resistance = Element.Strike,
                 MaxPoise = 90, Poise = 90,
+                // Combinado con que un golpe de debilidad ya pega el doble de dano de HP, el
+                // multiplicador de aguante de debilidad (1.6x) lo rompia en 1-2 golpes bien
+                // apuntados -- 1.3 lo deja en ~1.23x efectivo, todavia mas rapido que un golpe
+                // comun pero no desproporcionado para un jefe.
+                PoiseWeaknessResistance = 1.3f,
+            };
+        }
+
+        // FOE (ver Gameplay/FoeController): enemigo fuerte que patrulla el piso a la vista, evitable
+        // -- a mitad de camino entre un encuentro comun y el jefe (HP/Ataque ~60% del jefe), para
+        // que colisionar con el se sienta arriesgado de verdad sin ser un segundo jefe.
+        public static EnemyStats CreateFoe(int floorIndex = 0)
+        {
+            return new EnemyStats
+            {
+                Name = "Centinela Errante", MaxHP = 130, HP = 130,
+                Attack = ScaledAttack(15, floorIndex), Defense = 6, Speed = 5,
+                AttackElement = Element.Strike,
+                Weaknesses = CommonWeaknesses, Resistance = Element.Strike,
+                MaxPoise = 60, Poise = 60,
+                PoiseWeaknessResistance = 1.15f,
             };
         }
 

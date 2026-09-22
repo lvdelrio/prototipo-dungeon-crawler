@@ -15,6 +15,11 @@ namespace Combat
 
         // Si la habilidad se uso con exito en el mini-juego de tiempo (QTE): pega mas fuerte / cura mas.
         public bool QteSuccess;
+
+        // Solo para la habilidad versatil del Trovador (CharacterStats.IsVersatileBuffSkill): true
+        // si el objetivo elegido fue un aliado (TargetAllyIndex, buff) en vez de un enemigo
+        // (TargetEnemyIndex, debuff).
+        public bool TargetIsAlly;
     }
 
     // Multiplicador de poder/curacion cuando el jugador completa a tiempo la secuencia del QTE.
@@ -73,6 +78,23 @@ namespace Combat
         public const float PoiseDamageBasicAttack = 0.5f;
         public const float PoiseDamageWeaknessHit = 1.6f;
 
+        // Alquimista (CharacterStats.AttacksAreAoe): tanto el ataque basico como la habilidad pegan
+        // a TODOS los enemigos vivos a la vez, pero con este descuento por objetivo -- si no,
+        // barrer la pantalla entera sin penalidad seria estrictamente mejor que pegarle a uno solo.
+        public const float AoeDamageMultiplier = 0.65f;
+
+        // Trovador (CharacterStats.IsVersatileBuffSkill): cuanto sube el Ataque de un aliado
+        // buffeado, o baja la Defensa de un enemigo debuffeado, y por cuantas RONDAS completas
+        // (BuildTurnOrder descuenta 1 al arrancar cada ronda nueva).
+        public const int VersatileBuffAmount = 6;
+        public const int VersatileBuffRounds = 3;
+
+        // Suerte (CharacterStats.Luck, 0-100): chance de critico en los propios golpes, x1.5 dano
+        // cuando sale. Evasion (CharacterStats/EnemyStats.Evasion, 0-100): chance de esquivar por
+        // completo un golpe recibido, ademas de pesar un poco menos en la formula de agro (ver
+        // PickAggroTarget) -- mas dificil de encontrar, no solo de acertarle una vez encontrado.
+        public const float CritDamageMultiplier = 1.5f;
+
         public readonly List<CharacterStats> Party;
         public readonly List<EnemyStats> Enemies;
         private readonly Random _rng;
@@ -104,6 +126,23 @@ namespace Combat
             {
                 p.IsGuarding = false;
                 p.IsProtectingAll = false;
+
+                // Buff del Trovador: dura VersatileBuffRounds rondas COMPLETAS: se descuenta 1 al
+                // arrancar cada ronda nueva (no la misma ronda en la que se aplico), y al llegar a 0
+                // se apaga solo (vuelve a 0 el monto, no solo el contador).
+                if (p.AttackBuffRoundsLeft > 0)
+                {
+                    p.AttackBuffRoundsLeft--;
+                    if (p.AttackBuffRoundsLeft <= 0) p.AttackBuffAmount = 0;
+                }
+            }
+            foreach (var e in Enemies)
+            {
+                if (e.DefenseDebuffRoundsLeft > 0)
+                {
+                    e.DefenseDebuffRoundsLeft--;
+                    if (e.DefenseDebuffRoundsLeft <= 0) e.DefenseDebuffAmount = 0;
+                }
             }
 
             var order = new List<(bool isParty, int idx, int speed)>();
@@ -210,12 +249,33 @@ namespace Combat
 
                 case ActionType.Attack:
                 {
-                    var target = PickAliveEnemy(action.TargetEnemyIndex);
-                    if (target == null) break;
-                    int dmg = ComputeDamageVsEnemy(actor.Attack, actor.AttackElement, target, out string note, out bool isWeak);
-                    ApplyDamageToEnemy(target, dmg, isBasicAttack: true, isWeaknessHit: isWeak, out bool poiseBroke);
-                    int regenAtk = RegenTpOnHit(actor);
-                    log.Add($"{actor.Name} ataca a {target.Name}: {dmg} de daño.{note}{(poiseBroke ? " ¡Guardia rota!" : "")}{(regenAtk > 0 ? $" (+{regenAtk} TP)" : "")}");
+                    Element element = ResolveElement(actor, actor.AttackElement);
+                    if (actor.AttacksAreAoe)
+                    {
+                        var targets = Enemies.Where(e => e.IsAlive).ToList();
+                        if (targets.Count == 0) break;
+                        var parts = new List<string>();
+                        int aoePower = (int)Math.Round(actor.EffectiveAttack * AoeDamageMultiplier);
+                        foreach (var t in targets)
+                        {
+                            int dmgEach = ComputeDamageVsEnemy(aoePower, element, t, out string noteEach, out bool weakEach, actor.Luck);
+                            ApplyDamageToEnemy(t, dmgEach, isBasicAttack: true, isWeaknessHit: weakEach, out bool brokeEach);
+                            parts.Add($"{t.Name} {dmgEach}{noteEach}{(brokeEach ? " ¡Rota!" : "")}");
+                        }
+                        ConsumeLoadedBullet(actor);
+                        int regenAoe = RegenTpOnHit(actor);
+                        log.Add($"{actor.Name} ataca a TODOS: {string.Join(", ", parts)}.{(regenAoe > 0 ? $" (+{regenAoe} TP)" : "")}");
+                    }
+                    else
+                    {
+                        var target = PickAliveEnemy(action.TargetEnemyIndex);
+                        if (target == null) break;
+                        int dmg = ComputeDamageVsEnemy(actor.EffectiveAttack, element, target, out string note, out bool isWeak, actor.Luck);
+                        ApplyDamageToEnemy(target, dmg, isBasicAttack: true, isWeaknessHit: isWeak, out bool poiseBroke);
+                        ConsumeLoadedBullet(actor);
+                        int regenAtk = RegenTpOnHit(actor);
+                        log.Add($"{actor.Name} ataca a {target.Name}: {dmg} de daño.{note}{(poiseBroke ? " ¡Guardia rota!" : "")}{(regenAtk > 0 ? $" (+{regenAtk} TP)" : "")}");
+                    }
                     break;
                 }
 
@@ -226,7 +286,9 @@ namespace Combat
                         if (actor.TP >= actor.SkillTpCost && ally.IsAlive)
                         {
                             actor.TP -= actor.SkillTpCost;
-                            int healAmount = actor.HealAmount;
+                            // El Medic (y cualquier otro sanador futuro) especializado en magia:
+                            // curar tambien escala un poco con MagicAttack, no solo el flat HealAmount.
+                            int healAmount = actor.HealAmount + actor.MagicAttack / 2;
                             string qteNote = "";
                             if (action.QteSuccess)
                             {
@@ -242,31 +304,124 @@ namespace Combat
                             log.Add($"{actor.Name} no pudo usar {actor.SkillName} (sin TP o objetivo caido).");
                         }
                     }
-                    else
+                    else if (actor.IsSelfStanceSkill)
                     {
-                        var target = PickAliveEnemy(action.TargetEnemyIndex);
-                        if (target == null) break;
+                        // Berserker: postura propia, sin objetivo -- alterna EffectiveAttack/Defense
+                        // via CharacterStats.IsEnraged (ver ahi el bonus/penalidad exactos).
                         if (actor.TP >= actor.SkillTpCost)
                         {
                             actor.TP -= actor.SkillTpCost;
-                            float power = actor.Attack * actor.SkillPower;
-                            string qteNote = "";
-                            if (action.QteSuccess)
-                            {
-                                power *= QteBonus.Multiplier;
-                                qteNote = " ¡QTE exitoso!";
-                            }
-                            int dmg = ComputeDamageVsEnemy((int)Math.Round(power), actor.SkillElement, target, out string note, out bool isWeak);
-                            ApplyDamageToEnemy(target, dmg, isBasicAttack: false, isWeaknessHit: isWeak, out bool poiseBroke);
-                            // Las habilidades NO regeneran TP (solo los ataques basicos, ver mas abajo).
-                            log.Add($"{actor.Name} usa {actor.SkillName} en {target.Name}: {dmg} de daño.{note}{(poiseBroke ? " ¡Guardia rota!" : "")}{qteNote}");
+                            actor.IsEnraged = !actor.IsEnraged;
+                            log.Add(actor.IsEnraged
+                                ? $"{actor.Name} usa {actor.SkillName}: entra en furia (mas ataque, menos defensa)."
+                                : $"{actor.Name} usa {actor.SkillName} de nuevo: se calma.");
                         }
                         else
                         {
-                            int dmg = ComputeDamageVsEnemy(actor.Attack, actor.AttackElement, target, out string note, out bool isWeak);
-                            ApplyDamageToEnemy(target, dmg, isBasicAttack: true, isWeaknessHit: isWeak, out bool poiseBroke);
-                            int regenNoTp = RegenTpOnHit(actor);
-                            log.Add($"{actor.Name} no tiene TP, ataca normal a {target.Name}: {dmg} de daño.{note}{(poiseBroke ? " ¡Guardia rota!" : "")}{(regenNoTp > 0 ? $" (+{regenNoTp} TP)" : "")}");
+                            log.Add($"{actor.Name} no tiene suficiente TP para {actor.SkillName}.");
+                        }
+                    }
+                    else if (actor.IsVersatileBuffSkill)
+                    {
+                        // Trovador: sobre un aliado buffea Ataque, sobre un enemigo debuffea
+                        // Defensa -- el jugador elige cual al tirarla (ver PartyAction.TargetIsAlly).
+                        if (actor.TP < actor.SkillTpCost)
+                        {
+                            log.Add($"{actor.Name} no tiene suficiente TP para {actor.SkillName}.");
+                            break;
+                        }
+                        actor.TP -= actor.SkillTpCost;
+                        // QTE exitoso: el buff/debuff pega mas fuerte (mismo multiplicador que
+                        // dano/curacion), en vez de no hacer nada como pasaria si se dejara pasar.
+                        int amount = action.QteSuccess ? (int)Math.Round(VersatileBuffAmount * QteBonus.Multiplier) : VersatileBuffAmount;
+                        string qteNoteVersatile = action.QteSuccess ? " ¡QTE exitoso!" : "";
+                        if (action.TargetIsAlly)
+                        {
+                            var ally = Party[action.TargetAllyIndex];
+                            if (!ally.IsAlive) { log.Add($"{actor.Name} no pudo usar {actor.SkillName} (objetivo caído)."); break; }
+                            ally.AttackBuffAmount = amount;
+                            ally.AttackBuffRoundsLeft = VersatileBuffRounds;
+                            log.Add($"{actor.Name} usa {actor.SkillName} en {ally.Name}: +{amount} ATQ por {VersatileBuffRounds} rondas.{qteNoteVersatile}");
+                        }
+                        else
+                        {
+                            var target = PickAliveEnemy(action.TargetEnemyIndex);
+                            if (target == null) break;
+                            target.DefenseDebuffAmount = amount;
+                            target.DefenseDebuffRoundsLeft = VersatileBuffRounds;
+                            log.Add($"{actor.Name} usa {actor.SkillName} en {target.Name}: -{amount} DEF por {VersatileBuffRounds} rondas.{qteNoteVersatile}");
+                        }
+                    }
+                    else
+                    {
+                        Element element = ResolveElement(actor, actor.SkillElement);
+                        int basePower = actor.SkillUsesMagicAttack ? actor.MagicAttack : actor.EffectiveAttack;
+
+                        if (actor.AttacksAreAoe)
+                        {
+                            var targets = Enemies.Where(e => e.IsAlive).ToList();
+                            if (targets.Count == 0) break;
+
+                            if (actor.TP < actor.SkillTpCost)
+                            {
+                                Element basicElement = ResolveElement(actor, actor.AttackElement);
+                                int basicAoePower = (int)Math.Round(actor.EffectiveAttack * AoeDamageMultiplier);
+                                var partsBasic = new List<string>();
+                                foreach (var t in targets)
+                                {
+                                    int dmgEach = ComputeDamageVsEnemy(basicAoePower, basicElement, t, out string noteEach, out bool weakEach, actor.Luck);
+                                    ApplyDamageToEnemy(t, dmgEach, isBasicAttack: true, isWeaknessHit: weakEach, out bool brokeEach);
+                                    partsBasic.Add($"{t.Name} {dmgEach}{noteEach}{(brokeEach ? " ¡Rota!" : "")}");
+                                }
+                                ConsumeLoadedBullet(actor);
+                                int regenNoTpAoe = RegenTpOnHit(actor);
+                                log.Add($"{actor.Name} no tiene TP, ataca normal a TODOS: {string.Join(", ", partsBasic)}.{(regenNoTpAoe > 0 ? $" (+{regenNoTpAoe} TP)" : "")}");
+                                break;
+                            }
+
+                            actor.TP -= actor.SkillTpCost;
+                            float aoePower = basePower * actor.SkillPower * AoeDamageMultiplier;
+                            string qteNoteAoe = "";
+                            if (action.QteSuccess) { aoePower *= QteBonus.Multiplier; qteNoteAoe = " ¡QTE exitoso!"; }
+                            var parts = new List<string>();
+                            foreach (var t in targets)
+                            {
+                                int dmgEach = ComputeDamageVsEnemy((int)Math.Round(aoePower), element, t, out string noteEach, out bool weakEach, actor.Luck);
+                                ApplyDamageToEnemy(t, dmgEach, isBasicAttack: false, isWeaknessHit: weakEach, out bool brokeEach);
+                                parts.Add($"{t.Name} {dmgEach}{noteEach}{(brokeEach ? " ¡Rota!" : "")}");
+                            }
+                            ConsumeLoadedBullet(actor);
+                            log.Add($"{actor.Name} usa {actor.SkillName} en TODOS: {string.Join(", ", parts)}.{qteNoteAoe}");
+                        }
+                        else
+                        {
+                            var target = PickAliveEnemy(action.TargetEnemyIndex);
+                            if (target == null) break;
+                            if (actor.TP >= actor.SkillTpCost)
+                            {
+                                actor.TP -= actor.SkillTpCost;
+                                float power = basePower * actor.SkillPower;
+                                string qteNote = "";
+                                if (action.QteSuccess)
+                                {
+                                    power *= QteBonus.Multiplier;
+                                    qteNote = " ¡QTE exitoso!";
+                                }
+                                int dmg = ComputeDamageVsEnemy((int)Math.Round(power), element, target, out string note, out bool isWeak, actor.Luck);
+                                ApplyDamageToEnemy(target, dmg, isBasicAttack: false, isWeaknessHit: isWeak, out bool poiseBroke);
+                                ConsumeLoadedBullet(actor);
+                                // Las habilidades NO regeneran TP (solo los ataques basicos, ver mas abajo).
+                                log.Add($"{actor.Name} usa {actor.SkillName} en {target.Name}: {dmg} de daño.{note}{(poiseBroke ? " ¡Guardia rota!" : "")}{qteNote}");
+                            }
+                            else
+                            {
+                                Element basicElement = ResolveElement(actor, actor.AttackElement);
+                                int dmg = ComputeDamageVsEnemy(actor.EffectiveAttack, basicElement, target, out string note, out bool isWeak, actor.Luck);
+                                ApplyDamageToEnemy(target, dmg, isBasicAttack: true, isWeaknessHit: isWeak, out bool poiseBroke);
+                                ConsumeLoadedBullet(actor);
+                                int regenNoTp = RegenTpOnHit(actor);
+                                log.Add($"{actor.Name} no tiene TP, ataca normal a {target.Name}: {dmg} de daño.{note}{(poiseBroke ? " ¡Guardia rota!" : "")}{(regenNoTp > 0 ? $" (+{regenNoTp} TP)" : "")}");
+                            }
                         }
                     }
                     break;
@@ -292,7 +447,16 @@ namespace Combat
             var protector = aliveParty.FirstOrDefault(p => p.IsProtectingAll);
             var target = protector ?? PickAggroTarget(aliveParty);
 
-            int dmg = Math.Max(1, enemy.Attack - target.Defense / 2);
+            // Evasion: chance de esquivar el golpe entero ANTES de calcular dano (protegiendo a
+            // todo el grupo no te salva de que te elijan, pero un Protector nunca tiene mucha
+            // Evasion de base igual -- ver PartyFactory).
+            if (target.Evasion > 0 && _rng.NextDouble() * 100.0 < target.Evasion)
+            {
+                log.Add($"{enemy.Name} ataca a {target.Name}: ¡esquivado!");
+                return;
+            }
+
+            int dmg = Math.Max(1, enemy.Attack - target.EffectiveDefense / 2);
             bool wasGuarding = target.IsGuarding;
             if (wasGuarding) dmg = Math.Max(1, dmg / 2);
             target.HP = Math.Max(0, target.HP - dmg);
@@ -300,19 +464,28 @@ namespace Combat
         }
 
         // Elige a quien ataca un enemigo: cada personaje del frente pesa FrontRowAggroWeight y
-        // cada uno de atras BackRowAggroWeight, asi que el frente concentra mas probabilidad de
-        // ser el blanco pero el de atras nunca queda en 0% (formula de agro por formacion).
+        // cada uno de atras BackRowAggroWeight (el frente concentra mas probabilidad de ser el
+        // blanco, pero el de atras nunca queda en 0%), ajustado ademas por Evasion -- mas evasion,
+        // un poco menos probable ser elegido de entrada (nunca menos del 25% del peso base, para
+        // que ni el mas evasivo quede practicamente invisible).
         private CharacterStats PickAggroTarget(List<CharacterStats> aliveParty)
         {
-            float totalWeight = aliveParty.Sum(p => p.IsFrontRow ? FrontRowAggroWeight : BackRowAggroWeight);
+            float totalWeight = aliveParty.Sum(AggroWeight);
             double roll = _rng.NextDouble() * totalWeight;
             double acc = 0;
             foreach (var p in aliveParty)
             {
-                acc += p.IsFrontRow ? FrontRowAggroWeight : BackRowAggroWeight;
+                acc += AggroWeight(p);
                 if (roll < acc) return p;
             }
             return aliveParty[aliveParty.Count - 1];
+        }
+
+        private float AggroWeight(CharacterStats p)
+        {
+            float baseWeight = p.IsFrontRow ? FrontRowAggroWeight : BackRowAggroWeight;
+            float evasionFactor = Math.Max(0.25f, 1f - p.Evasion / 200f);
+            return baseWeight * evasionFactor;
         }
 
         // Aplica dano a un enemigo (a su vida y, si esta vivo y no estaba ya roto, a su aguante) y,
@@ -326,12 +499,15 @@ namespace Combat
         private void ApplyDamageToEnemy(EnemyStats target, int dmg, bool isBasicAttack, bool isWeaknessHit, out bool poiseBroke)
         {
             poiseBroke = false;
+            if (dmg <= 0) return; // esquivado (EnemyStats.Evasion en ComputeDamageVsEnemy) -- ni vida ni aguante
             bool wasAlive = target.IsAlive;
             target.HP = Math.Max(0, target.HP - dmg);
 
             if (target.IsAlive && !target.IsBroken && target.MaxPoise > 0)
             {
-                float poiseMultiplier = isWeaknessHit ? PoiseDamageWeaknessHit : isBasicAttack ? PoiseDamageBasicAttack : 1f;
+                float poiseMultiplier = isWeaknessHit
+                    ? PoiseDamageWeaknessHit / Math.Max(1f, target.PoiseWeaknessResistance)
+                    : isBasicAttack ? PoiseDamageBasicAttack : 1f;
                 int poiseDamage = Math.Max(1, (int)Math.Round(dmg * poiseMultiplier));
                 target.Poise = Math.Max(0, target.Poise - poiseDamage);
                 if (target.Poise <= 0)
@@ -371,6 +547,40 @@ namespace Combat
             return actor.TP - before;
         }
 
+        // Gunner: si tiene una bala elemental cargada Y todavia le queda stock de ese tipo, ese
+        // elemento reemplaza al que se le pasa (el propio del ataque/habilidad). Cualquier otro
+        // personaje (LoadedBulletElement siempre None) usa defaultElement sin cambios.
+        private Element ResolveElement(CharacterStats actor, Element defaultElement)
+        {
+            if (actor.LoadedBulletElement == Element.None) return defaultElement;
+            return BulletStock(actor, actor.LoadedBulletElement) > 0 ? actor.LoadedBulletElement : defaultElement;
+        }
+
+        private int BulletStock(CharacterStats actor, Element element)
+        {
+            switch (element)
+            {
+                case Element.Fire: return actor.FireBullets;
+                case Element.Ice: return actor.IceBullets;
+                case Element.Volt: return actor.VoltBullets;
+                default: return 0;
+            }
+        }
+
+        // Gasta 1 bala del tipo cargado (si el golpe de verdad uso una bala elemental); si se queda
+        // sin stock de ese tipo, vuelve solo a las balas normales (LoadedBulletElement = None).
+        private void ConsumeLoadedBullet(CharacterStats actor)
+        {
+            if (actor.LoadedBulletElement == Element.None) return;
+            switch (actor.LoadedBulletElement)
+            {
+                case Element.Fire: if (actor.FireBullets > 0) actor.FireBullets--; break;
+                case Element.Ice: if (actor.IceBullets > 0) actor.IceBullets--; break;
+                case Element.Volt: if (actor.VoltBullets > 0) actor.VoltBullets--; break;
+            }
+            if (BulletStock(actor, actor.LoadedBulletElement) <= 0) actor.LoadedBulletElement = Element.None;
+        }
+
         private EnemyStats? PickAliveEnemy(int preferredIndex)
         {
             if (preferredIndex >= 0 && preferredIndex < Enemies.Count && Enemies[preferredIndex].IsAlive)
@@ -378,9 +588,19 @@ namespace Combat
             return Enemies.FirstOrDefault(e => e.IsAlive);
         }
 
-        private int ComputeDamageVsEnemy(int power, Element element, EnemyStats enemy, out string note, out bool isWeak)
+        // luckPercent (0-100, CharacterStats.Luck de quien ataca): chance de golpe critico (x1.5).
+        // Devuelve 0 (dmg real, no el piso de 1 de siempre) si el enemigo esquiva por completo via
+        // su propio Evasion -- ApplyDamageToEnemy corta apenas ve un 0, sin tocar vida ni aguante.
+        private int ComputeDamageVsEnemy(int power, Element element, EnemyStats enemy, out string note, out bool isWeak, int luckPercent = 0)
         {
-            int dmg = Math.Max(1, power - enemy.Defense / 2);
+            isWeak = false;
+            if (enemy.Evasion > 0 && _rng.NextDouble() * 100.0 < enemy.Evasion)
+            {
+                note = " ¡Esquivado!";
+                return 0;
+            }
+
+            int dmg = Math.Max(1, power - enemy.EffectiveDefense / 2);
             note = "";
             isWeak = enemy.IsWeakTo(element);
             if (isWeak)
@@ -392,6 +612,12 @@ namespace Combat
             {
                 dmg = Math.Max(1, dmg / 2);
                 note = " (resistido)";
+            }
+
+            if (luckPercent > 0 && _rng.NextDouble() * 100.0 < luckPercent)
+            {
+                dmg = (int)Math.Round(dmg * CritDamageMultiplier);
+                note += " ¡Crítico!";
             }
             return dmg;
         }

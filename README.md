@@ -20,16 +20,24 @@ permanentes y arranca una mazmorra nueva.
   los mapas reales de Etrian Odyssey.
 - Punto de inicio, punto final, una misión secundaria, escaleras entre pisos y salas de jefe
   obligatorias cada cierta cantidad de pisos.
+- Un cofre de tesoro **garantizado por piso**, en un punto muerto real fuera del camino principal
+  (a veces agrandado a un cuadrante 2x2, si el mapa da lugar); su contenido incluye siempre una
+  carga de Perforador para facilitar seguir explorando.
 - Validación automática de que el mapa completo (todos los pisos) sea 100% resoluble.
 
 **Exploración**
 - Vista en primera persona, movimiento en grilla (WASD + flechas para girar).
 - Minimapa con modo "niebla de guerra" (solo lo que ya pisaste) o modo debug (mapa completo).
+- Menú de pausa con pestaña **Mapa**: el piso actual, más sub-pestañas al costado para repasar
+  cualquier piso ya explorado sin perder el progreso de descubrimiento de cada uno.
 - Sistema de encuentros real de Etrian Odyssey: cada celda tiene un valor de peligro oculto que se
   va acumulando al caminar; al superar un límite (también oculto) aparece un encuentro y el
   contador se reinicia.
 - Ítems de exploración: **Mapa** (revela todo el piso actual) y **Perforador** (abre un paso
   permanente en una pared, si hay algo real del otro lado).
+- Partículas de ambiente: motivo de polvo/destellos blanco consistente en todos los pisos (para
+  mantener un aire de misterio, en vez de variar de color por piso); en la sala de jefe se
+  reemplaza por una tormenta eléctrica (relámpagos + chispas).
 
 **Combate por turnos**
 - Party fija de 6 clases (Warrior, Protector, Ranger, Alchemist, Mage, Medic), cada una con un

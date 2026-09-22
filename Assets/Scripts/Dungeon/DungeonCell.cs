@@ -8,6 +8,20 @@ namespace DungeonGen
         public CellType Type = CellType.Normal;
         public bool IsIsolatedZone;
         public bool IsBossRoom;
+        // true en las hasta 4 celdas de un cofre agrandado a cuadrante 2x2 (ver
+        // DungeonGenerator.TryGrowTreasureRoom); solo UNA de ellas tiene ademas Type == Treasure
+        // (el resto quedan Normal, caminables, sin interaccion propia -- mismo patron que la sala
+        // de jefe, donde solo la celda central tiene Type == Boss).
+        public bool IsTreasureRoom;
+
+        // Sala de trampas (ver DungeonGenerator.AddTrapRoom): IsTrapRoom marca TODAS las celdas de
+        // la sala agrandada (piso/decoracion distinta, igual que la sala de jefe); IsTrapCell marca
+        // SOLO las celdas peligrosas de verdad dentro de ella (la linea que barre la maquina de
+        // flechas, o las celdas de picos sueltas segun TrapKind) -- pisar una de esas tiene chance
+        // de activar la trampa (ver DungeonManager.OnPlayerEnterCell).
+        public bool IsTrapRoom;
+        public bool IsTrapCell;
+
         public bool EventConsumed;
         public bool Discovered; // runtime: revelado en el minimapa del jugador al pisarlo
 
