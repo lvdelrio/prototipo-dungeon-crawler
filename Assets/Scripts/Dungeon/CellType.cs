@@ -26,6 +26,13 @@ namespace DungeonGen
         Lever,
         Treasure,
 
+        // La "Puerta Fria" (ver DungeonGenerator.PlaceBiomeGate): una celda real sellada detras de
+        // una pared normal, en el piso 0. NO depende de ningun lore ni flag -- cualquiera que la
+        // encuentre y la perfore con el Perforador (TryDrillWall generico, sin casos especiales)
+        // la abre igual, con o sin pistas. Las 3 pistas de lore (ver Lore/LoreEntry.cs) solo
+        // ayudan a saber DONDE buscarla. Al interactuar ya perforada, lleva al Bioma 2.
+        BiomeGate,
+
         Void // celda podada: no es parte de ningun camino, roca solida (no caminable, no se renderiza)
     }
 }

@@ -55,6 +55,18 @@ namespace DungeonGen
                     ? $"Piso {i}: cofre en {floor.TreasurePos}."
                     : $"Piso {i}: sin punto muerto libre para el cofre (mapa demasiado chico/denso).");
 
+                // La Puerta Fria (ver PlaceBiomeGate) y sus 3 pistas de lore solo existen en el
+                // piso 0 -- es la entrada escondida al Bioma 2 (ver
+                // Gameplay/DungeonManager.GenerateBiomeGateFloor).
+                if (i == 0)
+                {
+                    bool gateAdded = PlaceBiomeGate(floor, rng);
+                    log.Add(gateAdded
+                        ? $"Piso {i}: Puerta Fria sellada en {floor.BiomeGatePos} (perforable desde {floor.BiomeGateApproachPos})."
+                        : $"Piso {i}: sin punto muerto libre para la Puerta Fria (mapa demasiado chico/denso).");
+                    PlaceBiomeGateClues(floor, rng);
+                }
+
                 PlaceFoeRoute(floor, rng);
                 log.Add(floor.HasFoe
                     ? $"Piso {i}: FOE patrullando {floor.FoePatrolRoute.Count} celdas."
@@ -469,6 +481,10 @@ namespace DungeonGen
             }
             if (floor.TreasureRoomCells != null)
                 foreach (var c in floor.TreasureRoomCells) protectedCells.Add(c);
+            // La celda desde la que se perfora la Puerta Fria (ver PlaceBiomeGate) tiene que
+            // seguir siendo una celda real caminable normal -- si la poda la come, la puerta queda
+            // sellada de los DOS lados y ya no hay forma de encontrarla ni con el Perforador.
+            if (floor.BiomeGateApproachPos.HasValue) protectedCells.Add(floor.BiomeGateApproachPos.Value);
 
             int totalNormal = 0;
             for (int x = 0; x < floor.Width; x++)
@@ -1095,6 +1111,97 @@ namespace DungeonGen
             return true;
         }
 
+        // ---------- Puerta Fria (entrada escondida al Bioma 2) ----------
+
+        // Toma una celda que todavia es un punto muerto REAL (grado 1, ver FindLeavesWithin) y
+        // sella su unica conexion: a partir de ahi es inalcanzable a pie, una pared cualquiera
+        // mas -- ninguna diferencia visible con cualquier otro muro del piso. NO depende de
+        // ningun lore ni flag para abrirse: es TryDrillWall generico, el mismo Perforador de
+        // siempre, sobre la celda del otro lado. Las pistas (PlaceBiomeGateClues) son pura ayuda
+        // para saber DONDE buscarla, nunca un requisito -- el camino siempre estuvo ahi.
+        private bool PlaceBiomeGate(DungeonFloor floor, Random rng)
+        {
+            var used = new HashSet<(int, int)> { floor.StartPos, floor.EndPos, floor.SecondaryQuestPos };
+            foreach (var door in floor.LockedDoors)
+            {
+                used.Add((door.DoorX, door.DoorY));
+                used.Add((door.LeverX, door.LeverY));
+            }
+            foreach (var gate in floor.Gates)
+            {
+                used.Add((gate.SwitchX, gate.SwitchY));
+                used.Add((gate.LandingX, gate.LandingY));
+            }
+            if (floor.TreasureRoomCells != null)
+                foreach (var c in floor.TreasureRoomCells) used.Add(c);
+
+            var candidates = FindLeavesWithin(floor, null, used);
+            if (candidates.Count == 0) return false;
+
+            Shuffle(candidates, rng);
+            var pos = candidates[0];
+            var cell = floor.Cells[pos.x, pos.y];
+
+            Direction openDir = default;
+            bool found = false;
+            foreach (var dir in DirectionExtensions.All)
+            {
+                if (!cell.HasWall(dir)) { openDir = dir; found = true; break; }
+            }
+            if (!found) return false; // no deberia pasar: FindLeavesWithin ya garantiza grado 1
+
+            var (ox, oy) = openDir.Offset();
+            var approach = (pos.x + ox, pos.y + oy);
+
+            cell.SetWall(openDir, true);
+            floor.Cells[approach.Item1, approach.Item2].SetWall(openDir.Opposite(), true);
+
+            cell.Type = CellType.BiomeGate;
+            floor.BiomeGatePos = pos;
+            floor.BiomeGateApproachPos = approach;
+            return true;
+        }
+
+        // 3 fragmentos de lore de colocacion GARANTIZADA (a diferencia del pool aleatorio de
+        // AssignLoreLock): cada uno hace un trabajo distinto -- plantar la pregunta, señalar DONDE
+        // buscar, señalar CON QUE herramienta -- para que juntos, y solo juntos, le digan al
+        // jugador como encontrar y abrir la Puerta Fria sin nunca ser obligatorios de verdad.
+        // Publico (no privado como el resto de estos arrays de apoyo) para que
+        // Gameplay/DungeonManager.BuildLorePool pueda excluir estos 3 IDs del pool general de
+        // lore por piso -- son de colocacion garantizada y fija en el piso 0, nunca deberian
+        // terminar sueltos en otro piso cualquiera atados a un atajo random.
+        public static readonly string[] BiomeGateLoreIds = { "puerta_fria_1", "puerta_fria_2", "puerta_fria_3" };
+
+        private void PlaceBiomeGateClues(DungeonFloor floor, Random rng)
+        {
+            var candidates = FreeNormalCells(floor).Where(c => !floor.IsInIsolatedZone(c.Item1, c.Item2)).ToList();
+            Shuffle(candidates, rng);
+
+            for (int i = 0; i < BiomeGateLoreIds.Length && i < candidates.Count; i++)
+            {
+                var (x, y) = candidates[i];
+                var cell = floor.Cells[x, y];
+                cell.Type = CellType.Lore;
+                cell.AssignedLoreId = BiomeGateLoreIds[i];
+                cell.DangerValue = 0;
+            }
+        }
+
+        // Piso unico del Bioma 2 ("Cueva Intergalactica"): mismo motor de generacion que
+        // cualquier otro piso (arbol + poda + sala de jefe), solo que Biome queda en 1 para que
+        // Gameplay/CombatManager use el bestiario de EnemyFactory.CreateCaveEncounter/CreateKadulu
+        // en vez del de siempre. No tiene FOE, sala de trampas ni cofre extra -- por ahora es solo
+        // la mazmorra y su jefe.
+        public DungeonFloor GenerateBiomeGateFloor(int width, int height, int index, Random rng, int dangerValueMin = 0, int dangerValueMax = 5)
+        {
+            var floor = GenerateFloor(width, height, index, rng);
+            floor.Biome = 1;
+            AddBossRoom(floor, rng);
+            AssignDangerValues(floor, rng, dangerValueMin, dangerValueMax);
+            PruneToSparseMaze(floor, rng, 0.35f);
+            return floor;
+        }
+
         // Ruta fija de patrulla para el FOE de este piso (enemigo fuerte que se pasea, ver
         // Gameplay/FoeController): un TRAMO del camino critico Start->End (nunca el camino entero,
         // deja margen antes/despues para no pisar los marcadores de Start/End). Cualquier celda
@@ -1313,7 +1420,10 @@ namespace DungeonGen
             foreach (var door in floor.LockedDoors) SetDoorWallState(floor, door, false);
 
             // Las celdas Void son vacio intencional (podado): no cuentan como "deberian ser alcanzables".
-            int totalCells = CountNonVoid(floor);
+            // La celda de la Puerta Fria (CellType.BiomeGate, ver PlaceBiomeGate) tampoco: a
+            // proposito es inalcanzable caminando (ni activando todas las palancas), solo el
+            // Perforador la abre, y eso no depende de ningun candado.
+            int totalCells = CountNonVoid(floor) - (floor.BiomeGatePos.HasValue ? 1 : 0);
 
             if (reachableUnlocked.Count != totalCells)
                 issues.Add($"Piso {floor.Index}: activando TODAS las palancas solo se llega a {reachableUnlocked.Count}/{totalCells} celdas (no-vacias).");
@@ -1556,7 +1666,11 @@ namespace DungeonGen
                 }
             }
 
-            int totalAllCells = floors.Sum(f => CountNonVoid(f));
+            // El Bioma 2 (Biome != 0, ver DungeonManager.GenerateBiomeGateFloor) y la celda de la
+            // Puerta Fria que lleva a el son contenido OPCIONAL a proposito -- nunca hace falta
+            // cruzarlos para resolver la mazmorra principal, asi que quedan afuera de la garantia
+            // de resolubilidad: son un secreto de verdad, no una parte obligatoria del recorrido.
+            int totalAllCells = floors.Where(f => f.Biome == 0).Sum(f => CountNonVoid(f) - (f.BiomeGatePos.HasValue ? 1 : 0));
             if (visited.Count != totalAllCells)
                 issues.Add($"Multi-piso: solo {visited.Count}/{totalAllCells} celdas alcanzables cruzando todos los pisos desde el Start del piso 0 (con todas las palancas activadas).");
 

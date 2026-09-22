@@ -147,5 +147,97 @@ namespace Combat
             }
             return list;
         }
+
+        // ---------- Bioma 2: Cueva Intergalactica ----------
+        // Segunda zona, escondida detras de la Puerta Fria del piso 0 (ver
+        // Dungeon/DungeonGenerator.PlaceBiomeGate y Gameplay/DungeonManager.EnterBiomeGateFloor):
+        // una cueva donde algo de mas alla de las estrellas quedo atrapado. La debilidad
+        // dominante de la zona es Volt (todo lo que vive aca es humedo/organico o esta cargado de
+        // estatica comica), salvo la excepcion deliberada de CreateQuartzCrab -- mismo patron
+        // pedagogico que CommonWeaknesses arriba, pero renovado: el jugador tiene que aprender que
+        // ESTA zona premia un elemento distinto al de siempre.
+        private static readonly Element[] CaveWeaknesses = { Element.Volt, Element.Pierce };
+
+        public static EnemyStats CreateStarLarva(int suffix, int floorIndex = 0)
+        {
+            return new EnemyStats
+            {
+                Name = $"Larva Estelar {suffix}", MaxHP = 42, HP = 42,
+                Attack = ScaledAttack(13, floorIndex), Defense = 2, Speed = 7,
+                AttackElement = Element.Pierce,
+                Weaknesses = CaveWeaknesses, Resistance = Element.Ice,
+                MaxPoise = 28, Poise = 28,
+            };
+        }
+
+        public static EnemyStats CreateVoidJelly(int suffix, int floorIndex = 0)
+        {
+            return new EnemyStats
+            {
+                Name = $"Medusa del Vacío {suffix}", MaxHP = 48, HP = 48,
+                Attack = ScaledAttack(12, floorIndex), Defense = 3, Speed = 5,
+                AttackElement = Element.Strike,
+                Weaknesses = CaveWeaknesses, Resistance = Element.Fire,
+                MaxPoise = 32, Poise = 32,
+            };
+        }
+
+        // Excepcion deliberada (mismo rol que CreateBeetle en la zona original): el caparazon de
+        // cuarzo no conduce electricidad y resiste bien un pinchazo, pero un golpe contundente lo raja.
+        public static EnemyStats CreateQuartzCrab(int suffix, int floorIndex = 0)
+        {
+            return new EnemyStats
+            {
+                Name = $"Cangrejo de Cuarzo {suffix}", MaxHP = 60, HP = 60,
+                Attack = ScaledAttack(11, floorIndex), Defense = 7, Speed = 3,
+                AttackElement = Element.Strike,
+                Weaknesses = new[] { Element.Strike }, Resistance = Element.Volt,
+                MaxPoise = 48, Poise = 48,
+            };
+        }
+
+        public static EnemyStats CreateAbyssStalker(int suffix, int floorIndex = 0)
+        {
+            return new EnemyStats
+            {
+                Name = $"Acechador de las Simas {suffix}", MaxHP = 58, HP = 58,
+                Attack = ScaledAttack(15, floorIndex), Defense = 4, Speed = 6,
+                AttackElement = Element.Pierce,
+                Weaknesses = CaveWeaknesses, Resistance = Element.Ice,
+                MaxPoise = 40, Poise = 40,
+            };
+        }
+
+        // Kadulu: quedo atrapado en esta cueva cuando lo que sea que la resquebrajo hacia el vacio
+        // se cerro de nuevo detras suyo. Sigue el mismo patron que CreateBoss (confirma la
+        // debilidad dominante de SU zona -- Volt -- en vez de una sorpresa nueva) pero con mas HP
+        // y ataque que el Guardian de Piedra, para que se sienta como una escalada real.
+        public static EnemyStats CreateKadulu(int floorIndex = 0)
+        {
+            return new EnemyStats
+            {
+                Name = "Kadulu, el Hambriento del Vacío", MaxHP = 260, HP = 260,
+                Attack = ScaledAttack(21, floorIndex), Defense = 9, Speed = 5,
+                AttackElement = Element.Pierce,
+                Weaknesses = new[] { Element.Volt }, Resistance = Element.Ice,
+                MaxPoise = 100, Poise = 100,
+                PoiseWeaknessResistance = 1.3f,
+            };
+        }
+
+        public static List<EnemyStats> CreateCaveEncounter(Random rng, int floorIndex = 0)
+        {
+            int count = RollEncounterSize(rng, floorIndex);
+            var list = new List<EnemyStats>();
+            for (int i = 0; i < count; i++)
+            {
+                int roll = rng.Next(4);
+                if (roll == 0) list.Add(CreateStarLarva(i + 1, floorIndex));
+                else if (roll == 1) list.Add(CreateVoidJelly(i + 1, floorIndex));
+                else if (roll == 2) list.Add(CreateQuartzCrab(i + 1, floorIndex));
+                else list.Add(CreateAbyssStalker(i + 1, floorIndex));
+            }
+            return list;
+        }
     }
 }

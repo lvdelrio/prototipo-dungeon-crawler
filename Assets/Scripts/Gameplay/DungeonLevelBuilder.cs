@@ -265,6 +265,10 @@ namespace Gameplay
                 case CellType.LockedDoor: color = new Color(0.55f, 0.1f, 0.1f); mat = lockedDoorMarkerMaterial; shape = PrimitiveType.Cube; scale = cellSize * 0.5f; break;
                 case CellType.Lever: color = new Color(0.15f, 0.9f, 0.35f); mat = leverMarkerMaterial; shape = PrimitiveType.Cylinder; scale = cellSize * 0.3f; break;
                 case CellType.Treasure: color = new Color(1f, 0.82f, 0.1f); mat = treasureMarkerMaterial; shape = PrimitiveType.Cube; scale = cellSize * 0.35f; break;
+                // Sin material dedicado a proposito (ver CellType.BiomeGate): no hace falta tocar
+                // DungeonSceneBuilder por esto, el color de respaldo alcanza para el brillo frio
+                // que se supone que tiene la grieta recien abierta.
+                case CellType.BiomeGate: color = new Color(0.55f, 0.85f, 1f); shape = PrimitiveType.Sphere; scale = cellSize * 0.35f; break;
                 default: return;
             }
 

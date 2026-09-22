@@ -99,6 +99,17 @@ namespace DungeonGen
         public TrapKind TrapKind;
         public bool HasTrapRoom => TrapRoomCells != null && TrapRoomCells.Count > 0;
 
+        // A que bioma pertenece este piso (0 = el original). Los pisos con Biome != 0 se generan
+        // aparte (ver DungeonGenerator.GenerateBiomeGateFloor) y quedan fuera de la secuencia
+        // normal de escaleras -- solo se llega vía CellType.BiomeGate.
+        public int Biome;
+
+        // Posicion de la celda BiomeGate ("Puerta Fria") de este piso, si tiene una, y de la
+        // celda desde la que se la perfora (para protegerla de PruneToSparseMaze -- ver
+        // DungeonGenerator.PlaceBiomeGate). Null si este piso no tiene ninguna.
+        public (int x, int y)? BiomeGatePos;
+        public (int x, int y)? BiomeGateApproachPos;
+
         // Solo para TrapKind.ArrowSweep (ver Gameplay/TrapDisparadorController): la maquina real
         // vive montada en la pared de UNO de los dos extremos de TrapArrowPath (TrapDisparadorPos),
         // disparando en TrapDisparadorDir. TrapArrowPath es TrapCells pero YA ORDENADA en el orden

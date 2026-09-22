@@ -51,6 +51,31 @@ namespace Lore
                 Text = "\"El que entienda esto podra abrir el paso.\" No hay firma. Solo el eco de "
                      + "quien lo escribio, mucho antes de que llegaramos.",
             },
+
+            // La Puerta Fria (ver DungeonGenerator.PlaceBiomeGate): 3 pistas de colocacion
+            // garantizada en el piso 0, cada una con un trabajo distinto (plantar la pregunta,
+            // decir DONDE, decir CON QUE) -- juntas le dicen al jugador como encontrar y abrir el
+            // paso al Bioma 2. Ninguna es obligatoria: la pared es real y perforable igual sin
+            // haber leido nada, esto solo ahorra tiempo.
+            new LoreEntry
+            {
+                Id = "puerta_fria_1", Title = "Diario de Expedición (I)",
+                Text = "\"No vinimos por el tesoro de este piso. Vinimos por lo que sella la Puerta "
+                     + "Fría. Los otros no la encontraron a tiempo.\"",
+            },
+            new LoreEntry
+            {
+                Id = "puerta_fria_2", Title = "Diario de Expedición (II)",
+                Text = "\"Marcamos el camino de vuelta al punto de partida con ceniza, para no "
+                     + "perder el rumbo. La Puerta está a un lado de ese mismo punto, donde la "
+                     + "piedra no hizo eco cuando golpeamos.\"",
+            },
+            new LoreEntry
+            {
+                Id = "puerta_fria_3", Title = "Diario de Expedición (III)",
+                Text = "\"Ningún golpe de espada abrió esa piedra. Hizo falta la misma herramienta "
+                     + "que abre paso entre las salas — apuntada con paciencia, no con fuerza.\"",
+            },
         };
 
         public static LoreEntry Find(string id)

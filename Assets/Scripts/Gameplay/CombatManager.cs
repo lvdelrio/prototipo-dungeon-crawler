@@ -128,13 +128,21 @@ namespace Gameplay
 
         // floorIndex (0 = primer piso): escala dificultad -- daño de enemigos y que tan probable es
         // un encuentro de 3 en vez de 2 suben a medida que se baja mas. Default 0 para no romper
-        // llamadas existentes (tests) que no les importa la escala.
-        public void StartEncounter(bool isBoss, int floorIndex = 0)
+        // llamadas existentes (tests) que no les importa la escala. biome (0 = zona original, 1 =
+        // Cueva Intergaláctica detrás de la Puerta Fría, ver DungeonFloor.Biome) cambia todo el
+        // bestiario, incluido el jefe.
+        public void StartEncounter(bool isBoss, int floorIndex = 0, int biome = 0)
         {
             if (IsActive) return;
 
             IsBossFight = isBoss;
             IsFoeFight = false;
+            if (biome == 1)
+            {
+                Enemies = isBoss ? new List<EnemyStats> { EnemyFactory.CreateKadulu(floorIndex) } : EnemyFactory.CreateCaveEncounter(_rng, floorIndex);
+                StartEncounterCommon(isBoss ? "¡Kadulu emerge de la oscuridad!" : "¡Algo se mueve entre las rocas!");
+                return;
+            }
             Enemies = isBoss ? new List<EnemyStats> { EnemyFactory.CreateBoss(floorIndex) } : EnemyFactory.CreateRandomEncounter(_rng, floorIndex);
             StartEncounterCommon(isBoss ? "¡Aparece el Guardián de Piedra!" : "¡Un grupo de enemigos aparece!");
         }

@@ -133,6 +133,7 @@ namespace Gameplay
                 case CellType.LockedDoor: return new Color(0.55f, 0.1f, 0.1f);
                 case CellType.Lever: return new Color(0.15f, 0.9f, 0.35f);
                 case CellType.Treasure: return new Color(1f, 0.82f, 0.1f);
+                case CellType.BiomeGate: return new Color(0.55f, 0.85f, 1f);
                 default: return null;
             }
         }
@@ -170,6 +171,7 @@ namespace Gameplay
             new LegendEntry(new Color(0.55f, 0.1f, 0.1f), "Puerta bloqueada", "Hay que activar su palanca para abrirla de forma permanente."),
             new LegendEntry(new Color(0.15f, 0.9f, 0.35f), "Palanca", "Abre la puerta bloqueada correspondiente."),
             new LegendEntry(new Color(1f, 0.82f, 0.1f), "Cofre", "Tesoro: puntos + una carga de Perforador, siempre hay uno por piso."),
+            new LegendEntry(new Color(0.55f, 0.85f, 1f), "Puerta Fría", "Entrada escondida al Bioma 2, en el piso 0. Cualquier pared puede ser esta -- el Perforador la abre igual, con o sin pistas."),
         };
 
         public static readonly LegendEntry[] FloorLegend =

@@ -48,6 +48,10 @@ namespace Gameplay
         private TrapDisparadorController _activeTrapDisparador;
         private int _activeTrapDisparadorFloorIndex = -1;
 
+        // Indice en _floors del piso del Bioma 2 (Cueva Intergaláctica, ver
+        // DungeonGenerator.GenerateBiomeGateFloor), -1 si todavia no se genero ninguno para esta run.
+        private int _biomeGateFloorIndex = -1;
+
         private MetaProgress _meta;
         private int _deepestFloorReachedThisRun;
         private int _enemiesDefeatedThisRun;
@@ -136,6 +140,15 @@ namespace Gameplay
 
             foreach (var line in log) Debug.Log(line);
 
+            // Bioma 2 (Cueva Intergaláctica): un piso extra, generado aparte y apendiado al final
+            // de _floors, solo alcanzable a traves de la Puerta Fria del piso 0 (ver
+            // CellType.BiomeGate / TryInteract) -- nunca por la secuencia normal de escaleras.
+            var biomeRng = new System.Random(seed ^ 0x5EED1234);
+            var biomeFloor = _generator.GenerateBiomeGateFloor(settings.size, settings.size, _floors.Count, biomeRng,
+                settings.dangerValueMin, settings.dangerValueMax);
+            _floors.Add(biomeFloor);
+            _biomeGateFloorIndex = biomeFloor.Index;
+
             _bossDefeatedFloors.Clear();
             _deepestFloorReachedThisRun = 0;
             _enemiesDefeatedThisRun = 0;
@@ -164,6 +177,10 @@ namespace Gameplay
             var discovered = new List<string>();
             foreach (var entry in LoreCatalog.All)
             {
+                // Las 3 pistas de la Puerta Fria son de colocacion fija y garantizada en el piso 0
+                // (ver DungeonGenerator.PlaceBiomeGateClues) -- nunca deben terminar sueltas en
+                // este pool general, que las repartiria en cualquier piso atadas a un atajo random.
+                if (System.Array.IndexOf(DungeonGenerator.BiomeGateLoreIds, entry.Id) >= 0) continue;
                 if (_meta.IsLoreUnlocked(entry.Id)) discovered.Add(entry.Id);
                 else undiscovered.Add(entry.Id);
             }
@@ -366,6 +383,13 @@ namespace Gameplay
                         ? null
                         : "Un cofre. Presiona Espacio para abrirlo.";
                     break;
+                case CellType.BiomeGate:
+                    message = "Una corriente helada sale de la grieta que acabas de abrir. Presiona Espacio para cruzar.";
+                    break;
+                case CellType.Start:
+                    if (CurrentFloor.Biome != 0)
+                        message = "La Puerta Fría, del otro lado. Presiona Espacio para volver.";
+                    break;
             }
             if (message != null && hud != null) hud.SetLastMessage(message);
         }
@@ -444,7 +468,7 @@ namespace Gameplay
             if (_walkingCounter >= _encounterThreshold)
             {
                 _walkingCounter = 0;
-                combat.StartEncounter(isBoss: false, floorIndex: _currentFloorIndex);
+                combat.StartEncounter(isBoss: false, floorIndex: _currentFloorIndex, biome: CurrentFloor.Biome);
             }
         }
 
@@ -626,7 +650,7 @@ namespace Gameplay
                 }
                 else if (combat != null && !combat.IsActive)
                 {
-                    combat.StartEncounter(isBoss: true, floorIndex: _currentFloorIndex);
+                    combat.StartEncounter(isBoss: true, floorIndex: _currentFloorIndex, biome: CurrentFloor.Biome);
                 }
             }
             else if (cell.Type == CellType.Lever)
@@ -668,6 +692,36 @@ namespace Gameplay
             {
                 if (hud != null) hud.SetLastMessage("Un mecanismo sella el paso. Hace falta encontrar la palanca que lo abre.");
             }
+            else if (cell.Type == CellType.BiomeGate)
+            {
+                EnterBiomeGateFloor();
+            }
+            else if (cell.Type == CellType.Start && CurrentFloor.Biome != 0)
+            {
+                ReturnFromBiomeGateFloor();
+            }
+        }
+
+        // Cruzar la Puerta Fria hacia el Bioma 2 (ver DungeonGenerator.GenerateBiomeGateFloor):
+        // solo llega hasta aca quien ya la encontro y la perforo (TryUseDrill generico), asi que
+        // no hay ningun chequeo extra -- la pared ya era la unica barrera real.
+        private void EnterBiomeGateFloor()
+        {
+            if (_biomeGateFloorIndex < 0) return;
+            var target = _floors[_biomeGateFloorIndex].StartPos;
+            ChangeFloor(_biomeGateFloorIndex, target.x, target.y);
+            if (hud != null) hud.SetLastMessage("Cruzás la Puerta Fría. El aire cambia por completo.");
+        }
+
+        // Vuelta al piso 0 desde el Bioma 2: se para sobre Start (que ahi no tiene otro uso, ya
+        // que a este piso nunca se entra por escalera) y aparece de vuelta justo donde perforo la
+        // Puerta Fria (DungeonFloor.BiomeGateApproachPos, ver PlaceBiomeGate).
+        private void ReturnFromBiomeGateFloor()
+        {
+            var back = _floors[0].BiomeGateApproachPos;
+            if (!back.HasValue) return;
+            ChangeFloor(0, back.Value.x, back.Value.y);
+            if (hud != null) hud.SetLastMessage("Volvés a través de la Puerta Fría.");
         }
 
         public void ChangeFloor(int floorIndex, int spawnX, int spawnY)
