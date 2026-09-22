@@ -110,6 +110,10 @@ namespace Gameplay
                 return new Color(0.5f, 0.16f, 0.16f);
             if (cell.IsTrapRoom && !trapDisabled)
                 return cell.IsTrapCell ? new Color(0.55f, 0.22f, 0.05f) : new Color(0.4f, 0.28f, 0.12f);
+            if (cell.IsPuzzleTile)
+                return cell.IsPuzzleTileSafe ? new Color(0.35f, 0.45f, 0.5f) : new Color(0.5f, 0.28f, 0.1f);
+            if (cell.IsMandatoryHazard && !cell.EventConsumed)
+                return new Color(0.6f, 0.35f, 0.05f);
             return cell.IsIsolatedZone ? new Color(0.30f, 0.20f, 0.35f) : PathColor;
         }
 
@@ -129,7 +133,10 @@ namespace Gameplay
                 // Violeta apagado una vez leido (EventConsumed, ver DungeonManager.OnPlayerEnterCell)
                 // -- distingue de un lejos "esto ya lo leiste" de un violeta brillante "todavia hay
                 // algo nuevo aca", en vez de quedarse siempre igual sin importar si ya lo visitaste.
-                case CellType.Lore: return cell.EventConsumed ? new Color(0.4f, 0.32f, 0.45f) : new Color(0.75f, 0.35f, 1f);
+                case CellType.Lore:
+                    bool isMysteryClue = System.Array.IndexOf(DungeonGenerator.BiomeGateLoreIds, cell.AssignedLoreId) >= 0;
+                    if (cell.EventConsumed) return isMysteryClue ? new Color(0.5f, 0.45f, 0.25f) : new Color(0.4f, 0.32f, 0.45f);
+                    return isMysteryClue ? new Color(1f, 0.82f, 0.25f) : new Color(0.75f, 0.35f, 1f);
                 case CellType.LockedDoor: return new Color(0.55f, 0.1f, 0.1f);
                 case CellType.Lever: return new Color(0.15f, 0.9f, 0.35f);
                 case CellType.Treasure: return new Color(1f, 0.82f, 0.1f);

@@ -15,6 +15,8 @@ namespace Gameplay
         private bool _wasActive;
         private bool _inspecting;
         private bool _showingAbilities;
+        private bool _showingItems;
+        private ItemActionKind? _pendingItem;
 
         // Reveal "estiloso" del menu de accion (inspirado en Persona 5: capas apiladas, acento
         // rojo/negro, entrada en cascada) -- se reinicia cada vez que le toca elegir a alguien nuevo.
@@ -57,6 +59,8 @@ namespace Gameplay
                 _pendingType = null;
                 _wasActive = false;
                 _showingAbilities = false;
+                _showingItems = false;
+                _pendingItem = null;
                 _actionMenuChooser = null;
                 return;
             }
@@ -215,7 +219,7 @@ namespace Gameplay
                         if (UIButton.Draw(new Rect(panelX + 600, y, 100, 26), "Cerrar"))
                             _showingAbilities = false;
                     }
-                    else if (_pendingType == null)
+                    else if (_pendingType == null && !_showingItems && !_pendingItem.HasValue)
                     {
                         TrackActionMenuReveal(chooser);
 
@@ -241,15 +245,53 @@ namespace Gameplay
                             combatManager.AutoAttackRemaining();
                             _pendingType = null;
                         }
+
+                        if (DrawP5Button(new Rect(panelX + 620, y, 120, 30), "Ítems", 4))
+                            _showingItems = true;
+                    }
+                    else if (_showingItems)
+                    {
+                        GUI.Label(new Rect(panelX + 20, y, 300, 20), "Elegí un ítem:");
+                        y += 22;
+                        string potionLabel = $"Poción ({combatManager.PotionCharges}) - cura {CombatEngine.PotionHealAmount} HP";
+                        if (UIButton.Draw(new Rect(panelX + 20, y, 260, 26), potionLabel, enabled: combatManager.PotionCharges > 0))
+                        {
+                            _showingItems = false;
+                            _pendingItem = ItemActionKind.Potion;
+                        }
+                        string reviverLabel = $"Revivir ({combatManager.ReviverCharges}) - devuelve a un caído";
+                        if (UIButton.Draw(new Rect(panelX + 290, y, 260, 26), reviverLabel, enabled: combatManager.ReviverCharges > 0))
+                        {
+                            _showingItems = false;
+                            _pendingItem = ItemActionKind.Reviver;
+                        }
+                        if (UIButton.Draw(new Rect(panelX + 560, y, 100, 26), "Cerrar")) _showingItems = false;
+                    }
+                    else if (_pendingItem.HasValue)
+                    {
+                        bool wantsAlive = _pendingItem.Value == ItemActionKind.Potion;
+                        GUI.Label(new Rect(panelX + 20, y, 340, 20), wantsAlive ? "Elegí a quién curar:" : "Elegí a quién revivir:");
+                        y += 22;
+                        float bx = panelX + 20;
+                        foreach (var ally in combatManager.Party.Where(p => p.IsAlive == wantsAlive))
+                        {
+                            if (UIButton.Draw(new Rect(bx, y, 150, 26), ally.Name))
+                            {
+                                combatManager.SubmitItemAction(chooser, _pendingItem.Value, combatManager.Party.IndexOf(ally));
+                                _pendingItem = null;
+                            }
+                            bx += 160;
+                        }
+                        if (UIButton.Draw(new Rect(panelX + 20, y + 34, 100, 24), "Cancelar")) _pendingItem = null;
                     }
                     else if (_pendingType == ActionType.Skill && chooser.IsHealSkill)
                     {
-                        GUI.Label(new Rect(panelX + 20, y, 300, 20), "Elegí a quién curar:");
+                        GUI.Label(new Rect(panelX + 20, y, 300, 20), "Elegí a quién curar (o revivir, si está caído):");
                         y += 22;
                         float bx = panelX + 20;
-                        foreach (var ally in combatManager.Party.Where(p => p.IsAlive))
+                        foreach (var ally in combatManager.Party)
                         {
-                            if (UIButton.Draw(new Rect(bx, y, 150, 26), ally.Name))
+                            if (UIButton.Draw(new Rect(bx, y, 150, 26), ally.IsAlive ? ally.Name : $"{ally.Name} (caído)"))
                             {
                                 var action = new PartyAction { Actor = chooser, Type = ActionType.Skill, TargetAllyIndex = combatManager.Party.IndexOf(ally) };
                                 combatManager.SubmitAction(action);

@@ -9,6 +9,14 @@ namespace DungeonGen
     // el mensaje/color.
     public enum TrapKind { ArrowSweep, SpikeCells }
 
+    // 3 "tells" visuales para una sala de pistas (ver DungeonGenerator.AddLoreCorridorRoom /
+    // Gameplay/DungeonLevelBuilder.BuildPuzzleTile): mismo mecanismo (grilla segura/insegura,
+    // solo distinguible observando antes de pisar), distinta ambientacion -- Goteras = gotas que
+    // splashean en piso real y caen de largo en el falso; Brasas = brasas que se asientan en piso
+    // real y se hunden en el falso; PolvoDeCuarzo = polvo que se pega al piso real (cargado, tema
+    // del Bioma 2) y flota de largo sobre el falso.
+    public enum PuzzleKind { Goteras, Brasas, PolvoDeCuarzo }
+
     public class ShortcutGate
     {
         public int Ax, Ay;      // celda "afuera" del borde elegido (referencia, nunca se camina por ahi)
@@ -49,14 +57,15 @@ namespace DungeonGen
         public List<ShortcutGate> Gates = new List<ShortcutGate>();
         public List<LockedDoor> LockedDoors = new List<LockedDoor>();
 
-        // Cofre garantizado por piso, fuera del camino principal (ver
-        // DungeonGenerator.EnsureTreasure). TreasurePos es la celda con Type == Treasure (donde se
-        // interactua); TreasureRoomCells son TODAS las celdas del cuadrante (1 si no se pudo
-        // agrandar a 2x2, hasta 4 si si -- ver TryGrowTreasureRoom). Ambos quedan null solo en
-        // mapas degenerados sin ningun punto muerto libre.
+        // 3 a 5 cofres GARANTIZADOS por piso, cada uno en su propio punto muerto (ver
+        // DungeonGenerator.EnsureTreasure). TreasurePositions tiene TODOS; TreasurePos queda el
+        // primero (compatibilidad con lo que ya lo leia). TreasureRoomCells son las mismas celdas
+        // que TreasurePositions -- se mantiene aparte porque PruneToSparseMaze/PlaceBiomeGate ya
+        // protegen/excluyen leyendo ESTE nombre. Vacios solo en mapas degenerados sin puntos
+        // muertos libres.
         public (int x, int y)? TreasurePos;
+        public List<(int, int)> TreasurePositions;
         public List<(int, int)> TreasureRoomCells;
-        public bool HasTreasureRoom2x2 => TreasureRoomCells != null && TreasureRoomCells.Count > 1;
 
         public (int x, int y) StartPos;
         public (int x, int y) EndPos;
@@ -120,6 +129,15 @@ namespace DungeonGen
         public Direction TrapDisparadorDir;
         public List<(int x, int y)> TrapArrowPath;
         public bool TrapDisabled;
+
+        // Sala de pistas (opcional, ver DungeonGenerator.AddLoreCorridorRoom): a lo sumo una por
+        // piso, en pisos fijos elegidos por PickLoreCorridorFloors (nunca el piso 0 si se puede
+        // evitar). LoreCorridorRoomCells son TODAS las celdas de la sala (piso/decoracion
+        // distinta); cual celda especifica tiene el fragmento de lore se sabe por
+        // DungeonCell.Type == Lore dentro de esas mismas celdas.
+        public List<(int, int)> LoreCorridorRoomCells;
+        public PuzzleKind LoreCorridorKind;
+        public bool HasLoreCorridor => LoreCorridorRoomCells != null && LoreCorridorRoomCells.Count > 0;
 
         public DungeonFloor(int width, int height, int index)
         {

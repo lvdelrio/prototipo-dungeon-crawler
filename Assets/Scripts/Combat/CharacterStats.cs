@@ -82,6 +82,19 @@ namespace Combat
 
         public bool IsGuarding;
 
+        // Volcado desde el arma/accesorio equipado (ver Meta.MetaProgress.ApplyUpgradesToParty +
+        // Combat.EquipmentItem) al armar la party -- el motor de combate no sabe nada de
+        // equipamiento, solo de estos numeros ya resueltos. OnHitStatusChancePercent > 0: cada
+        // golpe conectado (ver CombatEngine.ApplyDamageToEnemy) tiene esa chance de aplicarle al
+        // enemigo un dano sostenido (veneno/sangrado, mismo mecanismo, OnHitStatusName es solo el
+        // nombre que se muestra). ThornsReflectPercent > 0: pasivo, mientras este equipado, todo
+        // golpe ENEMIGO recibido le refleja ese % de vuelta (ver CombatEngine.ExecuteEnemyAction).
+        public string OnHitStatusName;
+        public int OnHitStatusChancePercent;
+        public int OnHitStatusDamagePercent;
+        public int OnHitStatusRounds;
+        public int ThornsReflectPercent;
+
         // Formacion: 3 personajes adelante y 3 atras (ver CombatEngine.FrontRowAggroWeight). Los
         // de adelante concentran mas probabilidad de ser el blanco de los enemigos.
         public bool IsFrontRow;

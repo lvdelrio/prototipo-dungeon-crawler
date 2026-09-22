@@ -252,6 +252,29 @@ namespace Gameplay
                 if (col >= 3) { col = 0; bx = panelX + 20; by += 42; }
                 else bx += 278;
             }
+            if (col != 0) by += 42;
+
+            // Pociones (ver CombatManager.UsePotionOutOfCombat): a diferencia de las habilidades
+            // de arriba, no dependen de a quien elijas como "actor" -- cualquiera puede usar una,
+            // asi que van aparte, no como paso 2/3 del wizard.
+            var meta = dungeonManager.Meta;
+            by += 10;
+            GUI.Label(new Rect(panelX + 20, by, panelW - 40, 20), $"Pociones ({meta.PotionCharges}): cura hasta {CombatEngine.PotionHealAmount} HP, sin gastar TP.");
+            by += 24;
+            bx = panelX + 20;
+            foreach (var character in combatManager.Party)
+            {
+                bool full = character.HP >= character.MaxHP;
+                bool enabled = meta.PotionCharges > 0 && character.IsAlive && !full;
+                string label = !character.IsAlive ? $"{character.Name}: caído/a" : full ? $"{character.Name}: HP lleno" : $"Curar a {character.Name}";
+                if (UIButton.Draw(new Rect(bx, by, 200, 26), label, enabled: enabled))
+                {
+                    int healed = combatManager.UsePotionOutOfCombat(meta, character);
+                    _healMessage = healed > 0 ? $"Poción: {character.Name} recuperó {healed} HP." : "No se pudo usar la poción.";
+                    _healMessageUntil = Time.time + 2.5f;
+                }
+                bx += 208;
+            }
         }
 
         // Paso 2: la habilidad del personaje elegido, con el motivo claro de por que si o no se
@@ -405,8 +428,23 @@ namespace Gameplay
             y += 26;
             foreach (var entry in LoreCatalog.All)
             {
+                // Las 3 pistas de la Puerta Fria (ver DungeonGen.DungeonGenerator.BiomeGateLoreIds)
+                // son mecanicamente importantes (apuntan a un secreto real, no solo sabor) -- se
+                // marcan distinto para que no se pierdan entre el resto del lore.
+                bool isMysteryClue = System.Array.IndexOf(DungeonGen.DungeonGenerator.BiomeGateLoreIds, entry.Id) >= 0;
                 bool unlocked = meta.IsLoreUnlocked(entry.Id);
+                var boxColor = GUI.color;
+                if (isMysteryClue) GUI.color = new Color(1f, 0.9f, 0.5f, 0.5f);
                 GUI.Box(new Rect(panelX + 20, y, panelW - 40, unlocked ? 64 : 28), "");
+                GUI.color = boxColor;
+
+                if (isMysteryClue)
+                {
+                    var tagStyle = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, fontSize = 10 };
+                    tagStyle.normal.textColor = new Color(1f, 0.82f, 0.2f);
+                    GUI.Label(new Rect(panelX + panelW - 170, y + 4, 140, 16), "◆ PISTA PRINCIPAL", tagStyle);
+                }
+
                 if (unlocked)
                 {
                     GUI.Label(new Rect(panelX + 30, y + 4, panelW - 60, 20), entry.Title);

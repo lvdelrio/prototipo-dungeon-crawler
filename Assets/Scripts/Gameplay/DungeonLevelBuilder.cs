@@ -104,6 +104,8 @@ namespace Gameplay
 
                     BuildMarker(cell, center, cellSize, wallHeight);
                     if (cell.IsTrapCell && !floor.TrapDisabled) BuildTrapMarker(center, cellSize, floor.TrapKind);
+                    if (cell.IsMandatoryHazard && !cell.EventConsumed) BuildMandatoryHazardMarker(center, cellSize);
+                    if (cell.IsPuzzleTile) BuildPuzzleTile(center, cellSize, cell.IsPuzzleTileSafe, floor.LoreCorridorKind);
                 }
             }
         }
@@ -152,6 +154,70 @@ namespace Gameplay
                 if (col != null) Destroy(col);
 
                 ApplyMaterial(go, trapMarkerMaterial, new Color(0.3f, 0.06f, 0.05f));
+            }
+        }
+
+        // Marcador de la casilla obligatoria del camino critico (ver
+        // DungeonGenerator.PlaceMandatoryPathHazard): una placa naranja, distinta del rojo de la
+        // sala de trampas opcional -- "esto tambien es peligroso, pero no lo podes evitar del todo".
+        private void BuildMandatoryHazardMarker(Vector3 center, float cellSize)
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = "MandatoryHazardMarker";
+            go.transform.SetParent(_root.transform, false);
+            go.transform.position = center + new Vector3(0, 0.03f, 0);
+            go.transform.localScale = new Vector3(cellSize * 0.85f, 0.05f, cellSize * 0.85f);
+
+            var col = go.GetComponent<Collider>();
+            if (col != null) Destroy(col);
+
+            ApplyMaterial(go, trapMarkerMaterial, new Color(0.85f, 0.45f, 0.05f));
+        }
+
+        // Celda de una sala de pistas (ver DungeonGenerator.AddLoreCorridorRoom): NUNCA un color
+        // de marcador (eso seria delatar la respuesta) -- solo un sistema de particulas chico,
+        // propio de cada celda, cuyo COMPORTAMIENTO distingue piso real de piso falso. Las 3
+        // variantes (PuzzleKind) comparten la misma idea (algo cae/se posa sobre lo real, y sigue
+        // de largo o se hunde en lo falso) con distinta ambientacion.
+        private void BuildPuzzleTile(Vector3 center, float cellSize, bool isSafe, PuzzleKind kind)
+        {
+            var go = new GameObject($"PuzzleTile_{kind}_{(isSafe ? "real" : "falso")}");
+            go.transform.SetParent(_root.transform, false);
+            go.transform.position = center + new Vector3(0, cellSize * 1.6f, 0);
+
+            var ps = go.AddComponent<ParticleSystem>();
+            var main = ps.main;
+            main.loop = true;
+            main.startLifetime = isSafe ? 0.9f : 1.6f;
+            main.startSpeed = 0f;
+            main.startSize = cellSize * 0.05f;
+            main.gravityModifier = isSafe ? 1.1f : 0.35f; // lo falso "flota" de mas, tarda en desaparecer en vez de splashear
+            main.maxParticles = 8;
+
+            Color color = kind switch
+            {
+                PuzzleKind.Brasas => new Color(1f, 0.5f, 0.15f),
+                PuzzleKind.PolvoDeCuarzo => new Color(0.55f, 0.85f, 1f),
+                _ => new Color(0.5f, 0.75f, 1f), // Goteras
+            };
+            main.startColor = isSafe ? color : new Color(color.r, color.g, color.b, 0.35f);
+
+            var emission = ps.emission;
+            emission.rateOverTime = isSafe ? 2.5f : 1.2f;
+
+            var shape = ps.shape;
+            shape.shapeType = ParticleSystemShapeType.Circle;
+            shape.radius = cellSize * 0.3f;
+            shape.rotation = new Vector3(90f, 0f, 0f);
+
+            // Lo real frena en seco al "tocar el piso" (splash/asentado); lo falso sigue cayendo
+            // de largo sin frenar -- el unico tell real de toda la sala.
+            if (isSafe)
+            {
+                var limiter = ps.limitVelocityOverLifetime;
+                limiter.enabled = true;
+                limiter.dampen = 0.9f;
+                limiter.limit = new ParticleSystem.MinMaxCurve(0.05f);
             }
         }
 
@@ -261,7 +327,16 @@ namespace Gameplay
                 case CellType.StairsDown: color = new Color(1f, 0.5f, 0f); mat = stairsDownMaterial; shape = PrimitiveType.Cube; break;
                 case CellType.Event: color = Color.white; mat = eventMarkerMaterial; shape = PrimitiveType.Cylinder; break;
                 case CellType.Boss: color = new Color(0.7f, 0f, 0.05f); mat = bossMarkerMaterial; shape = PrimitiveType.Capsule; scale = cellSize * 0.55f; break;
-                case CellType.Lore: color = new Color(0.75f, 0.35f, 1f); mat = loreMarkerMaterial; shape = PrimitiveType.Sphere; scale = cellSize * 0.3f; break;
+                case CellType.Lore:
+                    // Las 3 pistas de la Puerta Fria (ver DungeonGenerator.BiomeGateLoreIds) se ven
+                    // distintas -- dorado en vez de violeta, y mas grandes -- para que se lean como
+                    // mecanicamente importantes apenas aparecen en pantalla, no solo sabor.
+                    bool isMysteryClue = System.Array.IndexOf(DungeonGenerator.BiomeGateLoreIds, cell.AssignedLoreId) >= 0;
+                    color = isMysteryClue ? new Color(1f, 0.82f, 0.25f) : new Color(0.75f, 0.35f, 1f);
+                    mat = loreMarkerMaterial;
+                    shape = PrimitiveType.Sphere;
+                    scale = isMysteryClue ? cellSize * 0.42f : cellSize * 0.3f;
+                    break;
                 case CellType.LockedDoor: color = new Color(0.55f, 0.1f, 0.1f); mat = lockedDoorMarkerMaterial; shape = PrimitiveType.Cube; scale = cellSize * 0.5f; break;
                 case CellType.Lever: color = new Color(0.15f, 0.9f, 0.35f); mat = leverMarkerMaterial; shape = PrimitiveType.Cylinder; scale = cellSize * 0.3f; break;
                 case CellType.Treasure: color = new Color(1f, 0.82f, 0.1f); mat = treasureMarkerMaterial; shape = PrimitiveType.Cube; scale = cellSize * 0.35f; break;

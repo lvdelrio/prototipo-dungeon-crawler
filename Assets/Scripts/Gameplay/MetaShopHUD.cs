@@ -221,6 +221,39 @@ namespace Gameplay
                 hintStyle);
             y += 44;
 
+            GUI.Label(new Rect(x, y, listW, 20), "Ítems de combate (se usan en pelea o desde el menú de pausa):");
+            y += 26;
+            if (UIButton.Draw(new Rect(x, y, itemW, 32), $"Comprar Poción ({meta.PotionCharges}) - {MetaProgress.PotionCost}p", enabled: meta.BankedPoints >= MetaProgress.PotionCost))
+            {
+                meta.TryPurchasePotion();
+                MetaSaveService.Save(meta);
+            }
+            if (UIButton.Draw(new Rect(x + itemW + 8f, y, itemW, 32), $"Comprar Revivir ({meta.ReviverCharges}) - {MetaProgress.ReviverCost}p", enabled: meta.BankedPoints >= MetaProgress.ReviverCost))
+            {
+                meta.TryPurchaseReviver();
+                MetaSaveService.Save(meta);
+            }
+            y += 42;
+
+            GUI.Label(new Rect(x, y, listW, 20), $"Balas para el Gunner ({MetaProgress.BulletBundleAmount} por compra, solo si tenés uno en la party):");
+            y += 26;
+            if (UIButton.Draw(new Rect(x, y, itemW, 32), $"Fuego (+{meta.BonusFireBullets}) - {MetaProgress.BulletBundleCost}p", enabled: meta.BankedPoints >= MetaProgress.BulletBundleCost))
+            {
+                meta.TryPurchaseBullets(Element.Fire);
+                MetaSaveService.Save(meta);
+            }
+            if (UIButton.Draw(new Rect(x + itemW + 8f, y, itemW, 32), $"Hielo (+{meta.BonusIceBullets}) - {MetaProgress.BulletBundleCost}p", enabled: meta.BankedPoints >= MetaProgress.BulletBundleCost))
+            {
+                meta.TryPurchaseBullets(Element.Ice);
+                MetaSaveService.Save(meta);
+            }
+            if (UIButton.Draw(new Rect(x + (itemW + 8f) * 2f, y, itemW, 32), $"Rayo (+{meta.BonusVoltBullets}) - {MetaProgress.BulletBundleCost}p", enabled: meta.BankedPoints >= MetaProgress.BulletBundleCost))
+            {
+                meta.TryPurchaseBullets(Element.Volt);
+                MetaSaveService.Save(meta);
+            }
+            y += 42;
+
             GUI.Label(new Rect(x, y, listW, 20), "Accesorios (se equipan luego desde el menú de pausa, tecla I):");
             y += 26;
             foreach (var item in EquipmentCatalog.All)

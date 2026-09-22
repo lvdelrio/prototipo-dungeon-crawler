@@ -116,14 +116,45 @@ namespace Gameplay
         // Crea una party nueva con las stats base y le aplica los niveles de mejora permanentes
         // comprados en runs anteriores. La llama DungeonManager al arrancar y cada vez que empieza
         // una run nueva (tras la pantalla de tienda/mejoras post-derrota).
+        // Guardado para SubmitItemAction (validar/descontar cargas de Pocion/Revivir): a
+        // diferencia del TP (que vive en CharacterStats, dentro del motor puro), las cargas de
+        // items son un recurso de META, comprado en la tienda y persistido entre runs.
+        private MetaProgress _meta;
+
         public void InitializeParty(MetaProgress meta)
         {
+            _meta = meta;
             // meta.PartyClasses vacio = guardado viejo o todavia no se eligio nunca una party propia
             // (ver PartyCreationHUD) -- cae de vuelta a la composicion clasica de siempre.
             Party = meta.PartyClasses != null && meta.PartyClasses.Count > 0
                 ? PartyFactory.CreateParty(meta.PartyClasses)
                 : PartyFactory.CreateDefaultParty();
             meta.ApplyUpgradesToParty(Party);
+        }
+
+        public int PotionCharges => _meta?.PotionCharges ?? 0;
+        public int ReviverCharges => _meta?.ReviverCharges ?? 0;
+
+        // Boton "Items": a diferencia de SubmitAction (que solo encola), esto ADEMAS valida y
+        // descuenta la carga correspondiente en MetaProgress -- si no hay ninguna, no hace nada
+        // (la UI no deberia dejar llegar a este caso, pero por las dudas no corrompe nada).
+        public void SubmitItemAction(CharacterStats actor, ItemActionKind kind, int targetAllyIndex)
+        {
+            if (!IsActive || IsResolvingRound || _meta == null) return;
+
+            if (kind == ItemActionKind.Potion)
+            {
+                if (_meta.PotionCharges <= 0) return;
+                _meta.PotionCharges--;
+            }
+            else if (kind == ItemActionKind.Reviver)
+            {
+                if (_meta.ReviverCharges <= 0) return;
+                _meta.ReviverCharges--;
+            }
+            MetaSaveService.Save(_meta);
+
+            SubmitAction(new PartyAction { Actor = actor, Type = ActionType.Item, ItemKind = kind, TargetAllyIndex = targetAllyIndex });
         }
 
         // floorIndex (0 = primer piso): escala dificultad -- daño de enemigos y que tan probable es
@@ -322,6 +353,24 @@ namespace Gameplay
             return healed;
         }
 
+        // Pocion fuera de combate (menu de pausa): misma cuenta que ActionType.Item/Potion en
+        // combate (CombatEngine.PotionHealAmount), pero descontando la carga directo aca en vez de
+        // pasar por SubmitItemAction (no hay ronda/turno fuera de combate). Devuelve cuanto se
+        // curo de verdad (0 si no se pudo: sin cargas, objetivo caido, o HP ya lleno).
+        public int UsePotionOutOfCombat(MetaProgress meta, CharacterStats target)
+        {
+            if (!CanChangeFormation || meta == null || target == null) return 0;
+            if (meta.PotionCharges <= 0 || !target.IsAlive) return 0;
+
+            int healed = Math.Max(0, Math.Min(target.MaxHP - target.HP, CombatEngine.PotionHealAmount));
+            if (healed <= 0) return 0;
+
+            meta.PotionCharges--;
+            MetaSaveService.Save(meta);
+            target.HP += healed;
+            return healed;
+        }
+
         public void SetFrontRow(CharacterStats target, bool front)
         {
             if (!CanChangeFormation || target == null || target.IsFrontRow == front) return;
@@ -366,6 +415,14 @@ namespace Gameplay
             character.Speed += dSpd;
             character.MaxHP += dHp;
             character.HP = Mathf.Clamp(character.HP + dHp, 1, character.MaxHP);
+
+            // Estos no son deltas (solo un accesorio a la vez, nunca se suman): se pisan directo
+            // con lo que traiga el nuevo item, o quedan en nada si se desequipo.
+            character.OnHitStatusName = newItem?.OnHitStatusName;
+            character.OnHitStatusChancePercent = newItem?.OnHitStatusChancePercent ?? 0;
+            character.OnHitStatusDamagePercent = newItem?.OnHitStatusDamagePercent ?? 0;
+            character.OnHitStatusRounds = newItem?.OnHitStatusRounds ?? 0;
+            character.ThornsReflectPercent = newItem?.ThornsReflectPercent ?? 0;
         }
 
         private void AdvanceChooser()

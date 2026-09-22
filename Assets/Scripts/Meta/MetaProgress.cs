@@ -17,6 +17,21 @@ namespace Meta
         // peligro que acumulan los pasos durante un tramo de exploracion, asi tardas mas en
         // toparte con un encuentro -- util para cruzar rapido un piso sin pelear tanto.
         public int IncenseCharges;
+
+        // Items de combate (ver Combat.ActionType.Item / Gameplay.CombatManager.SubmitItemAction):
+        // Pocion cura un flat de HP, Revivir devuelve a un caido. Usables tanto en combate como
+        // desde el menu de pausa (ver PauseMenuHUD.DrawSkillActorPicker / CombatManager.
+        // UsePotionOutOfCombat).
+        public int PotionCharges;
+        public int ReviverCharges;
+
+        // Balas elementales extra para el Gunner (ver Combat.CharacterStats.FireBullets/etc.):
+        // se SUMAN a las 5 de cada tipo con las que ya arranca (ver PartyFactory), aplicadas en
+        // ApplyUpgradesToParty. No hacen nada si la party actual no tiene un Gunner.
+        public int BonusFireBullets;
+        public int BonusIceBullets;
+        public int BonusVoltBullets;
+
         public List<CharacterUpgrade> Upgrades = new List<CharacterUpgrade>();
 
         // Las 6 clases elegidas en la pantalla de creacion de party de la partida actual (ver
@@ -44,6 +59,10 @@ namespace Meta
         public const int MapCost = 30;
         public const int DrillCost = 40;
         public const int IncenseCost = 35;
+        public const int PotionCost = 20;
+        public const int ReviverCost = 60;
+        public const int BulletBundleCost = 15; // +3 balas de UN elemento a elegir, ver TryPurchaseBullets
+        public const int BulletBundleAmount = 3;
 
         private const int PerLevelAttack = 1;
         private const int PerLevelDefense = 1;
@@ -125,6 +144,35 @@ namespace Meta
             return true;
         }
 
+        public bool TryPurchasePotion()
+        {
+            if (BankedPoints < PotionCost) return false;
+            BankedPoints -= PotionCost;
+            PotionCharges++;
+            return true;
+        }
+
+        public bool TryPurchaseReviver()
+        {
+            if (BankedPoints < ReviverCost) return false;
+            BankedPoints -= ReviverCost;
+            ReviverCharges++;
+            return true;
+        }
+
+        // element: cual de las 3 bolsas de balas comprar (Fire/Ice/Volt) -- cualquier otro valor no hace nada.
+        public bool TryPurchaseBullets(Element element)
+        {
+            if (BankedPoints < BulletBundleCost) return false;
+            if (element != Element.Fire && element != Element.Ice && element != Element.Volt) return false;
+
+            BankedPoints -= BulletBundleCost;
+            if (element == Element.Fire) BonusFireBullets += BulletBundleAmount;
+            else if (element == Element.Ice) BonusIceBullets += BulletBundleAmount;
+            else BonusVoltBullets += BulletBundleAmount;
+            return true;
+        }
+
         public bool OwnsItem(string itemId) => !string.IsNullOrEmpty(itemId) && OwnedItemIds.Contains(itemId);
 
         public bool TryPurchaseItem(string itemId)
@@ -190,7 +238,18 @@ namespace Meta
                     character.Defense += item.DefenseBonus;
                     character.Speed += item.SpeedBonus;
                     character.MaxHP += item.MaxHpBonus;
+                    character.OnHitStatusName = item.OnHitStatusName;
+                    character.OnHitStatusChancePercent = item.OnHitStatusChancePercent;
+                    character.OnHitStatusDamagePercent = item.OnHitStatusDamagePercent;
+                    character.OnHitStatusRounds = item.OnHitStatusRounds;
+                    character.ThornsReflectPercent = item.ThornsReflectPercent;
                 }
+
+                // Balas extra compradas (ver TryPurchaseBullets): no hacen nada si este personaje
+                // no es Gunner (los demas ni miran estos campos), asi que sumarlas siempre es seguro.
+                character.FireBullets += BonusFireBullets;
+                character.IceBullets += BonusIceBullets;
+                character.VoltBullets += BonusVoltBullets;
 
                 character.HP = character.MaxHP;
                 character.TP = character.MaxTP;

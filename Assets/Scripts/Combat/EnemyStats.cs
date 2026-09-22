@@ -49,6 +49,15 @@ namespace Combat
         public int DefenseDebuffRoundsLeft;
         public int EffectiveDefense => Math.Max(0, Defense - DefenseDebuffAmount);
 
+        // Dano sostenido (veneno o sangrado -- mismo mecanismo estandarizado para los dos, ver
+        // Combat/EquipmentItem.OnHitStatusName, solo cambia el nombre que se muestra en el log):
+        // lo aplica un arma equipada con chance al conectar un golpe (ver
+        // CombatEngine.ApplyDamageToEnemy). Tickea DamagePerRound cada ronda nueva
+        // (CombatEngine.BuildTurnOrder) hasta que RoundsLeft llega a 0.
+        public int DotRoundsLeft;
+        public int DotDamagePerRound;
+        public string DotLabel;
+
         // Si no es null, la PRIMERA vez que este enemigo muere se lo reemplaza (ademas de quedar
         // "derrotado" el mismo) por los enemigos que devuelva esta funcion (p.ej. un Slime grande
         // se divide en 2 Slime chicos). Se limpia despues de usarse una vez, para que los

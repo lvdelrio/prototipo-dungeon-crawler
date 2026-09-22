@@ -18,6 +18,7 @@ namespace Gameplay
         public CombatManager combat;
 
         private const int TreasurePointsReward = 25;
+        private static readonly string[] TreasureWeaponIds = { "daga_venenosa", "hacha_desgarradora", "escudo_espinas" };
         // Fraccion del HP maximo que una trampa (ver DungeonGenerator.AddTrapRoom) le saca a CADA
         // integrante vivo cuando se activa. Ya no hay probabilidad de por medio: SpikeCells duele
         // apenas se pisa, y ArrowSweep dispara una flecha real (ver TrapDisparadorController) que
@@ -304,6 +305,20 @@ namespace Gameplay
                     ApplyTrapDamage("¡Pisaste una trampa de picos!");
             }
 
+            // Casilla obligatoria del camino critico (ver DungeonGenerator.PlaceMandatoryPathHazard):
+            // duele una sola vez (EventConsumed), no en cada backtrack por el mismo pasillo.
+            if (cell.IsMandatoryHazard && !cell.EventConsumed && !IsCombatActive)
+            {
+                cell.EventConsumed = true;
+                ApplyTrapDamage("¡Una trampa te alcanza en pleno camino!");
+            }
+
+            // Sala de pistas (ver DungeonGenerator.AddLoreCorridorRoom): pisar una celda de la
+            // grilla que NO es piso real duele igual que una trampa de picos -- el tell (ver
+            // DungeonLevelBuilder.BuildPuzzleTile) es lo unico que te avisa antes de pisar.
+            if (cell.IsPuzzleTile && !cell.IsPuzzleTileSafe && !IsCombatActive)
+                ApplyTrapDamage("¡El piso cede bajo tus pies!");
+
             string message = null;
             switch (cell.Type)
             {
@@ -392,6 +407,47 @@ namespace Gameplay
                     break;
             }
             if (message != null && hud != null) hud.SetLastMessage(message);
+        }
+
+        // Cofre garantizado (3 a 5 por piso, ver DungeonGenerator.EnsureTreasure): 50% plata, 30%
+        // un arma con habilidad (veneno/sangrado/espinas -- si ya la tenes, plata equivalente en
+        // vez de un duplicado inutil), 20% herramienta (un accesorio utilitario, o si ya lo tenes,
+        // una carga extra de exploracion al azar).
+        private string RollTreasureLoot()
+        {
+            float roll = Random.value;
+            if (roll < 0.5f)
+            {
+                _meta.BankedPoints += TreasurePointsReward;
+                return $"¡Encontraste un cofre! +{TreasurePointsReward} puntos.";
+            }
+
+            if (roll < 0.8f)
+            {
+                string weaponId = TreasureWeaponIds[Random.Range(0, TreasureWeaponIds.Length)];
+                var weapon = EquipmentCatalog.Find(weaponId);
+                if (_meta.OwnsItem(weaponId))
+                {
+                    _meta.BankedPoints += weapon.Cost;
+                    return $"¡Encontraste un cofre! Ya tenías {weapon.Name} -- +{weapon.Cost} puntos en su lugar.";
+                }
+                _meta.OwnedItemIds.Add(weaponId);
+                return $"¡Encontraste {weapon.Name}! {weapon.Description} (equipala desde el menú de pausa).";
+            }
+
+            const string toolId = "guantes_del_explorador";
+            if (!_meta.OwnsItem(toolId))
+            {
+                _meta.OwnedItemIds.Add(toolId);
+                var tool = EquipmentCatalog.Find(toolId);
+                return $"¡Encontraste {tool.Name}! {tool.Description}";
+            }
+
+            int roll2 = Random.Range(0, 3);
+            if (roll2 == 0) { _meta.MapCharges++; return "¡Encontraste un cofre! +1 carga de Mapa."; }
+            if (roll2 == 1) { _meta.DrillCharges++; return "¡Encontraste un cofre! +1 carga de Perforador."; }
+            _meta.IncenseCharges++;
+            return "¡Encontraste un cofre! +1 carga de Incienso.";
         }
 
         private bool IsGateOpen(DungeonCell cell) =>
@@ -679,14 +735,9 @@ namespace Gameplay
                     return;
                 }
                 cell.EventConsumed = true;
-                _meta.BankedPoints += TreasurePointsReward;
-                // El cofre garantizado de cada piso (ver DungeonGenerator.EnsureTreasure) siempre
-                // suma ademas una carga de Perforador utilizable YA en esta run (no solo puntos
-                // para gastar despues en la tienda): facilita la exploracion del resto del piso
-                // dandole al jugador una forma de cortar camino justo cuando mas lo puede aprovechar.
-                _meta.DrillCharges++;
+                string lootMessage = RollTreasureLoot();
                 MetaSaveService.Save(_meta);
-                if (hud != null) hud.SetLastMessage($"¡Encontraste un cofre! +{TreasurePointsReward} puntos y +1 carga de Perforador.");
+                if (hud != null) hud.SetLastMessage(lootMessage);
             }
             else if (cell.Type == CellType.LockedDoor)
             {

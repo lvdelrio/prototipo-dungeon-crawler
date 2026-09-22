@@ -13,6 +13,7 @@ namespace DungeonGen
             log = new List<string>();
             var rng = new Random(seed);
             var floors = new List<DungeonFloor>();
+            int[] loreCorridorFloors = PickLoreCorridorFloors(floorCount);
 
             for (int i = 0; i < floorCount; i++)
             {
@@ -52,20 +53,35 @@ namespace DungeonGen
                 // los pilares de pacing arriba.
                 bool treasureAdded = EnsureTreasure(floor, rng);
                 log.Add(treasureAdded
-                    ? $"Piso {i}: cofre en {floor.TreasurePos}."
-                    : $"Piso {i}: sin punto muerto libre para el cofre (mapa demasiado chico/denso).");
+                    ? $"Piso {i}: {floor.TreasurePositions.Count} cofre(s) en {string.Join(", ", floor.TreasurePositions)}."
+                    : $"Piso {i}: sin punto muerto libre para ningun cofre (mapa demasiado chico/denso).");
 
-                // La Puerta Fria (ver PlaceBiomeGate) y sus 3 pistas de lore solo existen en el
-                // piso 0 -- es la entrada escondida al Bioma 2 (ver
-                // Gameplay/DungeonManager.GenerateBiomeGateFloor).
+                // La Puerta Fria (ver PlaceBiomeGate) solo existe en el piso 0 -- es la entrada
+                // escondida al Bioma 2 (ver Gameplay/DungeonManager.GenerateBiomeGateFloor). Sus 3
+                // pistas YA NO estan ahi: viven repartidas en pisos fijos (ver
+                // PickLoreCorridorFloors), cada una en su propia sala de pistas.
                 if (i == 0)
                 {
                     bool gateAdded = PlaceBiomeGate(floor, rng);
                     log.Add(gateAdded
                         ? $"Piso {i}: Puerta Fria sellada en {floor.BiomeGatePos} (perforable desde {floor.BiomeGateApproachPos})."
                         : $"Piso {i}: sin punto muerto libre para la Puerta Fria (mapa demasiado chico/denso).");
-                    PlaceBiomeGateClues(floor, rng);
                 }
+
+                for (int lc = 0; lc < loreCorridorFloors.Length; lc++)
+                {
+                    if (loreCorridorFloors[lc] != i) continue;
+                    bool corridorAdded = AddLoreCorridorRoom(floor, rng, BiomeGateLoreIds[lc], (PuzzleKind)(lc % 3));
+                    log.Add(corridorAdded
+                        ? $"Piso {i}: sala de pistas ({floor.LoreCorridorKind}) con {BiomeGateLoreIds[lc]}."
+                        : $"Piso {i}: no se pudo colocar la sala de pistas de {BiomeGateLoreIds[lc]} (mapa demasiado chico/denso).");
+                }
+
+                // Casilla especial GARANTIZADA en el camino critico Start->End: a diferencia de la
+                // sala de trampas de arriba (opcional, fuera del camino), esta hace que CUALQUIER
+                // recorrido normal del piso se tope con un peligro real, sin poder evitarlo del todo.
+                bool hazardAdded = PlaceMandatoryPathHazard(floor, rng);
+                log.Add(hazardAdded ? $"Piso {i}: casilla peligrosa obligatoria en el camino critico." : $"Piso {i}: camino critico muy corto, sin casilla obligatoria.");
 
                 PlaceFoeRoute(floor, rng);
                 log.Add(floor.HasFoe
@@ -469,6 +485,8 @@ namespace DungeonGen
                 foreach (var c in floor.BossRoomCells) protectedCells.Add(c);
             if (floor.HasTrapRoom)
                 foreach (var c in floor.TrapRoomCells) protectedCells.Add(c);
+            if (floor.HasLoreCorridor)
+                foreach (var c in floor.LoreCorridorRoomCells) protectedCells.Add(c);
             foreach (var gate in floor.Gates)
             {
                 protectedCells.Add((gate.SwitchX, gate.SwitchY));
@@ -886,7 +904,8 @@ namespace DungeonGen
             var list = new List<(int, int)>();
             for (int x = 0; x < floor.Width; x++)
                 for (int y = 0; y < floor.Height; y++)
-                    if (floor.Cells[x, y].Type == CellType.Normal && !floor.Cells[x, y].IsBossRoom && !floor.Cells[x, y].IsTreasureRoom && !floor.Cells[x, y].IsTrapRoom)
+                    if (floor.Cells[x, y].Type == CellType.Normal && !floor.Cells[x, y].IsBossRoom && !floor.Cells[x, y].IsTreasureRoom
+                        && !floor.Cells[x, y].IsTrapRoom && !floor.Cells[x, y].IsPuzzleTile && !floor.Cells[x, y].IsMandatoryHazard)
                         list.Add((x, y));
             return list;
         }
@@ -1070,16 +1089,14 @@ namespace DungeonGen
             return true;
         }
 
-        // Cofre GARANTIZADO por piso: PlacePacingPillars de arriba solo pone uno si el candado se
-        // pudo colocar Y sobraba otro punto muerto libre despues de reservar el suyo -- en la
-        // practica bastantes pisos (camino corto, mapa chico) se quedaban sin ninguno. Este metodo
-        // se llama SIEMPRE despues (ver GenerateDungeon) y no hace nada si ya hay uno; si no, busca
-        // cualquier otro punto muerto libre del piso completo (sin restringir a "antes/despues de
-        // la puerta" como el otro) y pone el cofre ahi. Solo puede fallar si el piso no tiene NINGUN
-        // punto muerto libre, algo muy raro salvo mapas degenerados.
+        // 3 a 5 cofres GARANTIZADOS por piso (segun cuanto espacio libre real haya), cada uno en su
+        // propio punto muerto -- el contenido de cada uno (plata, arma con habilidad, herramienta)
+        // se resuelve recien al abrirlo (ver Gameplay/DungeonManager.RollTreasureLoot), aca solo se
+        // elige DONDE quedan. Solo puede devolver menos de 3 (incluso 0) en mapas muy chicos/densos
+        // sin suficientes puntos muertos libres.
         private bool EnsureTreasure(DungeonFloor floor, Random rng)
         {
-            if (floor.TreasurePos.HasValue) return true;
+            if (floor.TreasurePositions != null && floor.TreasurePositions.Count > 0) return true;
 
             var used = new HashSet<(int, int)> { floor.StartPos, floor.EndPos, floor.SecondaryQuestPos };
             foreach (var door in floor.LockedDoors)
@@ -1093,22 +1110,26 @@ namespace DungeonGen
                 used.Add((gate.LandingX, gate.LandingY));
             }
 
-            var candidates = FindLeavesWithin(floor, null, used);
-            if (candidates.Count == 0) return false;
+            int desired = rng.Next(3, 6);
+            floor.TreasurePositions = new List<(int, int)>();
+            floor.TreasureRoomCells = new List<(int, int)>();
 
-            Shuffle(candidates, rng);
-            var pos = candidates[0];
+            for (int i = 0; i < desired; i++)
+            {
+                var candidates = FindLeavesWithin(floor, null, used);
+                if (candidates.Count == 0) break;
 
-            // Intento (best-effort) de agrandar el cofre a un cuadrante 2x2, mas notorio que una
-            // sola celda; si no hay forma segura de hacerlo, TryGrowTreasureRoom no toca nada y se
-            // sigue con el cofre de 1 sola celda de siempre.
-            TryGrowTreasureRoom(floor, pos, used, rng);
+                Shuffle(candidates, rng);
+                var pos = candidates[0];
+                floor.Cells[pos.x, pos.y].Type = CellType.Treasure;
+                floor.Cells[pos.x, pos.y].IsTreasureRoom = true;
+                floor.TreasurePositions.Add(pos);
+                floor.TreasureRoomCells.Add(pos);
+                used.Add(pos);
+            }
 
-            floor.Cells[pos.x, pos.y].Type = CellType.Treasure;
-            floor.Cells[pos.x, pos.y].IsTreasureRoom = true;
-            floor.TreasurePos = pos;
-            if (floor.TreasureRoomCells == null) floor.TreasureRoomCells = new List<(int, int)> { pos };
-            return true;
+            if (floor.TreasurePositions.Count > 0) floor.TreasurePos = floor.TreasurePositions[0];
+            return floor.TreasurePositions.Count > 0;
         }
 
         // ---------- Puerta Fria (entrada escondida al Bioma 2) ----------
@@ -1167,24 +1188,160 @@ namespace DungeonGen
         // buscar, señalar CON QUE herramienta -- para que juntos, y solo juntos, le digan al
         // jugador como encontrar y abrir la Puerta Fria sin nunca ser obligatorios de verdad.
         // Publico (no privado como el resto de estos arrays de apoyo) para que
-        // Gameplay/DungeonManager.BuildLorePool pueda excluir estos 3 IDs del pool general de
-        // lore por piso -- son de colocacion garantizada y fija en el piso 0, nunca deberian
-        // terminar sueltos en otro piso cualquiera atados a un atajo random.
+        // Gameplay/DungeonManager.BuildLorePool y PauseMenuHUD puedan reconocer estos 3 IDs (para
+        // excluirlos del pool general de lore por piso, y para pintarlos distinto en el Codex).
         public static readonly string[] BiomeGateLoreIds = { "puerta_fria_1", "puerta_fria_2", "puerta_fria_3" };
 
-        private void PlaceBiomeGateClues(DungeonFloor floor, Random rng)
+        // En que pisos van las 3 salas de pistas: repartidas a ~25%/50%/75% del recorrido, nunca
+        // el piso 0 si se puede evitar (floorCount > 1). En mazmorras muy cortas puede haber
+        // repetidos -- en ese caso simplemente compiten por espacio en el mismo piso (alguna puede
+        // no entrar, ver el log de AddLoreCorridorRoom).
+        private int[] PickLoreCorridorFloors(int floorCount)
         {
-            var candidates = FreeNormalCells(floor).Where(c => !floor.IsInIsolatedZone(c.Item1, c.Item2)).ToList();
-            Shuffle(candidates, rng);
+            if (floorCount <= 1) return new[] { 0, 0, 0 };
+            var picks = new int[3];
+            int[] fractions = { 1, 2, 3 };
+            for (int f = 0; f < 3; f++)
+                picks[f] = Math.Max(1, Math.Min(floorCount - 1, floorCount * fractions[f] / 4));
+            return picks;
+        }
 
-            for (int i = 0; i < BiomeGateLoreIds.Length && i < candidates.Count; i++)
+        private IEnumerable<(int x, int y)> RectCells(int rx, int ry, int rw, int rh)
+        {
+            for (int x = rx; x < rx + rw; x++)
+                for (int y = ry; y < ry + rh; y++)
+                    yield return (x, y);
+        }
+
+        // BFS restringido a `set`: true si se puede llegar de `from` a `to` pasando SOLO por
+        // celdas de `set` (4-conectado). Usado para garantizar que el patron al azar de
+        // seguras/inseguras de una sala de pistas realmente tenga un camino resolvible.
+        private bool IsConnectedWithinSet((int x, int y) from, (int x, int y) to, HashSet<(int, int)> set)
+        {
+            var visited = new HashSet<(int, int)> { from };
+            var queue = new Queue<(int, int)>();
+            queue.Enqueue(from);
+            while (queue.Count > 0)
             {
-                var (x, y) = candidates[i];
-                var cell = floor.Cells[x, y];
-                cell.Type = CellType.Lore;
-                cell.AssignedLoreId = BiomeGateLoreIds[i];
-                cell.DangerValue = 0;
+                var (cx, cy) = queue.Dequeue();
+                if ((cx, cy) == to) return true;
+                foreach (var dir in DirectionExtensions.All)
+                {
+                    var (ox, oy) = dir.Offset();
+                    var next = (cx + ox, cy + oy);
+                    if (!set.Contains(next) || visited.Contains(next)) continue;
+                    visited.Add(next);
+                    queue.Enqueue(next);
+                }
             }
+            return false;
+        }
+
+        // Sala de pistas (ver DungeonFloor.LoreCorridorKind / Gameplay/DungeonLevelBuilder.
+        // BuildPuzzleTile): fusiona un rectangulo grande en una sola sala (mismo patron que
+        // AddBossRoom/AddTrapRoom). El ANILLO exterior siempre es piso real (para que no importa
+        // por donde entres, arrancas en terreno seguro); el INTERIOR es una grilla al azar de
+        // piso real/falso, solo distinguible por un tell de particulas -- nunca por color de
+        // marcador como una trampa comun. El fragmento de lore queda en el centro del interior, Y
+        // SIEMPRE hay un camino de piso real desde el anillo hasta el (se reintenta el patron
+        // random hasta 20 veces antes de descartar la ubicacion entera).
+        private bool AddLoreCorridorRoom(DungeonFloor floor, Random rng, string loreId, PuzzleKind kind)
+        {
+            int minSide = 4, maxSide = 6;
+            if (Math.Min(floor.Width, floor.Height) - 1 < minSide) return false;
+
+            for (int attempt = 0; attempt < 40; attempt++)
+            {
+                int rw = rng.Next(minSide, maxSide + 1);
+                int rh = rng.Next(minSide, maxSide + 1);
+                if (rw > floor.Width || rh > floor.Height) continue;
+
+                int rx = rng.Next(0, floor.Width - rw + 1);
+                int ry = rng.Next(0, floor.Height - rh + 1);
+
+                if (RectOverlapsIsolatedZone(floor, rx, ry, rw, rh)) continue;
+                if (RectOverlapsSpecialCells(floor, rx, ry, rw, rh)) continue;
+
+                bool blocked = false;
+                for (int x = rx; x < rx + rw && !blocked; x++)
+                    for (int y = ry; y < ry + rh; y++)
+                        if (floor.Cells[x, y].IsBossRoom || floor.Cells[x, y].IsTrapRoom || floor.Cells[x, y].IsTreasureRoom || floor.Cells[x, y].IsPuzzleTile)
+                        { blocked = true; break; }
+                if (blocked) continue;
+
+                var cells = RectCells(rx, ry, rw, rh).ToList();
+                var ring = cells.Where(c => c.x == rx || c.x == rx + rw - 1 || c.y == ry || c.y == ry + rh - 1).ToList();
+                var interior = cells.Except(ring).ToList();
+                if (interior.Count == 0) continue;
+
+                var loreCell = interior[interior.Count / 2];
+
+                bool solved = false;
+                HashSet<(int, int)> safeSet = null;
+                for (int patternAttempt = 0; patternAttempt < 20 && !solved; patternAttempt++)
+                {
+                    safeSet = new HashSet<(int, int)>(ring) { loreCell };
+                    foreach (var c in interior)
+                        if (c != loreCell && rng.NextDouble() >= 0.45)
+                            safeSet.Add(c);
+                    solved = IsConnectedWithinSet(ring[0], loreCell, safeSet);
+                }
+                if (!solved) continue;
+
+                foreach (var (x, y) in cells)
+                {
+                    var cell = floor.Cells[x, y];
+                    foreach (var dir in DirectionExtensions.All)
+                    {
+                        var (ox, oy) = dir.Offset();
+                        int nx = x + ox, ny = y + oy;
+                        if (nx >= rx && nx < rx + rw && ny >= ry && ny < ry + rh)
+                            cell.SetWall(dir, false);
+                    }
+                    cell.IsPuzzleTile = true;
+                    cell.IsPuzzleTileSafe = safeSet.Contains((x, y));
+                }
+
+                floor.Cells[loreCell.x, loreCell.y].Type = CellType.Lore;
+                floor.Cells[loreCell.x, loreCell.y].AssignedLoreId = loreId;
+                floor.Cells[loreCell.x, loreCell.y].DangerValue = 0;
+
+                floor.LoreCorridorRoomCells = cells;
+                floor.LoreCorridorKind = kind;
+                return true;
+            }
+            return false;
+        }
+
+        // Casilla especial GARANTIZADA en el camino critico Start->End (a diferencia de la sala de
+        // trampas, opcional y fuera del camino): el jugador SI O SI se topa con un peligro real
+        // solo por jugar el piso normal. Duele una sola vez (EventConsumed marca "ya la
+        // cruzaste"), para que cruzar de ida y vuelta el mismo pasillo no sea un castigo infinito.
+        private bool PlaceMandatoryPathHazard(DungeonFloor floor, Random rng)
+        {
+            var path = FindPath(floor, floor.StartPos, floor.EndPos);
+            const int margin = 1;
+            if (path.Count < margin * 2 + 2) return false;
+
+            var used = new HashSet<(int, int)> { floor.StartPos, floor.EndPos, floor.SecondaryQuestPos };
+            if (floor.TreasureRoomCells != null) foreach (var c in floor.TreasureRoomCells) used.Add(c);
+            foreach (var door in floor.LockedDoors) { used.Add((door.DoorX, door.DoorY)); used.Add((door.LeverX, door.LeverY)); }
+            foreach (var gate in floor.Gates) { used.Add((gate.SwitchX, gate.SwitchY)); used.Add((gate.LandingX, gate.LandingY)); }
+
+            var candidates = new List<(int, int)>();
+            for (int i = margin; i < path.Count - margin; i++)
+            {
+                var (px, py) = path[i];
+                if (used.Contains(path[i])) continue;
+                var cell = floor.Cells[px, py];
+                if (cell.Type != CellType.Normal || cell.IsBossRoom || cell.IsTrapRoom || cell.IsPuzzleTile) continue;
+                candidates.Add(path[i]);
+            }
+            if (candidates.Count == 0) return false;
+
+            var pos = candidates[rng.Next(candidates.Count)];
+            floor.Cells[pos.x, pos.y].IsMandatoryHazard = true;
+            return true;
         }
 
         // Piso unico del Bioma 2 ("Cueva Intergalactica"): mismo motor de generacion que
@@ -1225,75 +1382,6 @@ namespace DungeonGen
             if (maxStartIdx < margin) return;
             int startIdx = rng.Next(margin, maxStartIdx + 1);
             floor.FoePatrolRoute = path.GetRange(startIdx, len);
-        }
-
-        // Prueba las 4 orientaciones posibles de un cuadrante 2x2 que incluyan `pos` (arriba-
-        // derecha, arriba-izquierda, abajo-derecha, abajo-izquierda) y se queda con la primera que
-        // cumple TODO esto:
-        //  - Las 3 celdas extra estan dentro del mapa, son Normal, no son sala de jefe, no estan en
-        //    la zona aislada y no estan en `used` (Start/End/mision secundaria/candados/atajos).
-        //  - El grado EXTERNO del bloque completo (aristas que cruzan del cuadrante hacia afuera)
-        //    es exactamente 1 -- la MISMA garantia que un cofre de 1 sola celda (punto muerto real:
-        //    hay que desviarse del camino a proposito, nunca se puede entrar "de paso" ni queda
-        //    flotando desconectado). Fusionar celdas nunca cierra paredes existentes (solo abre las
-        //    internas, igual que AddBossRoom), asi que esto no puede romper la conectividad general.
-        // Si ninguna orientacion cumple, no hace nada (el cofre se queda de 1 sola celda).
-        private void TryGrowTreasureRoom(DungeonFloor floor, (int x, int y) pos, HashSet<(int, int)> used, Random rng)
-        {
-            var orientations = new (int dx, int dy)[][]
-            {
-                new[] { (0, 0), (1, 0), (0, 1), (1, 1) },
-                new[] { (0, 0), (-1, 0), (0, 1), (-1, 1) },
-                new[] { (0, 0), (1, 0), (0, -1), (1, -1) },
-                new[] { (0, 0), (-1, 0), (0, -1), (-1, -1) },
-            };
-            Shuffle(orientations, rng);
-
-            foreach (var offsets in orientations)
-            {
-                var block = new List<(int x, int y)>();
-                bool valid = true;
-                foreach (var (dx, dy) in offsets)
-                {
-                    int nx = pos.x + dx, ny = pos.y + dy;
-                    if (!floor.InBounds(nx, ny)) { valid = false; break; }
-                    if ((nx, ny) != pos)
-                    {
-                        var extra = floor.Cells[nx, ny];
-                        if (extra.Type != CellType.Normal || extra.IsBossRoom || extra.IsTrapRoom
-                            || used.Contains((nx, ny)) || floor.IsInIsolatedZone(nx, ny))
-                        { valid = false; break; }
-                    }
-                    block.Add((nx, ny));
-                }
-                if (!valid) continue;
-
-                var blockSet = new HashSet<(int, int)>(block);
-                int externalDegree = 0;
-                foreach (var (bx, by) in block)
-                    foreach (var dir in DirectionExtensions.All)
-                    {
-                        var (ox, oy) = dir.Offset();
-                        if (blockSet.Contains((bx + ox, by + oy))) continue;
-                        if (!floor.Cells[bx, by].HasWall(dir)) externalDegree++;
-                    }
-                if (externalDegree != 1) continue;
-
-                foreach (var (bx, by) in block)
-                {
-                    var cell = floor.Cells[bx, by];
-                    cell.IsTreasureRoom = true;
-                    foreach (var dir in DirectionExtensions.All)
-                    {
-                        var (ox, oy) = dir.Offset();
-                        if (blockSet.Contains((bx + ox, by + oy)))
-                            cell.SetWall(dir, false);
-                    }
-                }
-
-                floor.TreasureRoomCells = block;
-                return;
-            }
         }
 
         // Abre (o vuelve a cerrar) la pared de una puerta bloqueada especifica -- usado tanto por
@@ -1378,7 +1466,7 @@ namespace DungeonGen
                 for (int y = 0; y < floor.Height; y++)
                 {
                     var cell = floor.Cells[x, y];
-                    if (cell.Type != CellType.Normal || cell.IsBossRoom) continue;
+                    if (cell.Type != CellType.Normal || cell.IsBossRoom || cell.IsPuzzleTile || cell.IsMandatoryHazard) continue;
                     if (exclude.Contains((x, y))) continue;
                     if (within != null && !within.Contains((x, y))) continue;
                     if (Degree(floor, x, y) == 1) result.Add((x, y));
@@ -1461,32 +1549,14 @@ namespace DungeonGen
                     issues.Add($"Piso {floor.Index}: activar la palanca {di} no abrio un paso real hacia {beyondPos}.");
             }
 
-            if (floor.TreasurePos.HasValue)
+            if (floor.TreasurePositions != null)
             {
-                var treasurePos = floor.TreasurePos.Value;
-                if (!reachableUnlocked.Contains(treasurePos))
-                    issues.Add($"Piso {floor.Index}: el cofre en {treasurePos} NO es alcanzable ni activando todas las palancas.");
-
-                if (floor.HasTreasureRoom2x2)
+                foreach (var treasurePos in floor.TreasurePositions)
                 {
-                    // Cuadrante 2x2 (TryGrowTreasureRoom): la garantia de "punto muerto real" se
-                    // mide sobre el BLOQUE completo, no celda por celda -- tiene que tener
-                    // exactamente una arista que cruce hacia afuera del cuadrante.
-                    var blockSet = new HashSet<(int, int)>(floor.TreasureRoomCells);
-                    int externalDegree = 0;
-                    foreach (var (bx, by) in floor.TreasureRoomCells)
-                        foreach (var dir in DirectionExtensions.All)
-                        {
-                            var (ox, oy) = dir.Offset();
-                            if (blockSet.Contains((bx + ox, by + oy))) continue;
-                            if (!floor.Cells[bx, by].HasWall(dir)) externalDegree++;
-                        }
-                    if (externalDegree != 1)
-                        issues.Add($"Piso {floor.Index}: el cuadrante 2x2 del cofre no quedo como un unico punto muerto real (grado externo del bloque = {externalDegree}, deberia ser 1).");
-                }
-                else if (Degree(floor, treasurePos.Item1, treasurePos.Item2) != 1)
-                {
-                    issues.Add($"Piso {floor.Index}: el cofre en {treasurePos} no quedo en un punto muerto real (grado != 1) -- no exige desviarse del camino.");
+                    if (!reachableUnlocked.Contains(treasurePos))
+                        issues.Add($"Piso {floor.Index}: un cofre en {treasurePos} NO es alcanzable ni activando todas las palancas.");
+                    else if (Degree(floor, treasurePos.Item1, treasurePos.Item2) != 1)
+                        issues.Add($"Piso {floor.Index}: el cofre en {treasurePos} no quedo en un punto muerto real (grado != 1) -- no exige desviarse del camino.");
                 }
             }
 

@@ -8,10 +8,8 @@ namespace DungeonGen
         public CellType Type = CellType.Normal;
         public bool IsIsolatedZone;
         public bool IsBossRoom;
-        // true en las hasta 4 celdas de un cofre agrandado a cuadrante 2x2 (ver
-        // DungeonGenerator.TryGrowTreasureRoom); solo UNA de ellas tiene ademas Type == Treasure
-        // (el resto quedan Normal, caminables, sin interaccion propia -- mismo patron que la sala
-        // de jefe, donde solo la celda central tiene Type == Boss).
+        // true en cualquier celda de cofre (ver DungeonGenerator.EnsureTreasure) -- cada cofre es
+        // su propia celda de 1x1, esta bandera solo sirve para pintarla distinto en el mapa.
         public bool IsTreasureRoom;
 
         // Sala de trampas (ver DungeonGenerator.AddTrapRoom): IsTrapRoom marca TODAS las celdas de
@@ -21,6 +19,19 @@ namespace DungeonGen
         // de activar la trampa (ver DungeonManager.OnPlayerEnterCell).
         public bool IsTrapRoom;
         public bool IsTrapCell;
+
+        // Casilla especial GARANTIZADA en el camino critico Start->End de este piso (ver
+        // DungeonGenerator.PlaceMandatoryPathHazard) -- a diferencia de la sala de trampas
+        // (opcional, fuera del camino), esta si o si esta en la ruta obligatoria. Duele una sola
+        // vez (usa EventConsumed como "ya la cruzaste"), no cada vez que la volves a pisar.
+        public bool IsMandatoryHazard;
+
+        // Sala de pistas (ver DungeonGenerator.AddLoreCorridorRoom): grilla de piso "trampa" donde
+        // solo un tell visual (particulas, ver DungeonLevelBuilder.BuildPuzzleTile) distingue las
+        // celdas reales (IsPuzzleTileSafe true) de las que ceden. IsPuzzleTile marca cualquier
+        // celda de la grilla, sea segura o no.
+        public bool IsPuzzleTile;
+        public bool IsPuzzleTileSafe;
 
         public bool EventConsumed;
         public bool Discovered; // runtime: revelado en el minimapa del jugador al pisarlo
