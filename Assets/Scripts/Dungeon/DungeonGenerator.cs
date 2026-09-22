@@ -1340,7 +1340,7 @@ namespace DungeonGen
             if (candidates.Count == 0) return false;
 
             var pos = candidates[rng.Next(candidates.Count)];
-            floor.Cells[pos.x, pos.y].IsMandatoryHazard = true;
+            floor.Cells[pos.Item1, pos.Item2].IsMandatoryHazard = true;
             return true;
         }
 
