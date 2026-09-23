@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using UnityEngine;
 
 namespace DungeonGen
@@ -15,14 +14,6 @@ namespace DungeonGen
 
         [Header("Semilla (0 = aleatoria cada vez que se abre la escena)")]
         public int seed = 0;
-
-        [Header("Eventos (porcentaje global usado como valor por defecto)")]
-        [Range(0f, 0.5f)]
-        public float eventPercent = 0.06f;
-
-        [Header("Eventos por piso (opcional)")]
-        [Tooltip("Cantidad exacta de eventos para el piso en ese indice. -1 = usar eventPercent para ese piso. Si la lista es mas corta que la cantidad de pisos, los pisos sin entrada tambien usan eventPercent.")]
-        public List<int> eventsPerFloor = new List<int>();
 
         [Header("Escala del mundo (unidades Unity)")]
         public float cellSize = 4f;
@@ -41,7 +32,7 @@ namespace DungeonGen
         public int bossFloorInterval = 2;
 
         [Header("Encuentros aleatorios (sistema real de Etrian Odyssey)")]
-        [Tooltip("Cada celda Normal/Event tiene un 'valor de peligro' al azar entre este minimo y el maximo (0-5). Al pisarla, ese valor se suma a un contador interno de pasos.")]
+        [Tooltip("Cada celda Normal tiene un 'valor de peligro' al azar entre este minimo y el maximo (0-5). Al pisarla, ese valor se suma a un contador interno de pasos.")]
         [Range(0, 5)]
         public int dangerValueMin = 0;
         [Tooltip("Maximo del valor de peligro por celda (0-5).")]

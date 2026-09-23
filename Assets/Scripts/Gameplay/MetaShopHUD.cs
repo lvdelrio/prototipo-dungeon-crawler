@@ -46,6 +46,7 @@ namespace Gameplay
         private bool _wasActive;
         private string _merchantLine = "";
         private string _warriorLine = "";
+        private Vector2 _shopScroll;
 
         void OnGUI()
         {
@@ -184,6 +185,10 @@ namespace Gameplay
             }
         }
 
+        // La lista (todo menos el panel lateral del mercader) vive en su propio scroll view --
+        // mismo motivo que PauseMenuHUD.DrawLegend/DrawCodex: el catalogo de equipo crece con el
+        // tiempo y ya no entra fijo en la pantalla. Coordenadas DENTRO del scroll view son locales
+        // (arrancan en 0,0), no las absolutas x/y que recibe el metodo.
         private void DrawShopTab(float x, float y, float w, float bottom, MetaProgress meta)
         {
             float sceneW = w * 0.28f;
@@ -193,89 +198,92 @@ namespace Gameplay
                 drawArt: area => SilhouetteArt.DrawMerchant(area, new Color(0f, 0f, 0f, 0.9f)),
                 accentColor: new Color(0.15f, 0.35f, 0.15f), quote: _merchantLine);
 
-            GUI.Label(new Rect(x, y, listW, 20), "Ítems de exploración para la próxima run:");
-            y += 26;
+            float contentH = 26f + 42f + 44f + 26f + 42f + 26f + 42f + 34f + EquipmentCatalog.All.Length * 27f;
+            var viewRect = new Rect(x, y, listW, bottom - y);
+            var contentRect = new Rect(0, 0, listW - 20f, contentH);
+            _shopScroll = GUI.BeginScrollView(viewRect, _shopScroll, contentRect);
 
-            float itemW = (listW - 16f) / 3f;
-            if (UIButton.Draw(new Rect(x, y, itemW, 32), $"Comprar Mapa ({meta.MapCharges}) - {MetaProgress.MapCost}p", enabled: meta.BankedPoints >= MetaProgress.MapCost))
+            float cy = 0f;
+            GUI.Label(new Rect(0, cy, listW, 20), "Ítems de exploración para la próxima run:");
+            cy += 26;
+
+            float itemW = (listW - 16f - 20f) / 3f;
+            if (UIButton.Draw(new Rect(0, cy, itemW, 32), $"Comprar Mapa ({meta.MapCharges}) - {MetaProgress.MapCost}p", enabled: meta.BankedPoints >= MetaProgress.MapCost))
             {
                 meta.TryPurchaseMap();
                 MetaSaveService.Save(meta);
             }
-            if (UIButton.Draw(new Rect(x + itemW + 8f, y, itemW, 32), $"Comprar Perforador ({meta.DrillCharges}) - {MetaProgress.DrillCost}p", enabled: meta.BankedPoints >= MetaProgress.DrillCost))
+            if (UIButton.Draw(new Rect(itemW + 8f, cy, itemW, 32), $"Comprar Perforador ({meta.DrillCharges}) - {MetaProgress.DrillCost}p", enabled: meta.BankedPoints >= MetaProgress.DrillCost))
             {
                 meta.TryPurchaseDrill();
                 MetaSaveService.Save(meta);
             }
-            if (UIButton.Draw(new Rect(x + (itemW + 8f) * 2f, y, itemW, 32), $"Comprar Incienso ({meta.IncenseCharges}) - {MetaProgress.IncenseCost}p", enabled: meta.BankedPoints >= MetaProgress.IncenseCost))
+            if (UIButton.Draw(new Rect((itemW + 8f) * 2f, cy, itemW, 32), $"Comprar Incienso ({meta.IncenseCharges}) - {MetaProgress.IncenseCost}p", enabled: meta.BankedPoints >= MetaProgress.IncenseCost))
             {
                 meta.TryPurchaseIncense();
                 MetaSaveService.Save(meta);
             }
-            y += 42;
+            cy += 42;
 
             var hintStyle = new GUIStyle(GUI.skin.label) { fontSize = 11, wordWrap = true };
             hintStyle.normal.textColor = new Color(0.65f, 0.65f, 0.65f);
-            GUI.Label(new Rect(x, y, listW, 34),
+            GUI.Label(new Rect(0, cy, listW - 20f, 34),
                 "El Mapa revela de golpe todo el piso actual (tecla M). El Perforador abre un paso permanente en la pared que tengas enfrente, si hay algo real detrás (tecla P). El Incienso reduce a la mitad el peligro de cada paso por un buen tramo (tecla N).",
                 hintStyle);
-            y += 44;
+            cy += 44;
 
-            GUI.Label(new Rect(x, y, listW, 20), "Ítems de combate (se usan en pelea o desde el menú de pausa):");
-            y += 26;
-            if (UIButton.Draw(new Rect(x, y, itemW, 32), $"Comprar Poción ({meta.PotionCharges}) - {MetaProgress.PotionCost}p", enabled: meta.BankedPoints >= MetaProgress.PotionCost))
+            GUI.Label(new Rect(0, cy, listW, 20), "Ítems de combate (se usan en pelea o desde el menú de pausa):");
+            cy += 26;
+            if (UIButton.Draw(new Rect(0, cy, itemW, 32), $"Comprar Poción ({meta.PotionCharges}) - {MetaProgress.PotionCost}p", enabled: meta.BankedPoints >= MetaProgress.PotionCost))
             {
                 meta.TryPurchasePotion();
                 MetaSaveService.Save(meta);
             }
-            if (UIButton.Draw(new Rect(x + itemW + 8f, y, itemW, 32), $"Comprar Revivir ({meta.ReviverCharges}) - {MetaProgress.ReviverCost}p", enabled: meta.BankedPoints >= MetaProgress.ReviverCost))
+            if (UIButton.Draw(new Rect(itemW + 8f, cy, itemW, 32), $"Comprar Revivir ({meta.ReviverCharges}) - {MetaProgress.ReviverCost}p", enabled: meta.BankedPoints >= MetaProgress.ReviverCost))
             {
                 meta.TryPurchaseReviver();
                 MetaSaveService.Save(meta);
             }
-            y += 42;
+            cy += 42;
 
-            GUI.Label(new Rect(x, y, listW, 20), $"Balas para el Gunner ({MetaProgress.BulletBundleAmount} por compra, solo si tenés uno en la party):");
-            y += 26;
-            if (UIButton.Draw(new Rect(x, y, itemW, 32), $"Fuego (+{meta.BonusFireBullets}) - {MetaProgress.BulletBundleCost}p", enabled: meta.BankedPoints >= MetaProgress.BulletBundleCost))
+            GUI.Label(new Rect(0, cy, listW, 20), $"Balas para el Gunner ({MetaProgress.BulletBundleAmount} por compra, solo si tenés uno en la party):");
+            cy += 26;
+            if (UIButton.Draw(new Rect(0, cy, itemW, 32), $"Fuego (+{meta.BonusFireBullets}) - {MetaProgress.BulletBundleCost}p", enabled: meta.BankedPoints >= MetaProgress.BulletBundleCost))
             {
                 meta.TryPurchaseBullets(Element.Fire);
                 MetaSaveService.Save(meta);
             }
-            if (UIButton.Draw(new Rect(x + itemW + 8f, y, itemW, 32), $"Hielo (+{meta.BonusIceBullets}) - {MetaProgress.BulletBundleCost}p", enabled: meta.BankedPoints >= MetaProgress.BulletBundleCost))
+            if (UIButton.Draw(new Rect(itemW + 8f, cy, itemW, 32), $"Hielo (+{meta.BonusIceBullets}) - {MetaProgress.BulletBundleCost}p", enabled: meta.BankedPoints >= MetaProgress.BulletBundleCost))
             {
                 meta.TryPurchaseBullets(Element.Ice);
                 MetaSaveService.Save(meta);
             }
-            if (UIButton.Draw(new Rect(x + (itemW + 8f) * 2f, y, itemW, 32), $"Rayo (+{meta.BonusVoltBullets}) - {MetaProgress.BulletBundleCost}p", enabled: meta.BankedPoints >= MetaProgress.BulletBundleCost))
+            if (UIButton.Draw(new Rect((itemW + 8f) * 2f, cy, itemW, 32), $"Rayo (+{meta.BonusVoltBullets}) - {MetaProgress.BulletBundleCost}p", enabled: meta.BankedPoints >= MetaProgress.BulletBundleCost))
             {
                 meta.TryPurchaseBullets(Element.Volt);
                 MetaSaveService.Save(meta);
             }
-            y += 42;
+            cy += 42;
 
-            GUI.Label(new Rect(x, y, listW, 20), "Accesorios (se equipan luego desde el menú de pausa, tecla I):");
-            y += 26;
+            GUI.Label(new Rect(0, cy, listW - 20f, 20), "Equipo (cada compra es una instancia propia -- podés comprar varias del mismo para repartir entre personajes; se equipa luego desde la pestaña Equipamiento del menú de pausa, tecla I):");
+            cy += 34;
             foreach (var item in EquipmentCatalog.All)
             {
-                bool owned = meta.OwnsItem(item.Id);
-                GUI.Label(new Rect(x, y, listW - 190, 22), $"{item.Name} - {item.Description}");
-                if (owned)
+                int owned = meta.CountOwned(item.Id);
+                string ownedSuffix = owned > 0 ? $"  (poseés {owned})" : "";
+                var labelStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleLeft };
+                if (owned > 0) labelStyle.normal.textColor = new Color(0.4f, 1f, 0.5f);
+                GUI.Label(new Rect(0, cy, listW - 210f, 22), $"[{item.Slot}] {item.Name} - {item.Description}{ownedSuffix}", labelStyle);
+
+                if (UIButton.Draw(new Rect(listW - 200f, cy, 180, 22), $"Comprar ({item.Cost}p)", enabled: meta.BankedPoints >= item.Cost))
                 {
-                    var ownedStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleLeft };
-                    ownedStyle.normal.textColor = new Color(0.4f, 1f, 0.5f);
-                    GUI.Label(new Rect(x + listW - 180, y, 180, 22), "Ya comprado", ownedStyle);
+                    meta.TryPurchaseItem(item.Id);
+                    MetaSaveService.Save(meta);
                 }
-                else
-                {
-                    if (UIButton.Draw(new Rect(x + listW - 180, y, 180, 22), $"Comprar ({item.Cost}p)", enabled: meta.BankedPoints >= item.Cost))
-                    {
-                        meta.TryPurchaseItem(item.Id);
-                        MetaSaveService.Save(meta);
-                    }
-                }
-                y += 27;
+                cy += 27;
             }
+
+            GUI.EndScrollView();
         }
 
         // Panel lateral compartido por las 2 pestanas: caja oscura con acento de color propio,

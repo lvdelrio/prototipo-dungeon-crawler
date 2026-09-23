@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -21,6 +22,7 @@ namespace Gameplay
         // cada vez que se entra a la pestana, ver DrawMap.
         private int _selectedMapFloor = -1;
         private Vector2 _legendScroll;
+        private Vector2 _codexScroll;
         // Estado del asistente de 3 pasos de la pestana Habilidades (ver DrawSkills): personaje
         // elegido, si ya confirmo su habilidad (paso 2 -> 3), y el feedback del ultimo intento de
         // curar.
@@ -31,6 +33,20 @@ namespace Gameplay
         // Integrante elegido en la pestana Formacion, esperando un segundo click para
         // intercambiarlo de lugar (ver DrawFormation/DrawFormationRow).
         private CharacterStats _selectedFormationMember;
+
+        // Personaje elegido en la pestana Equipamiento (ver DrawEquipment) -- null hasta el primer
+        // click, en ese caso se muestra el primero de la party.
+        private CharacterClass? _selectedEquipClass;
+
+        private static readonly (EquipmentSlotType Slot, int AccessoryIndex, string Label)[] EquipSlots =
+        {
+            (EquipmentSlotType.Weapon, 0, "Arma"),
+            (EquipmentSlotType.Chest, 0, "Pecho"),
+            (EquipmentSlotType.Greaves, 0, "Grebas"),
+            (EquipmentSlotType.Feet, 0, "Pie"),
+            (EquipmentSlotType.Accessory, 0, "Accesorio 1"),
+            (EquipmentSlotType.Accessory, 1, "Accesorio 2"),
+        };
 
         void OnGUI()
         {
@@ -92,7 +108,7 @@ namespace Gameplay
                 case PauseMenuManager.Tab.Legend: DrawLegend(panelX, y, panelW, panelH - (y - panelY)); break;
                 case PauseMenuManager.Tab.Skills: DrawSkills(panelX, y, panelW); break;
                 case PauseMenuManager.Tab.Stats: DrawStats(panelX, y, panelW); break;
-                case PauseMenuManager.Tab.Codex: DrawCodex(panelX, y, panelW, meta); break;
+                case PauseMenuManager.Tab.Codex: DrawCodex(panelX, y, panelW, panelH - (y - panelY), meta); break;
                 case PauseMenuManager.Tab.Equipment: DrawEquipment(panelX, y, panelW, meta); break;
                 case PauseMenuManager.Tab.Formation: DrawFormation(panelX, y, panelW); break;
                 default:
@@ -128,7 +144,7 @@ namespace Gameplay
             float tabY = y + 24;
             for (int i = 0; i <= currentIndex && i < floors.Count; i++)
             {
-                string label = i == currentIndex ? $"Piso {i} (actual)" : $"Piso {i}";
+                string label = i == currentIndex ? $"{dungeonManager.FloorLabel(i)} (actual)" : dungeonManager.FloorLabel(i);
                 var old = GUI.color;
                 if (i == _selectedMapFloor) GUI.color = new Color(1f, 0.85f, 0.3f);
                 if (UIButton.Draw(new Rect(panelX + 20, tabY, tabsW, 28), label))
@@ -146,8 +162,9 @@ namespace Gameplay
                 Mathf.FloorToInt(Mathf.Min(mapAreaW / floor.Width, (availableHeight - 24) / floor.Height)), 6, 16);
 
             bool isCurrent = _selectedMapFloor == currentIndex;
+            string selectedLabel = dungeonManager.FloorLabel(_selectedMapFloor);
             GUI.Label(new Rect(mapAreaX, y, mapAreaW, 20),
-                isCurrent ? $"Piso {_selectedMapFloor} (posición actual marcada en magenta)" : $"Piso {_selectedMapFloor} (tal como quedó al dejarlo)");
+                isCurrent ? $"{selectedLabel} (posición actual marcada en magenta)" : $"{selectedLabel} (tal como quedó al dejarlo)");
             DungeonMapRenderer.Draw(new Vector2(mapAreaX, y + 24), floor, playerMode: true, cellPixelSize, wallPixelThickness: 2,
                 player, showPlayerMarker: isCurrent,
                 foe: isCurrent ? dungeonManager.ActiveFoe : null, foeAlwaysVisible: dungeonManager.debugFoeAlwaysVisibleOnMap);
@@ -413,7 +430,7 @@ namespace Gameplay
 
         // Entradas descubiertas muestran titulo+texto; las no descubiertas quedan como "???" para
         // no espoilear el contenido, pero avisan que existen (motiva a seguir explorando).
-        private void DrawCodex(float panelX, float y, float panelW, MetaProgress meta)
+        private void DrawCodex(float panelX, float y, float panelW, float availableHeight, MetaProgress meta)
         {
             // Tip de mecanica (siempre visible, no es un fragmento de lore descubrible): el FOE es
             // nuevo y no tiene ninguna otra explicacion en pantalla salvo chocarse con el.
@@ -425,7 +442,24 @@ namespace Gameplay
             y += 40;
 
             GUI.Label(new Rect(panelX + 20, y, panelW - 40, 20), $"Fragmentos de lore descubiertos: {meta.UnlockedLoreIds.Count}/{LoreCatalog.All.Length}");
-            y += 26;
+            const float headerH = 26f;
+            y += headerH;
+
+            // Todo el bloque de entradas vive en su propio scroll view (mismo patron que DrawLegend):
+            // la altura de cada fila varia (64 desbloqueada, 28 sin descubrir todavia) asi que se sum
+            // caso por caso en vez de asumir una altura fija -- ninguna entrada queda recortada por
+            // el borde del panel sin importar cuantos fragmentos de lore tenga el juego.
+            float contentH = 4f;
+            foreach (var entry in LoreCatalog.All)
+                contentH += meta.IsLoreUnlocked(entry.Id) ? 70f : 34f;
+
+            float viewH = Mathf.Max(60f, availableHeight - headerH - 40f - 10f);
+            var viewRect = new Rect(panelX + 10, y, panelW - 30, viewH);
+            var contentRect = new Rect(0, 0, panelW - 50, contentH);
+
+            _codexScroll = GUI.BeginScrollView(viewRect, _codexScroll, contentRect);
+
+            float rowY = 0f;
             foreach (var entry in LoreCatalog.All)
             {
                 // Las 3 pistas de la Puerta Fria (ver DungeonGen.DungeonGenerator.BiomeGateLoreIds)
@@ -435,65 +469,129 @@ namespace Gameplay
                 bool unlocked = meta.IsLoreUnlocked(entry.Id);
                 var boxColor = GUI.color;
                 if (isMysteryClue) GUI.color = new Color(1f, 0.9f, 0.5f, 0.5f);
-                GUI.Box(new Rect(panelX + 20, y, panelW - 40, unlocked ? 64 : 28), "");
+                GUI.Box(new Rect(10, rowY, panelW - 60, unlocked ? 64 : 28), "");
                 GUI.color = boxColor;
 
                 if (isMysteryClue)
                 {
                     var tagStyle = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, fontSize = 10 };
                     tagStyle.normal.textColor = new Color(1f, 0.82f, 0.2f);
-                    GUI.Label(new Rect(panelX + panelW - 170, y + 4, 140, 16), "◆ PISTA PRINCIPAL", tagStyle);
+                    GUI.Label(new Rect(panelW - 210, rowY + 4, 140, 16), "◆ PISTA PRINCIPAL", tagStyle);
                 }
 
                 if (unlocked)
                 {
-                    GUI.Label(new Rect(panelX + 30, y + 4, panelW - 60, 20), entry.Title);
-                    GUI.Label(new Rect(panelX + 30, y + 24, panelW - 60, 36), entry.Text);
-                    y += 70;
+                    GUI.Label(new Rect(20, rowY + 4, panelW - 90, 20), entry.Title);
+                    GUI.Label(new Rect(20, rowY + 24, panelW - 90, 36), entry.Text);
+                    rowY += 70;
                 }
                 else
                 {
-                    GUI.Label(new Rect(panelX + 30, y + 4, panelW - 60, 20), "??? (todavía sin descubrir)");
-                    y += 34;
+                    GUI.Label(new Rect(20, rowY + 4, panelW - 90, 20), "??? (todavía sin descubrir)");
+                    rowY += 34;
                 }
+            }
+
+            GUI.EndScrollView();
+        }
+
+        // 6 slots por personaje (Arma/Pecho/Grebas/Pie/2 Accesorios, ver EquipSlots): se elige un
+        // integrante arriba y se arma su equipo slot por slot debajo, con efecto inmediato sobre la
+        // party actual (CombatManager.SetEquippedItemLive). Los items se compran en la tienda
+        // post-run (MetaShopHUD) o se encuentran en cofres (DungeonManager.RollTreasureLoot); cada
+        // compra/hallazgo es una INSTANCIA fisica propia (Meta.EquipmentInstance) -- si comprás 2
+        // Placas Reforzadas podes ponerle una a cada uno de 2 personajes distintos, pero una
+        // instancia puesta en un slot no aparece como opcion en ningun otro hasta desequiparla.
+        private void DrawEquipment(float panelX, float y, float panelW, MetaProgress meta)
+        {
+            if (combatManager.Party.Count == 0) return;
+            var selected = combatManager.Party.FirstOrDefault(p => p.Class == _selectedEquipClass) ?? combatManager.Party[0];
+            _selectedEquipClass = selected.Class;
+
+            GUI.Label(new Rect(panelX + 20, y, panelW - 40, 18), "Elegí un integrante y armá su equipo. Las armas pueden estar restringidas por clase.");
+            y += 24;
+
+            float bx = panelX + 20;
+            foreach (var character in combatManager.Party)
+            {
+                bool isSelected = character.Class == selected.Class;
+                if (UIButton.Draw(new Rect(bx, y, 130, 26), character.Class.ToString(), accentColor: isSelected ? new Color(1f, 0.85f, 0.3f) : (Color?)null))
+                    _selectedEquipClass = character.Class;
+                bx += 136;
+            }
+            y += 34;
+
+            var totals = EquipmentTotals.From(meta.GetEquippedItems(selected.Class));
+            string resistSummary = totals.Resistances.Count > 0
+                ? string.Join(", ", totals.Resistances.Select(r => $"{ElementLabel(r.Element)} {r.Percent}%"))
+                : "ninguna";
+            GUI.Label(new Rect(panelX + 20, y, panelW - 40, 40),
+                $"{selected.Name} -- ATQ +{totals.Attack}  ATQ.MAG +{totals.MagicAttack}  DEF +{totals.Defense}  VEL +{totals.Speed}  EVA +{totals.Evasion}  PV +{totals.MaxHp}  Espinas {totals.Thorns}%  Resistencias: {resistSummary}",
+                new GUIStyle(GUI.skin.label) { wordWrap = true });
+            y += 40;
+
+            foreach (var slotDef in EquipSlots)
+            {
+                var equippedItem = meta.GetEquippedItem(selected.Class, slotDef.Slot, slotDef.AccessoryIndex);
+                GUI.Label(new Rect(panelX + 20, y, 140, 22), slotDef.Label + ":");
+                GUI.Label(new Rect(panelX + 160, y, 280, 22), equippedItem != null ? equippedItem.Name : "(vacío)");
+
+                float rx = panelX + 440;
+                if (UIButton.Draw(new Rect(rx, y, 80, 22), "Quitar", enabled: equippedItem != null))
+                    combatManager.SetEquippedItemLive(meta, selected.Class, slotDef.Slot, "", slotDef.AccessoryIndex);
+                y += 26;
+
+                // Instancias LIBRES (ni puestas en este ni en ningun otro slot -- una instancia
+                // equipada en otro personaje no aparece aca, hay que desequiparla primero) que
+                // calzan en este slot y, si es Arma, en la clase elegida. Agrupadas por item del
+                // catalogo (si tenes 3 Placas Reforzadas libres, un solo boton con "x3") para no
+                // mostrar 3 botones identicos -- clickearlo equipa UNA de esas instancias libres.
+                // Envuelve a la linea siguiente si no entran todos en el ancho del panel.
+                float ix = panelX + 20;
+                var freeGroups = meta.Inventory
+                    .Where(inst => !meta.IsInstanceEquipped(inst.InstanceId))
+                    .GroupBy(inst => inst.ItemId);
+                foreach (var group in freeGroups)
+                {
+                    var item = EquipmentCatalog.Find(group.Key);
+                    if (item == null || item.Slot != slotDef.Slot) continue;
+                    if (item.AllowedClasses.Length > 0 && Array.IndexOf(item.AllowedClasses, selected.Class) < 0) continue;
+
+                    int count = group.Count();
+                    string label = count > 1 ? $"{item.Name} x{count}" : item.Name;
+                    string instanceToEquip = group.First().InstanceId;
+
+                    const float btnW = 150f;
+                    if (ix + btnW > panelX + panelW - 20)
+                    {
+                        ix = panelX + 20;
+                        y += 26;
+                    }
+                    if (UIButton.Draw(new Rect(ix, y, btnW, 22), label, fontSize: 12))
+                        combatManager.SetEquippedItemLive(meta, selected.Class, slotDef.Slot, instanceToEquip, slotDef.AccessoryIndex);
+                    ix += btnW + 6;
+                }
+                y += 32;
+            }
+
+            if (meta.Inventory.Count == 0)
+            {
+                y += 6;
+                GUI.Label(new Rect(panelX + 20, y, panelW - 40, 24), "Todavía no compraste ningún equipo. Se compran con puntos en la tienda al terminar una run, o se encuentran en cofres.");
             }
         }
 
-        // Un accesorio por personaje; los items se compran con puntos en la tienda post-run
-        // (MetaShopHUD) y se equipan/desequipan aca, con efecto inmediato sobre la party actual.
-        private void DrawEquipment(float panelX, float y, float panelW, MetaProgress meta)
+        private static string ElementLabel(Element element)
         {
-            GUI.Label(new Rect(panelX + 20, y, panelW - 40, 20), "Un accesorio por personaje (se compran nuevos en la tienda al final de la run).");
-            y += 26;
-
-            foreach (var character in combatManager.Party)
+            switch (element)
             {
-                string equippedId = meta.GetEquippedItemId(character.Class);
-                var equippedItem = EquipmentCatalog.Find(equippedId);
-                GUI.Label(new Rect(panelX + 20, y, 220, 24), $"{character.Name} ({character.Class})");
-                GUI.Label(new Rect(panelX + 250, y, 260, 24), equippedItem != null ? equippedItem.Name : "(sin equipar)");
-
-                float bx = panelX + 520;
-                if (UIButton.Draw(new Rect(bx, y, 90, 24), "Ninguno"))
-                    combatManager.SetEquippedItemLive(meta, character.Class, "");
-                bx += 96;
-
-                foreach (var itemId in meta.OwnedItemIds)
-                {
-                    if (itemId == equippedId) continue;
-                    var item = EquipmentCatalog.Find(itemId);
-                    if (item == null) continue;
-                    if (UIButton.Draw(new Rect(bx, y, 130, 24), item.Name))
-                        combatManager.SetEquippedItemLive(meta, character.Class, itemId);
-                    bx += 136;
-                }
-                y += 30;
-            }
-
-            if (meta.OwnedItemIds.Count == 0)
-            {
-                y += 10;
-                GUI.Label(new Rect(panelX + 20, y, panelW - 40, 24), "Todavía no compraste ningún accesorio. Se compran con puntos en la tienda al terminar una run.");
+                case Element.Fire: return "Fuego";
+                case Element.Ice: return "Hielo";
+                case Element.Volt: return "Rayo";
+                case Element.Slash: return "Corte";
+                case Element.Strike: return "Golpe";
+                case Element.Pierce: return "Perforación";
+                default: return "Ninguno";
             }
         }
 

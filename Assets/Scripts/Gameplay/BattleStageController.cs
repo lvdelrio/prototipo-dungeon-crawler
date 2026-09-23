@@ -36,6 +36,12 @@ namespace Gameplay
         public Material iceSkillMaterial;
         public Material voltSkillMaterial;
 
+        [Header("Shockwave por distorsion de pantalla (Custom/ImpactShockwave), en TODO golpe")]
+        public Material shockwaveMaterial;
+
+        [Header("Spark anguloso (Custom/ImpactSpark), acento encima del shockwave")]
+        public Material sparkMaterial;
+
         private Camera _battleCamera;
         private AudioListener _battleAudioListener;
         private readonly List<Transform> _stands = new List<Transform>();
@@ -340,6 +346,17 @@ namespace Gameplay
             var skillMaterial = SkillMaterialFor(element);
             if (skillMaterial != null)
                 ElementalBurstEffect.Spawn(skillMaterial, anchor, ElementVisuals.ColorFor(element), facing, intensity);
+
+            // Shockwave por distorsion + spark anguloso, en TODA habilidad (antes solo Fuego,
+            // mientras se evaluaba el estilo -- ver el shader Custom/ImpactSpark para el porque de
+            // los dos modos). El modo se elige por TIPO de ataque, no por elemento especifico: fisico
+            // (Slash/Strike/Pierce) siempre tajo+cruz, magico (Fuego/Hielo/Rayo) siempre anillo+
+            // estallido -- asi cualquier habilidad nueva encaja sin tener que enseñarle un modo nuevo.
+            bool slashMode = IsPhysicalElement(element);
+            if (shockwaveMaterial != null)
+                ImpactShockwaveEffect.Spawn(shockwaveMaterial, anchor, ElementVisuals.ColorFor(element), facing, slashMode, intensity);
+            if (sparkMaterial != null)
+                ImpactSparkEffect.Spawn(sparkMaterial, anchor, ElementVisuals.ColorFor(element), facing, slashMode, intensity);
         }
 
         private Material SkillMaterialFor(Element element)
@@ -355,6 +372,13 @@ namespace Gameplay
                 default: return null;
             }
         }
+
+        // Fisico (cortante/contundente/perforante) vs magico (elemental): decide que MODO usan
+        // Custom/ImpactShockwave y Custom/ImpactSpark para un golpe de este elemento (ver mas
+        // arriba). Unica fuente de esta clasificacion -- si se agrega un elemento nuevo, alcanza
+        // con sumarlo aca para que ya salga con el modo correcto en todos lados.
+        private static bool IsPhysicalElement(Element element) =>
+            element == Element.Slash || element == Element.Strike || element == Element.Pierce;
 
         // Efecto de shader + rafaga de particulas reales (sin sprite) que se ven en CUALQUIER
         // golpe -- basico o de habilidad -- para que el elemento del ataque siempre tenga algun
@@ -377,6 +401,18 @@ namespace Gameplay
             // propio en habilidades), para que cualquier golpe se sienta con mas peso/impacto.
             if (impactBurstMaterial != null)
                 ImpactBurstEffect.Spawn(impactBurstMaterial, anchor, ElementVisuals.ColorFor(element), elementalFacing, intensity);
+
+            // Shockwave + spark anguloso, tambien en el golpe BASICO (Strike con intensity==1; una
+            // habilidad de Strike llega aca tambien pero con SkillPower >1, asi que no duplica el
+            // que ya dispara HandleEnemySkillHit). El basico siempre es fisico (ver
+            // IsPhysicalElement), asi que va directo a modo tajo+cruz sin necesitar la clasificacion.
+            if (element == Element.Strike && intensity <= 1.01f)
+            {
+                if (shockwaveMaterial != null)
+                    ImpactShockwaveEffect.Spawn(shockwaveMaterial, anchor, ElementVisuals.ColorFor(element), elementalFacing, slashMode: true, intensity: intensity);
+                if (sparkMaterial != null)
+                    ImpactSparkEffect.Spawn(sparkMaterial, anchor, ElementVisuals.ColorFor(element), elementalFacing, slashMode: true, intensity: intensity);
+            }
 
             ElementalParticleEffect.Spawn(anchor, element);
         }

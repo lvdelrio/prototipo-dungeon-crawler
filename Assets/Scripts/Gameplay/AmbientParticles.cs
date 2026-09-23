@@ -44,6 +44,7 @@ namespace Gameplay
         private static readonly Color StormNearColor = new Color(0.6f, 0.68f, 0.85f, 0.4f);
         private static readonly Color StormFarColor = new Color(0.18f, 0.2f, 0.3f, 0.16f);
         private static readonly Color LightningColor = new Color(0.75f, 0.85f, 1f);
+        private static readonly Color ShootingStarColor = new Color(0.9f, 0.93f, 1f);
 
         // Radio (en celdas, distancia Chebyshev -- permite diagonal) dentro del cual la tormenta ya
         // se activa aunque el jugador todavia no haya PISADO la sala de jefe: asi las luces/rayos
@@ -63,6 +64,15 @@ namespace Gameplay
         private bool _lastNearBossRoom;
         private bool _biomeInitialized;
         private Vector3 _bossRoomAnchor;
+
+        // Estrella fugaz (techo de Bioma 2, ver Custom/StarrySky): mismo mecanismo Stretch+Light que
+        // el rayo de la sala de jefe arriba, pero cruzando el techo cerca del jugador de vez en
+        // cuando en vez de quedarse fija en un punto -- ver ShootingStarRoutine.
+        private ParticleSystem _starStreaks;
+        private Light _starLight;
+        private Coroutine _shootingStarRoutine;
+        private bool _lastInBiome2;
+        private const float ShootingStarPeakIntensity = 2.2f;
 
         void Awake()
         {
@@ -86,12 +96,25 @@ namespace Gameplay
             _stormLight.intensity = 0f;
             _stormLight.shadows = LightShadows.None;
 
+            _starStreaks = ParticleLayerFactory.CreateLayer(transform, "ShootingStarStreaks");
+            ConfigureStreakLayer(_starStreaks);
+
+            var starGo = new GameObject("ShootingStarLight");
+            starGo.transform.SetParent(transform, false);
+            _starLight = starGo.AddComponent<Light>();
+            _starLight.type = LightType.Point;
+            _starLight.color = ShootingStarColor;
+            _starLight.range = 10f; // ilumina un poco alrededor del jugador, no toda la sala
+            _starLight.intensity = 0f;
+            _starLight.shadows = LightShadows.None;
+
             ApplyBiome(nearBossRoom: false);
 
             ParticleLayerFactory.Activate(_near);
             ParticleLayerFactory.Activate(_far);
             ParticleLayerFactory.Activate(_wisps);
             ParticleLayerFactory.Activate(_lightningStreaks);
+            ParticleLayerFactory.Activate(_starStreaks);
         }
 
         // Sistema SOLO para rafagas por Emit() (el rayo y sus chispas): sin emision ambiente propia
@@ -181,20 +204,40 @@ namespace Gameplay
                     nearBossRoom = IsNearBossRoom(floor, player.CellX, player.CellY);
             }
 
-            if (_biomeInitialized && nearBossRoom == _lastNearBossRoom) return;
-            _biomeInitialized = true;
-            _lastNearBossRoom = nearBossRoom;
-            ApplyBiome(nearBossRoom);
+            if (!_biomeInitialized || nearBossRoom != _lastNearBossRoom)
+            {
+                _biomeInitialized = true;
+                _lastNearBossRoom = nearBossRoom;
+                ApplyBiome(nearBossRoom);
 
-            if (nearBossRoom)
-            {
-                if (_stormRoutine == null) _stormRoutine = StartCoroutine(StormRoutine());
+                if (nearBossRoom)
+                {
+                    if (_stormRoutine == null) _stormRoutine = StartCoroutine(StormRoutine());
+                }
+                else if (_stormRoutine != null)
+                {
+                    StopCoroutine(_stormRoutine);
+                    _stormRoutine = null;
+                    _stormLight.intensity = 0f;
+                }
             }
-            else if (_stormRoutine != null)
+
+            // Estrella fugaz: activa en CUALQUIER piso del Bioma 2 (todo el bioma comparte el techo
+            // Custom/StarrySky), no solo cerca de algo puntual como la tormenta de la sala de jefe.
+            bool inBiome2 = floor != null && floor.Biome != 0;
+            if (inBiome2 != _lastInBiome2)
             {
-                StopCoroutine(_stormRoutine);
-                _stormRoutine = null;
-                _stormLight.intensity = 0f;
+                _lastInBiome2 = inBiome2;
+                if (inBiome2)
+                {
+                    if (_shootingStarRoutine == null) _shootingStarRoutine = StartCoroutine(ShootingStarRoutine());
+                }
+                else if (_shootingStarRoutine != null)
+                {
+                    StopCoroutine(_shootingStarRoutine);
+                    _shootingStarRoutine = null;
+                    _starLight.intensity = 0f;
+                }
             }
         }
 
@@ -350,6 +393,62 @@ namespace Gameplay
 
                 prev = next;
             }
+        }
+
+        // Cada tanto (de vez en cuando, no un ritmo fijo) una estrella fugaz cruza el techo cerca
+        // del jugador -- se repite mientras siga en el Bioma 2, igual que la tormenta se repite
+        // mientras siga cerca de la sala de jefe.
+        private IEnumerator ShootingStarRoutine()
+        {
+            while (true)
+            {
+                yield return new WaitForSeconds(Random.Range(20f, 45f));
+                yield return StartCoroutine(ShootingStar());
+            }
+        }
+
+        // Recorre una cuerda recta a la altura del techo, pasando CERCA del jugador (no
+        // necesariamente justo encima) en una direccion horizontal al azar. La luz sube y baja en
+        // forma de campana a medida que avanza (pico a mitad de camino, mas fuerte cuanto mas cerca
+        // pasa del jugador) -- eso es lo que "ilumina un poco la zona alrededor del jugador" sin
+        // ser un flash parejo de principio a fin. El trazo visible es el mismo truco Stretch que el
+        // rayo de la tormenta: se emite una particula por frame en la posicion actual, con velocidad
+        // = direccion de avance, asi el renderer la dibuja como una raya en vez de un punto.
+        private IEnumerator ShootingStar()
+        {
+            if (player == null) yield break;
+
+            const float height = 5f; // cerca del techo, por encima de la cabeza del jugador
+            const float halfLength = 7f;
+            const float duration = 1.0f;
+
+            Vector3 playerPos = player.transform.position;
+            Vector2 dir2D = Random.insideUnitCircle.normalized;
+            Vector3 dir = new Vector3(dir2D.x, 0f, dir2D.y);
+            Vector3 center = playerPos + Vector3.up * height + new Vector3(Random.Range(-2f, 2f), 0f, Random.Range(-2f, 2f));
+            Vector3 start = center - dir * halfLength;
+            Vector3 end = center + dir * halfLength;
+
+            var emitParams = new ParticleSystem.EmitParams { startColor = ShootingStarColor, startSize = 0.1f, startLifetime = 0.35f };
+
+            float t = 0f;
+            Vector3 prevPos = start;
+            while (t < duration)
+            {
+                t += Time.deltaTime;
+                float frac = Mathf.Clamp01(t / duration);
+                Vector3 pos = Vector3.Lerp(start, end, frac);
+                _starLight.transform.position = pos;
+                _starLight.intensity = Mathf.Sin(frac * Mathf.PI) * ShootingStarPeakIntensity;
+
+                emitParams.position = pos;
+                emitParams.velocity = (pos - prevPos) / Mathf.Max(Time.deltaTime, 0.001f);
+                _starStreaks.Emit(emitParams, 1);
+
+                prevPos = pos;
+                yield return null;
+            }
+            _starLight.intensity = 0f;
         }
 
         // Chispas radiando hacia afuera desde el punto de impacto: con velocidad (no quietas como

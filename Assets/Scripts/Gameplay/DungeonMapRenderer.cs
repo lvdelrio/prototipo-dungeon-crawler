@@ -104,8 +104,6 @@ namespace Gameplay
         // normal, para que el mapa confirme de un vistazo que ese peligro ya no existe.
         public static Color FloorColor(DungeonCell cell, bool trapDisabled = false)
         {
-            if (cell.Type == CellType.Event && cell.EventConsumed)
-                return new Color(0.35f, 0.42f, 0.5f);
             if (cell.IsBossRoom)
                 return new Color(0.5f, 0.16f, 0.16f);
             if (cell.IsTrapRoom && !trapDisabled)
@@ -121,14 +119,16 @@ namespace Gameplay
         {
             switch (cell.Type)
             {
-                case CellType.Start: return Color.green;
-                case CellType.End: return Color.red;
+                // Inicio/Salida: ocultos a proposito (ver DrawLegend/MarkerLegend abajo) -- un
+                // jugador nuevo los confundia con "hay que volver ahi" o "objetivo real", cuando en
+                // realidad son solo de donde entraste y las escaleras ya cumplen ese rol mejor.
+                case CellType.Start: return null;
+                case CellType.End: return null;
                 case CellType.SecondaryQuest: return Color.yellow;
                 case CellType.ShortcutSwitch: return new Color(0.2f, 0.4f, 1f);
                 case CellType.ShortcutLanding: return new Color(0.85f, 0.45f, 0.1f);
                 case CellType.StairsUp: return Color.cyan;
                 case CellType.StairsDown: return new Color(1f, 0.5f, 0f);
-                case CellType.Event: return cell.EventConsumed ? (Color?)null : Color.white;
                 case CellType.Boss: return new Color(1f, 0f, 0.1f);
                 // Violeta apagado una vez leido (EventConsumed, ver DungeonManager.OnPlayerEnterCell)
                 // -- distingue de un lejos "esto ya lo leiste" de un violeta brillante "todavia hay
@@ -165,14 +165,11 @@ namespace Gameplay
         public static readonly LegendEntry[] MarkerLegend =
         {
             new LegendEntry(Color.magenta, "Vos", "Tu posicion actual y hacia donde estas mirando."),
-            new LegendEntry(Color.green, "Inicio", "Punto de entrada a este piso."),
-            new LegendEntry(Color.red, "Salida", "Punto final de este piso."),
             new LegendEntry(Color.yellow, "Mision secundaria", "Objetivo opcional de este piso."),
             new LegendEntry(new Color(0.2f, 0.4f, 1f), "Interruptor de atajo", "Actívalo para abrir un teletransporte permanente hacia la zona aislada."),
             new LegendEntry(new Color(0.85f, 0.45f, 0.1f), "Llegada de atajo", "Donde aparecés al usar el teletransporte del interruptor."),
             new LegendEntry(Color.cyan, "Escalera (subir)", "Lleva al piso de arriba."),
             new LegendEntry(new Color(1f, 0.5f, 0f), "Escalera (bajar)", "Lleva al piso de abajo."),
-            new LegendEntry(Color.white, "Evento", "Casilla con un evento sin activar todavia."),
             new LegendEntry(new Color(1f, 0f, 0.1f), "Jefe", "La celda exacta del jefe, dentro de su sala."),
             new LegendEntry(new Color(0.75f, 0.35f, 1f), "Fragmento de lore", "Desbloquea una entrada del Códex al pisarla. Se apaga (violeta grisáceo) una vez leído."),
             new LegendEntry(new Color(0.55f, 0.1f, 0.1f), "Puerta bloqueada", "Hay que activar su palanca para abrirla de forma permanente."),

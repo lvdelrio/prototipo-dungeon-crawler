@@ -108,9 +108,10 @@ namespace DungeonGen
         public TrapKind TrapKind;
         public bool HasTrapRoom => TrapRoomCells != null && TrapRoomCells.Count > 0;
 
-        // A que bioma pertenece este piso (0 = el original). Los pisos con Biome != 0 se generan
-        // aparte (ver DungeonGenerator.GenerateBiomeGateFloor) y quedan fuera de la secuencia
-        // normal de escaleras -- solo se llega vía CellType.BiomeGate.
+        // A que bioma pertenece este piso (0 = el original). Los pisos con Biome != 0 son su propia
+        // mazmorra aparte (ver Gameplay/DungeonManager.GenerateAndEnterDungeon), con su propia
+        // secuencia de escaleras ENTRE ELLOS -- pero nunca conectada por escalera a los pisos de
+        // Biome 0: al primero de ellos solo se llega vía CellType.BiomeGate.
         public int Biome;
 
         // Posicion de la celda BiomeGate ("Puerta Fria") de este piso, si tiene una, y de la

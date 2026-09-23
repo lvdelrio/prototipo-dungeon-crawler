@@ -85,9 +85,9 @@ namespace Combat
         public const float PoiseDamageBasicAttack = 0.5f;
         public const float PoiseDamageWeaknessHit = 1.6f;
 
-        // Alquimista (CharacterStats.AttacksAreAoe): tanto el ataque basico como la habilidad pegan
-        // a TODOS los enemigos vivos a la vez, pero con este descuento por objetivo -- si no,
-        // barrer la pantalla entera sin penalidad seria estrictamente mejor que pegarle a uno solo.
+        // Alquimista (CharacterStats.SkillIsAoe): su habilidad pega a TODOS los enemigos vivos a la
+        // vez, pero con este descuento por objetivo -- si no, barrer la pantalla entera sin
+        // penalidad seria estrictamente mejor que pegarle a uno solo.
         public const float AoeDamageMultiplier = 0.65f;
 
         // Trovador (CharacterStats.IsVersatileBuffSkill): cuanto sube el Ataque de un aliado
@@ -302,33 +302,16 @@ namespace Combat
 
                 case ActionType.Attack:
                 {
+                    // El ataque basico SIEMPRE es a un solo objetivo, para toda clase (incluido el
+                    // Alquimista: solo su HABILIDAD es AoE, ver CharacterStats.SkillIsAoe mas abajo).
                     Element element = ResolveElement(actor, actor.AttackElement);
-                    if (actor.AttacksAreAoe)
-                    {
-                        var targets = Enemies.Where(e => e.IsAlive).ToList();
-                        if (targets.Count == 0) break;
-                        var parts = new List<string>();
-                        int aoePower = (int)Math.Round(actor.EffectiveAttack * AoeDamageMultiplier);
-                        foreach (var t in targets)
-                        {
-                            int dmgEach = ComputeDamageVsEnemy(aoePower, element, t, out string noteEach, out bool weakEach, actor.Luck);
-                            ApplyDamageToEnemy(t, dmgEach, isBasicAttack: true, isWeaknessHit: weakEach, out bool brokeEach, actor);
-                            parts.Add($"{t.Name} {dmgEach}{noteEach}{(brokeEach ? " ¡Rota!" : "")}");
-                        }
-                        ConsumeLoadedBullet(actor);
-                        int regenAoe = RegenTpOnHit(actor);
-                        log.Add($"{actor.Name} ataca a TODOS: {string.Join(", ", parts)}.{(regenAoe > 0 ? $" (+{regenAoe} TP)" : "")}");
-                    }
-                    else
-                    {
-                        var target = PickAliveEnemy(action.TargetEnemyIndex);
-                        if (target == null) break;
-                        int dmg = ComputeDamageVsEnemy(actor.EffectiveAttack, element, target, out string note, out bool isWeak, actor.Luck);
-                        ApplyDamageToEnemy(target, dmg, isBasicAttack: true, isWeaknessHit: isWeak, out bool poiseBroke, actor);
-                        ConsumeLoadedBullet(actor);
-                        int regenAtk = RegenTpOnHit(actor);
-                        log.Add($"{actor.Name} ataca a {target.Name}: {dmg} de daño.{note}{(poiseBroke ? " ¡Guardia rota!" : "")}{(regenAtk > 0 ? $" (+{regenAtk} TP)" : "")}");
-                    }
+                    var target = PickAliveEnemy(action.TargetEnemyIndex);
+                    if (target == null) break;
+                    int dmg = ComputeDamageVsEnemy(actor.EffectiveAttack, element, target, out string note, out bool isWeak, actor.Luck);
+                    ApplyDamageToEnemy(target, dmg, isBasicAttack: true, isWeaknessHit: isWeak, out bool poiseBroke, actor);
+                    ConsumeLoadedBullet(actor);
+                    int regenAtk = RegenTpOnHit(actor);
+                    log.Add($"{actor.Name} ataca a {target.Name}: {dmg} de daño.{note}{(poiseBroke ? " ¡Guardia rota!" : "")}{(regenAtk > 0 ? $" (+{regenAtk} TP)" : "")}");
                     break;
                 }
 
@@ -421,25 +404,25 @@ namespace Combat
                         Element element = ResolveElement(actor, actor.SkillElement);
                         int basePower = actor.SkillUsesMagicAttack ? actor.MagicAttack : actor.EffectiveAttack;
 
-                        if (actor.AttacksAreAoe)
+                        if (actor.SkillIsAoe)
                         {
                             var targets = Enemies.Where(e => e.IsAlive).ToList();
                             if (targets.Count == 0) break;
 
+                            // Sin TP para la habilidad AoE: cae al ataque basico normal, que SIEMPRE
+                            // es a un solo objetivo (nunca a todos, ni siquiera para el Alquimista) --
+                            // como el submit de una habilidad AoE nunca pide target, se usa el primer
+                            // enemigo vivo (mismo criterio de PickAliveEnemy con indice invalido).
                             if (actor.TP < actor.SkillTpCost)
                             {
+                                var basicTarget = PickAliveEnemy(action.TargetEnemyIndex);
+                                if (basicTarget == null) break;
                                 Element basicElement = ResolveElement(actor, actor.AttackElement);
-                                int basicAoePower = (int)Math.Round(actor.EffectiveAttack * AoeDamageMultiplier);
-                                var partsBasic = new List<string>();
-                                foreach (var t in targets)
-                                {
-                                    int dmgEach = ComputeDamageVsEnemy(basicAoePower, basicElement, t, out string noteEach, out bool weakEach, actor.Luck);
-                                    ApplyDamageToEnemy(t, dmgEach, isBasicAttack: true, isWeaknessHit: weakEach, out bool brokeEach, actor);
-                                    partsBasic.Add($"{t.Name} {dmgEach}{noteEach}{(brokeEach ? " ¡Rota!" : "")}");
-                                }
+                                int dmgBasic = ComputeDamageVsEnemy(actor.EffectiveAttack, basicElement, basicTarget, out string noteBasic, out bool weakBasic, actor.Luck);
+                                ApplyDamageToEnemy(basicTarget, dmgBasic, isBasicAttack: true, isWeaknessHit: weakBasic, out bool brokeBasic, actor);
                                 ConsumeLoadedBullet(actor);
-                                int regenNoTpAoe = RegenTpOnHit(actor);
-                                log.Add($"{actor.Name} no tiene TP, ataca normal a TODOS: {string.Join(", ", partsBasic)}.{(regenNoTpAoe > 0 ? $" (+{regenNoTpAoe} TP)" : "")}");
+                                int regenNoTp = RegenTpOnHit(actor);
+                                log.Add($"{actor.Name} no tiene TP, ataca normal a {basicTarget.Name}: {dmgBasic}{noteBasic}{(brokeBasic ? " ¡Rota!" : "")}{(regenNoTp > 0 ? $" (+{regenNoTp} TP)" : "")}");
                                 break;
                             }
 
@@ -521,6 +504,13 @@ namespace Combat
             }
 
             int dmg = Math.Max(1, enemy.Attack - target.EffectiveDefense / 2);
+
+            // Resistencia elemental (Chest/Greaves equipados, ver CharacterStats.Resistances): recien
+            // ahora AttackElement de un enemigo (seteado en EnemyFactory) tiene algun efecto real.
+            int resistPercent = target.ResistancePercentFor(enemy.AttackElement);
+            if (resistPercent > 0)
+                dmg = Math.Max(1, dmg - (int)Math.Round(dmg * resistPercent / 100f));
+
             bool wasGuarding = target.IsGuarding;
             if (wasGuarding) dmg = Math.Max(1, dmg / 2);
             target.HP = Math.Max(0, target.HP - dmg);

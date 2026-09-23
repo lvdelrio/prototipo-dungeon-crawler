@@ -252,6 +252,11 @@ namespace Gameplay
         // vez) lo arranca desde el inicio de su ruta con HP lleno.
         public void SaveStateTo(DungeonFloor floor)
         {
+            // Si la patrulla lo dejo justo parado en una escalera (celda comun de su ruta como
+            // cualquier otra), un paso atras en su propia ruta ANTES de guardar: sin esto, volver a
+            // usar esa misma escalera mas tarde te aparecia justo encima de el.
+            StepOffStairs(floor);
+
             floor.FoeSavedX = X;
             floor.FoeSavedY = Y;
             floor.FoeSavedHp = _hp;
@@ -259,6 +264,28 @@ namespace Gameplay
             floor.FoeSavedRouteIndex = _routeIndex;
             floor.FoeSavedRouteDir = _routeDir;
             floor.FoeSavedStunnedSteps = _stunnedSteps;
+        }
+
+        // Retrocede por la ruta (misma direccion en la que venia caminando, invertida) hasta que la
+        // celda actual ya no sea una escalera, o hasta agotar la ruta -- lo normal es 1 sola
+        // iteracion, el bucle es solo para el caso raro de 2 escaleras seguidas en la ruta.
+        private void StepOffStairs(DungeonFloor floor)
+        {
+            var route = _floor.FoePatrolRoute;
+            if (route.Count <= 1) return;
+
+            for (int i = 0; i < route.Count; i++)
+            {
+                var type = floor.Cells[X, Y].Type;
+                if (type != CellType.StairsUp && type != CellType.StairsDown) return;
+
+                int back = _routeIndex - _routeDir;
+                if (back < 0 || back >= route.Count) back = _routeIndex + _routeDir; // el limite de la ruta ES la escalera: probar para el otro lado
+                if (back < 0 || back >= route.Count) return; // ruta de 1 sola celda y esa es la escalera: no hay adonde retroceder
+
+                _routeIndex = back;
+                (X, Y) = route[_routeIndex];
+            }
         }
 
         private static int Chebyshev(int x1, int y1, int x2, int y2) => Mathf.Max(Mathf.Abs(x1 - x2), Mathf.Abs(y1 - y2));

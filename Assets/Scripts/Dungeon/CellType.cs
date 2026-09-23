@@ -10,7 +10,6 @@ namespace DungeonGen
         ShortcutLanding,
         StairsUp,
         StairsDown,
-        Event,
         Boss,
         // Fragmento de lore (metroidvania): al pisarla se desbloquea una entrada del Codex, y esa
         // entrada es lo que hace falta saber para poder activar el atajo (ShortcutGate) de este

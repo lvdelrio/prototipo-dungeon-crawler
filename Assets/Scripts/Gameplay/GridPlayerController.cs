@@ -52,7 +52,18 @@ namespace Gameplay
         {
             if (_busy || dungeonManager == null || !dungeonManager.IsReady) return; // IsReady en false = todavia esta el menu inicial (Continuar/Nueva Partida)
             if (dungeonManager.IsCombatActive || dungeonManager.IsGameOverShopActive) return; // congelado en combate o en la tienda post-derrota
-            if (dialogueManager != null && dialogueManager.IsActive) return; // congelado mientras hay un dialogo en pantalla
+            if (dialogueManager != null && dialogueManager.IsActive)
+            {
+                // Espacio avanza el dialogo (solo si NO tiene opciones -- esas se eligen con su
+                // propio boton, nunca con Espacio, para no elegir "la primera" sin querer). Se
+                // resuelve ACA (no en un Update() propio de DialogueHUD) y se corta con return
+                // para consumir el input en este mismo frame: si no, el mismo Espacio que cierra
+                // el dialogo podia colarse tambien como el "interactuar" de mas abajo en este
+                // mismo Update().
+                if (dialogueManager.Choices == null && Input.GetKeyDown(KeyCode.Space))
+                    dialogueManager.Advance();
+                return; // congelado mientras el dialogo siga en pantalla
+            }
 
             // El menu de pausa (Codex/Equipamiento/Formacion/Guardar) solo se puede abrir "en modo
             // caminar" -- no en combate, dialogo o la tienda post-run (ya cubierto por los checks

@@ -391,38 +391,41 @@ namespace Gameplay
             b.IsFrontRow = aWasFront;
         }
 
-        // Cambia el accesorio equipado de una clase (menu de pausa, fuera de combate) y ajusta al
-        // toque las stats del personaje YA CREADO (no solo el guardado permanente): resta el bonus
-        // del item anterior y suma el del nuevo, incluyendo el HP actual si cambia el maximo (asi
-        // no hace falta esperar a la proxima run para ver el efecto ni recrear la party entera).
-        public void SetEquippedItemLive(MetaProgress meta, CharacterClass cls, string newItemId)
+        // Cambia la INSTANCIA equipada en UN slot de una clase (menu de pausa, fuera de combate) y
+        // ajusta al toque las stats del personaje YA CREADO (no solo el guardado permanente):
+        // recalcula la suma de TODOS sus 6 slots antes y despues del cambio y aplica la diferencia,
+        // incluyendo el HP actual si cambia el maximo (asi no hace falta esperar a la proxima run
+        // para ver el efecto ni recrear la party entera). Devuelve false si el cambio no era valido
+        // (instancia no poseida, ya puesta en otro slot, no calza en este slot, o arma restringida
+        // a otras clases -- ver MetaProgress.SetEquippedInstance) y en ese caso no toca nada.
+        public bool SetEquippedItemLive(MetaProgress meta, CharacterClass cls, EquipmentSlotType slot, string newInstanceId, int accessoryIndex = 0)
         {
-            if (!CanChangeFormation || meta == null) return;
+            if (!CanChangeFormation || meta == null) return false;
             var character = Party.FirstOrDefault(p => p.Class == cls);
-            if (character == null) return;
+            if (character == null) return false;
 
-            var oldItem = EquipmentCatalog.Find(meta.GetEquippedItemId(cls));
-            meta.SetEquippedItem(cls, newItemId);
-            var newItem = EquipmentCatalog.Find(newItemId);
+            var before = EquipmentTotals.From(meta.GetEquippedItems(cls));
+            if (!meta.SetEquippedInstance(cls, slot, newInstanceId, accessoryIndex)) return false;
+            var after = EquipmentTotals.From(meta.GetEquippedItems(cls));
 
-            int dAtk = (newItem?.AttackBonus ?? 0) - (oldItem?.AttackBonus ?? 0);
-            int dDef = (newItem?.DefenseBonus ?? 0) - (oldItem?.DefenseBonus ?? 0);
-            int dSpd = (newItem?.SpeedBonus ?? 0) - (oldItem?.SpeedBonus ?? 0);
-            int dHp = (newItem?.MaxHpBonus ?? 0) - (oldItem?.MaxHpBonus ?? 0);
-
-            character.Attack += dAtk;
-            character.Defense += dDef;
-            character.Speed += dSpd;
+            character.Attack += after.Attack - before.Attack;
+            character.MagicAttack += after.MagicAttack - before.MagicAttack;
+            character.Defense += after.Defense - before.Defense;
+            character.Speed += after.Speed - before.Speed;
+            character.Evasion += after.Evasion - before.Evasion;
+            int dHp = after.MaxHp - before.MaxHp;
             character.MaxHP += dHp;
             character.HP = Mathf.Clamp(character.HP + dHp, 1, character.MaxHP);
 
-            // Estos no son deltas (solo un accesorio a la vez, nunca se suman): se pisan directo
-            // con lo que traiga el nuevo item, o quedan en nada si se desequipo.
-            character.OnHitStatusName = newItem?.OnHitStatusName;
-            character.OnHitStatusChancePercent = newItem?.OnHitStatusChancePercent ?? 0;
-            character.OnHitStatusDamagePercent = newItem?.OnHitStatusDamagePercent ?? 0;
-            character.OnHitStatusRounds = newItem?.OnHitStatusRounds ?? 0;
-            character.ThornsReflectPercent = newItem?.ThornsReflectPercent ?? 0;
+            // Estos no son deltas: se recalculan enteros desde los items equipados (ninguna clase
+            // los tiene de base fuera del equipo, asi que pisarlos con el total actual es seguro).
+            character.OnHitStatusName = after.OnHitWeapon?.OnHitStatusName;
+            character.OnHitStatusChancePercent = after.OnHitWeapon?.OnHitStatusChancePercent ?? 0;
+            character.OnHitStatusDamagePercent = after.OnHitWeapon?.OnHitStatusDamagePercent ?? 0;
+            character.OnHitStatusRounds = after.OnHitWeapon?.OnHitStatusRounds ?? 0;
+            character.ThornsReflectPercent = after.Thorns;
+            character.Resistances = after.Resistances;
+            return true;
         }
 
         private void AdvanceChooser()

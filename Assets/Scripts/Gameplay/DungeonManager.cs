@@ -11,14 +11,19 @@ namespace Gameplay
     public class DungeonManager : MonoBehaviour
     {
         public DungeonSettings settings;
-        public EventTableAsset eventTable;
         public GridPlayerController player;
         public DungeonLevelBuilder levelBuilder;
         public DebugHUD hud;
         public CombatManager combat;
 
+        // Caja de dialogo (DialogueHUD) para eventos que merecen una pausa y un click de
+        // confirmacion (cofre/palanca/lore) en vez de la linea ambiente del DebugHUD -- reusa el
+        // DialogueManager que ya cuelga de GridPlayerController (mismo que el demo de taberna),
+        // asi que no hace falta cablear una referencia nueva en el Inspector.
+        private DialogueManager Dialogue => player != null ? player.dialogueManager : null;
+
         private const int TreasurePointsReward = 25;
-        private static readonly string[] TreasureWeaponIds = { "daga_venenosa", "hacha_desgarradora", "escudo_espinas" };
+        private static readonly string[] TreasureEquipmentIds = { "daga_venenosa", "hacha_desgarradora", "anillo_de_espinas", "grebas_aislantes", "tunica_ignifuga", "manto_glacial" };
         // Fraccion del HP maximo que una trampa (ver DungeonGenerator.AddTrapRoom) le saca a CADA
         // integrante vivo cuando se activa. Ya no hay probabilidad de por medio: SpikeCells duele
         // apenas se pisa, y ArrowSweep dispara una flecha real (ver TrapDisparadorController) que
@@ -49,8 +54,9 @@ namespace Gameplay
         private TrapDisparadorController _activeTrapDisparador;
         private int _activeTrapDisparadorFloorIndex = -1;
 
-        // Indice en _floors del piso del Bioma 2 (Cueva Intergaláctica, ver
-        // DungeonGenerator.GenerateBiomeGateFloor), -1 si todavia no se genero ninguno para esta run.
+        // Indice en _floors del PRIMER piso del Bioma 2 (Cueva Intergaláctica, ver
+        // GenerateAndEnterDungeon -- el bioma tiene varios pisos propios, este es solo el punto de
+        // entrada/salida), -1 si todavia no se genero ninguno para esta run.
         private int _biomeGateFloorIndex = -1;
 
         private MetaProgress _meta;
@@ -124,14 +130,16 @@ namespace Gameplay
             GenerateAndEnterDungeon(seed);
         }
 
+        // Cuantos pisos propios tiene el Bioma 2 (Cueva Intergalactica) -- "piso 1" y "piso 2" del
+        // bioma, con el jefe (Kadulu) en el ultimo. Fijo, a diferencia de settings.floorCount: el
+        // Bioma 2 es siempre este mismo tamano, no algo que se ajuste por partida.
+        private const int Biome2FloorCount = 2;
+
         private void GenerateAndEnterDungeon(int seed)
         {
             _floors = _generator.GenerateDungeon(
-                settings.floorCount, settings.size, settings.size, seed,
-                settings.eventPercent, out var log,
-                eventTable != null ? eventTable.entries : null,
+                settings.floorCount, settings.size, settings.size, seed, out var log,
                 settings.stairPairsPerFloor,
-                settings.eventsPerFloor,
                 settings.bossFloorStart,
                 settings.bossFloorInterval,
                 settings.voidFraction,
@@ -141,14 +149,29 @@ namespace Gameplay
 
             foreach (var line in log) Debug.Log(line);
 
-            // Bioma 2 (Cueva Intergaláctica): un piso extra, generado aparte y apendiado al final
-            // de _floors, solo alcanzable a traves de la Puerta Fria del piso 0 (ver
-            // CellType.BiomeGate / TryInteract) -- nunca por la secuencia normal de escaleras.
-            var biomeRng = new System.Random(seed ^ 0x5EED1234);
-            var biomeFloor = _generator.GenerateBiomeGateFloor(settings.size, settings.size, _floors.Count, biomeRng,
-                settings.dangerValueMin, settings.dangerValueMax);
-            _floors.Add(biomeFloor);
-            _biomeGateFloorIndex = biomeFloor.Index;
+            // Bioma 2 (Cueva Intergaláctica): un laberinto COMPLETO nuevo por derecho propio -- no
+            // "el piso siguiente" del Bioma 1, sino su propia mazmorra de Biome2FloorCount pisos,
+            // generada con el MISMO motor (mismas caracteristicas: jefe, trampas, candado+palanca,
+            // cofres, lore, FOE) y apendiada a _floors. indexOffset la numera a continuacion de la
+            // ultima del Bioma 1, asi las escaleras internas del propio Bioma 2 salen bien solas.
+            // Solo se llega a su primer piso a traves de la Puerta Fria del piso 0 del Bioma 1 (ver
+            // CellType.BiomeGate / TryInteract) -- nunca por la secuencia normal de escaleras del
+            // Bioma 1, que nunca conecta con el.
+            var biomeFloors = _generator.GenerateDungeon(
+                Biome2FloorCount, settings.size, settings.size, seed ^ 0x5EED1234, out var biomeLog,
+                stairPairsPerFloor: settings.stairPairsPerFloor,
+                bossFloorStart: Biome2FloorCount - 1,
+                bossFloorInterval: 1,
+                voidFraction: settings.voidFraction,
+                dangerValueMin: settings.dangerValueMin,
+                dangerValueMax: settings.dangerValueMax,
+                loreIdPool: BuildLorePool(),
+                indexOffset: _floors.Count,
+                biome: 1);
+            foreach (var line in biomeLog) Debug.Log(line);
+
+            _floors.AddRange(biomeFloors);
+            _biomeGateFloorIndex = biomeFloors[0].Index;
 
             _bossDefeatedFloors.Clear();
             _deepestFloorReachedThisRun = 0;
@@ -161,7 +184,7 @@ namespace Gameplay
 
             var start = CurrentFloor.StartPos;
             player.Warp(start.x, start.y, Direction.North);
-            OnPlayerEnterCell(start.x, start.y);
+            OnPlayerEnterCell(start.x, start.y, advanceFoe: false);
             IsReady = true;
         }
 
@@ -273,19 +296,24 @@ namespace Gameplay
             return floor.InBounds(nx, ny) && floor.Cells[nx, ny].Type != CellType.Void;
         }
 
-        public void OnPlayerEnterCell(int x, int y)
+        // advanceFoe=false en los 3 lugares que TELETRANSPORTAN al jugador en vez de moverlo un
+        // paso real (spawn inicial, atajo, cambio de piso por escalera -- ver los call sites): sin
+        // esto, aparecer justo en la celda donde el FOE ya estaba parado (perfectamente posible, es
+        // una celda caminable comun de su ruta) disparaba combate en el mismo frame de llegada, sin
+        // ninguna chance de esquivarlo. Un paso real del jugador (GridPlayerController) si lo avanza.
+        public void OnPlayerEnterCell(int x, int y, bool advanceFoe = true)
         {
             var cell = CurrentFloor.Cells[x, y];
             cell.Discovered = true;
 
-            if ((cell.Type == CellType.Normal || cell.Type == CellType.Event) && !IsCombatActive)
+            if (cell.Type == CellType.Normal && !IsCombatActive)
                 AccumulateDangerAndMaybeEncounter(cell);
 
             // El FOE (ver Gameplay/FoeController) da UN paso por cada paso del jugador -- si eso lo
             // deja en la MISMA celda, colisiona y arranca un combate 1 contra 1 (huida mas dificil,
             // ver CombatManager.StartFoeEncounter). No avanza mientras ya hay un combate en curso
             // (p.ej. el encuentro random de esta misma celda ya empezo primero).
-            if (_activeFoe != null && !IsCombatActive)
+            if (advanceFoe && _activeFoe != null && !IsCombatActive)
             {
                 bool collided = _activeFoe.AdvanceStep(x, y);
                 if (collided) combat.StartFoeEncounter(EnemyFactory.CreateFoe(_currentFloorIndex));
@@ -314,10 +342,22 @@ namespace Gameplay
             }
 
             // Sala de pistas (ver DungeonGenerator.AddLoreCorridorRoom): pisar una celda de la
-            // grilla que NO es piso real duele igual que una trampa de picos -- el tell (ver
-            // DungeonLevelBuilder.BuildPuzzleTile) es lo unico que te avisa antes de pisar.
+            // grilla que NO es piso real. En Goteras (agua) el piso directamente NO ESTA (ver
+            // DungeonLevelBuilder.Build) y esto te hace caer de verdad al piso de abajo -- no
+            // duele, la particula rosada es una guia de camino, no una trampa. Brasas/Polvo de
+            // Cuarzo siguen ocultos: duele igual que una trampa de picos, el tell de particulas
+            // (ver DungeonLevelBuilder.BuildPuzzleTile) es lo unico que avisa antes de pisar.
             if (cell.IsPuzzleTile && !cell.IsPuzzleTileSafe && !IsCombatActive)
+            {
+                if (CurrentFloor.LoreCorridorKind == PuzzleKind.Goteras && _currentFloorIndex + 1 < _floors.Count)
+                {
+                    var below = _floors[_currentFloorIndex + 1];
+                    ChangeFloor(_currentFloorIndex + 1, below.StartPos.x, below.StartPos.y);
+                    if (hud != null) hud.SetLastMessage("¡El piso cede bajo tus pies! Caes al piso de abajo.");
+                    return;
+                }
                 ApplyTrapDamage("¡El piso cede bajo tus pies!");
+            }
 
             string message = null;
             switch (cell.Type)
@@ -349,16 +389,6 @@ namespace Gameplay
                         ? "El jefe de este piso ya fue derrotado. La escalera para avanzar esta en esta sala."
                         : "Sala del jefe. Presiona Espacio para enfrentarlo.";
                     break;
-                case CellType.Event:
-                    if (!cell.EventConsumed)
-                    {
-                        cell.EventConsumed = true;
-                        var ev = cell.AssignedEvent;
-                        message = ev != null
-                            ? $"Evento ({(ev.IsLucky ? "afortunado" : "desafortunado")}): {ev.Name} - {ev.Description}"
-                            : "Evento activado.";
-                    }
-                    break;
                 case CellType.Lore:
                     // "Ya lo conocias" se decide ANTES de UnlockLore (que es idempotente y no
                     // devuelve si ya estaba desbloqueado de una run anterior, solo si esta celda en
@@ -373,11 +403,13 @@ namespace Gameplay
                         cell.EventConsumed = true;
                         MetaSaveService.Save(_meta);
                         var entry = LoreCatalog.Find(cell.AssignedLoreId);
-                        message = wasAlreadyKnown
+                        string loreMessage = wasAlreadyKnown
                             ? $"Ya conocías este fragmento de lore: \"{(entry != null ? entry.Title : cell.AssignedLoreId)}\" (no había ninguno nuevo para este piso)."
                             : entry != null
                                 ? $"¡Nuevo fragmento de lore! \"{entry.Title}\" (revisa el Códex en el menú de pausa)."
                                 : "¡Encontraste un fragmento de lore!";
+                        if (Dialogue != null) Dialogue.Show("Códex", loreMessage);
+                        else message = loreMessage; // fallback: linea ambiente si no hay DialogueManager
                     }
                     break;
                 case CellType.LockedDoor:
@@ -402,7 +434,11 @@ namespace Gameplay
                     message = "Una corriente helada sale de la grieta que acabas de abrir. Presiona Espacio para cruzar.";
                     break;
                 case CellType.Start:
-                    if (CurrentFloor.Biome != 0)
+                    // Solo el Start del PRIMER piso del Bioma 2 es la vuelta a la Puerta Fria -- el
+                    // resto de sus pisos (ahora el bioma tiene varios, ver GenerateAndEnterDungeon)
+                    // tambien tienen su propio Start (todo piso lo tiene, es de donde arrancarias si
+                    // entraras por ahi), pero ese es solo un marcador normal, no una salida.
+                    if (CurrentFloor.Biome != 0 && _currentFloorIndex == _biomeGateFloorIndex)
                         message = "La Puerta Fría, del otro lado. Presiona Espacio para volver.";
                     break;
             }
@@ -412,42 +448,67 @@ namespace Gameplay
         // Cofre garantizado (3 a 5 por piso, ver DungeonGenerator.EnsureTreasure): 50% plata, 30%
         // un arma con habilidad (veneno/sangrado/espinas -- si ya la tenes, plata equivalente en
         // vez de un duplicado inutil), 20% herramienta (un accesorio utilitario, o si ya lo tenes,
-        // una carga extra de exploracion al azar).
-        private string RollTreasureLoot()
+        // una carga extra de exploracion al azar). El PRIMER cofre que abris en toda la partida
+        // (ver MetaProgress.FirstChestBonusGiven) suma ademas, siempre, una carga de Perforador de
+        // regalo -- sin depender del sorteo, para que jugar la primera vez nunca te deje sin forma
+        // de perforar un camino cerrado. foundItem sale null salvo que el premio sea un equipo
+        // nuevo (arma/herramienta): en ese caso el llamador (ver ShowItemFoundDialogue) arma un
+        // dialogo mas rico con nombre/descripcion/stats/clases en vez de solo el mensaje plano.
+        private (string message, EquipmentItem foundItem) RollTreasureLoot()
         {
+            string firstChestBonus = "";
+            if (!_meta.FirstChestBonusGiven)
+            {
+                _meta.FirstChestBonusGiven = true;
+                _meta.DrillCharges++;
+                firstChestBonus = " Ademas, tu primer cofre trae de regalo +1 carga de Perforador.";
+            }
+
             float roll = Random.value;
             if (roll < 0.5f)
             {
                 _meta.BankedPoints += TreasurePointsReward;
-                return $"¡Encontraste un cofre! +{TreasurePointsReward} puntos.";
+                return ($"¡Encontraste un cofre! +{TreasurePointsReward} puntos.{firstChestBonus}", null);
             }
 
             if (roll < 0.8f)
             {
-                string weaponId = TreasureWeaponIds[Random.Range(0, TreasureWeaponIds.Length)];
-                var weapon = EquipmentCatalog.Find(weaponId);
-                if (_meta.OwnsItem(weaponId))
+                string equipId = TreasureEquipmentIds[Random.Range(0, TreasureEquipmentIds.Length)];
+                var equip = EquipmentCatalog.Find(equipId);
+                if (_meta.OwnsItem(equipId))
                 {
-                    _meta.BankedPoints += weapon.Cost;
-                    return $"¡Encontraste un cofre! Ya tenías {weapon.Name} -- +{weapon.Cost} puntos en su lugar.";
+                    _meta.BankedPoints += equip.Cost;
+                    return ($"¡Encontraste un cofre! Ya tenías {equip.Name} -- +{equip.Cost} puntos en su lugar.{firstChestBonus}", null);
                 }
-                _meta.OwnedItemIds.Add(weaponId);
-                return $"¡Encontraste {weapon.Name}! {weapon.Description} (equipala desde el menú de pausa).";
+                _meta.AddToInventory(equipId);
+                return (firstChestBonus, equip);
             }
 
             const string toolId = "guantes_del_explorador";
             if (!_meta.OwnsItem(toolId))
             {
-                _meta.OwnedItemIds.Add(toolId);
-                var tool = EquipmentCatalog.Find(toolId);
-                return $"¡Encontraste {tool.Name}! {tool.Description}";
+                _meta.AddToInventory(toolId);
+                return (firstChestBonus, EquipmentCatalog.Find(toolId));
             }
 
             int roll2 = Random.Range(0, 3);
-            if (roll2 == 0) { _meta.MapCharges++; return "¡Encontraste un cofre! +1 carga de Mapa."; }
-            if (roll2 == 1) { _meta.DrillCharges++; return "¡Encontraste un cofre! +1 carga de Perforador."; }
+            if (roll2 == 0) { _meta.MapCharges++; return ($"¡Encontraste un cofre! +1 carga de Mapa.{firstChestBonus}", null); }
+            if (roll2 == 1) { _meta.DrillCharges++; return ($"¡Encontraste un cofre! +1 carga de Perforador.{firstChestBonus}", null); }
             _meta.IncenseCharges++;
-            return "¡Encontraste un cofre! +1 carga de Incienso.";
+            return ($"¡Encontraste un cofre! +1 carga de Incienso.{firstChestBonus}", null);
+        }
+
+        // Dialogo de "encontraste un item" (ver caja de dialogo en Gameplay/DialogueHUD): nombre,
+        // descripcion, que stats sube y que clases lo pueden usar -- si por algun motivo no hay
+        // DialogueManager disponible (p.ej. un harness de test), cae de vuelta a la linea ambiente
+        // del DebugHUD con un resumen mas corto.
+        private void ShowItemFoundDialogue(EquipmentItem item, string extraNote)
+        {
+            string text = $"¡Encontraste {item.Name}!\n{item.Description}\n\nBonus: {item.DescribeStats()}\nClases: {item.DescribeAllowedClasses()}";
+            if (!string.IsNullOrEmpty(extraNote)) text += $"\n{extraNote.Trim()}";
+
+            if (Dialogue != null) Dialogue.Show("Cofre", text);
+            else if (hud != null) hud.SetLastMessage($"¡Encontraste {item.Name}! {item.Description}");
         }
 
         private bool IsGateOpen(DungeonCell cell) =>
@@ -690,7 +751,7 @@ namespace Gameplay
                 if (_generator.TryGetTeleportTarget(CurrentFloor, x, y, out int tx, out int ty))
                 {
                     player.Warp(tx, ty, player.Facing);
-                    OnPlayerEnterCell(tx, ty);
+                    OnPlayerEnterCell(tx, ty, advanceFoe: false);
                     if (hud != null) hud.SetLastMessage("Te teletransportaste a traves del atajo.");
                 }
             }
@@ -715,7 +776,8 @@ namespace Gameplay
                 if (door == null) return;
                 if (door.IsUnlocked)
                 {
-                    if (hud != null) hud.SetLastMessage("La palanca ya esta activada.");
+                    if (Dialogue != null) Dialogue.Show("Palanca", "La palanca ya esta activada.");
+                    else if (hud != null) hud.SetLastMessage("La palanca ya esta activada.");
                     return;
                 }
                 int doorIndex = CurrentFloor.LockedDoors.IndexOf(door);
@@ -725,19 +787,23 @@ namespace Gameplay
                 // (el CellType sigue siendo LockedDoor), asi que el cambio a verde va DESPUES.
                 BuildActiveFloor();
                 levelBuilder.UnlockDoorVisual(door.DoorX, door.DoorY);
-                if (hud != null) hud.SetLastMessage("¡Activaste la palanca! El candado se abrio de forma permanente.");
+                if (Dialogue != null) Dialogue.Show("Palanca", "¡Activaste la palanca! El candado se abrio de forma permanente.");
+                else if (hud != null) hud.SetLastMessage("¡Activaste la palanca! El candado se abrio de forma permanente.");
             }
             else if (cell.Type == CellType.Treasure)
             {
                 if (cell.EventConsumed)
                 {
-                    if (hud != null) hud.SetLastMessage("Este cofre ya esta vacio.");
+                    if (Dialogue != null) Dialogue.Show("Cofre", "Este cofre ya esta vacio.");
+                    else if (hud != null) hud.SetLastMessage("Este cofre ya esta vacio.");
                     return;
                 }
                 cell.EventConsumed = true;
-                string lootMessage = RollTreasureLoot();
+                var (lootMessage, foundItem) = RollTreasureLoot();
                 MetaSaveService.Save(_meta);
-                if (hud != null) hud.SetLastMessage(lootMessage);
+                if (foundItem != null) ShowItemFoundDialogue(foundItem, lootMessage);
+                else if (Dialogue != null) Dialogue.Show("Cofre", lootMessage);
+                else if (hud != null) hud.SetLastMessage(lootMessage);
             }
             else if (cell.Type == CellType.LockedDoor)
             {
@@ -747,13 +813,13 @@ namespace Gameplay
             {
                 EnterBiomeGateFloor();
             }
-            else if (cell.Type == CellType.Start && CurrentFloor.Biome != 0)
+            else if (cell.Type == CellType.Start && CurrentFloor.Biome != 0 && _currentFloorIndex == _biomeGateFloorIndex)
             {
                 ReturnFromBiomeGateFloor();
             }
         }
 
-        // Cruzar la Puerta Fria hacia el Bioma 2 (ver DungeonGenerator.GenerateBiomeGateFloor):
+        // Cruzar la Puerta Fria hacia el PRIMER piso del Bioma 2 (ver GenerateAndEnterDungeon):
         // solo llega hasta aca quien ya la encontro y la perforo (TryUseDrill generico), asi que
         // no hay ningun chequeo extra -- la pared ya era la unica barrera real.
         private void EnterBiomeGateFloor()
@@ -765,14 +831,28 @@ namespace Gameplay
         }
 
         // Vuelta al piso 0 desde el Bioma 2: se para sobre Start (que ahi no tiene otro uso, ya
-        // que a este piso nunca se entra por escalera) y aparece de vuelta justo donde perforo la
-        // Puerta Fria (DungeonFloor.BiomeGateApproachPos, ver PlaceBiomeGate).
+        // que a este piso nunca se entra por escalera) y aparece de vuelta EXACTAMENTE sobre la
+        // Puerta Fria (DungeonFloor.BiomeGatePos, ver PlaceBiomeGate) -- no un paso mas atras en
+        // BiomeGateApproachPos, que dejaba al jugador del otro lado de la puerta en vez de encima
+        // de ella. Es seguro: cruzar de vuelta exige interactuar (TryInteract/CellType.BiomeGate),
+        // aparecer parado ahi no dispara nada solo por pisarlo (ver OnPlayerEnterCell).
         private void ReturnFromBiomeGateFloor()
         {
-            var back = _floors[0].BiomeGateApproachPos;
+            var back = _floors[0].BiomeGatePos;
             if (!back.HasValue) return;
             ChangeFloor(0, back.Value.x, back.Value.y);
             if (hud != null) hud.SetLastMessage("Volvés a través de la Puerta Fría.");
+        }
+
+        // Etiqueta de piso para UI (minimapa/menu de pausa): el Bioma 2 tiene su PROPIA numeracion
+        // de piso (1, 2, ...) aunque internamente floorIndex siga la secuencia global de _floors
+        // (necesaria para que StairTargetFloor funcione) -- sin esto, el Bioma 2 se leia como "Piso
+        // 3" (continuando la numeracion del Bioma 1) en vez de la mazmorra propia que es.
+        public string FloorLabel(int floorIndex)
+        {
+            if (floorIndex < 0 || floorIndex >= _floors.Count) return $"Piso {floorIndex}";
+            if (_floors[floorIndex].Biome == 0 || _biomeGateFloorIndex < 0) return $"Piso {floorIndex}";
+            return $"Bioma 2 - Piso {floorIndex - _biomeGateFloorIndex + 1}";
         }
 
         public void ChangeFloor(int floorIndex, int spawnX, int spawnY)
@@ -783,7 +863,7 @@ namespace Gameplay
             BuildActiveFloor();
             RollNewEncounterThreshold();
             player.Warp(spawnX, spawnY, Direction.North);
-            OnPlayerEnterCell(spawnX, spawnY);
+            OnPlayerEnterCell(spawnX, spawnY, advanceFoe: false);
             if (hud != null) hud.SetLastMessage($"Cambiaste al piso {floorIndex}.");
         }
 

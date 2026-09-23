@@ -42,9 +42,10 @@ namespace Gameplay
             float top = panelY + 24;
 
             GUI.Box(new Rect(panelX - 10, panelY - 10, w * cellPixelSize + 20, h * cellPixelSize + 44), "");
+            string floorLabel = dungeonManager.FloorLabel(dungeonManager.CurrentFloorIndex);
             string title = playerMode
-                ? $"Mapa - Piso {dungeonManager.CurrentFloorIndex} (jugador - Tab: ver todo)"
-                : $"Mapa - Piso {dungeonManager.CurrentFloorIndex} (DEBUG: mapa completo - Tab: ocultar)";
+                ? $"Mapa - {floorLabel} (jugador - Tab: ver todo)"
+                : $"Mapa - {floorLabel} (DEBUG: mapa completo - Tab: ocultar)";
             GUI.Label(new Rect(panelX, panelY, w * cellPixelSize, 20), title);
 
             DungeonMapRenderer.Draw(new Vector2(panelX, top), floor, playerMode, cellPixelSize, wallPixelThickness,

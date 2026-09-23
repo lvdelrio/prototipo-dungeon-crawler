@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Combat;
 
 namespace Meta
@@ -13,6 +14,15 @@ namespace Meta
         public int BankedPoints;
         public int MapCharges;
         public int DrillCharges;
+
+        // Se pone en true la PRIMERA vez que el jugador abre CUALQUIER cofre (ver
+        // Gameplay.DungeonManager.RollTreasureLoot): ese cofre da, ademas de lo que le toco en el
+        // sorteo normal, una carga de Perforador de regalo -- para que nunca dependa de la suerte
+        // si en tu primera run efectivamente vas a poder seguir explorando mas alla de un camino
+        // cerrado. Se conserva entre runs de la misma partida (solo pasa una vez en total, no una
+        // vez por run).
+        public bool FirstChestBonusGiven;
+
         // Carga de Incienso: al usarse (ver DungeonManager.TryUseIncense) reduce a la mitad el
         // peligro que acumulan los pasos durante un tramo de exploracion, asi tardas mas en
         // toparte con un encuentro -- util para cruzar rapido un piso sin pelear tanto.
@@ -41,9 +51,13 @@ namespace Meta
         // nuevo cada vez que se pierde/gana, solo al arrancar una partida realmente nueva).
         public List<CharacterClass> PartyClasses = new List<CharacterClass>();
 
-        // Equipamiento: items comprados (catalogo en Combat/EquipmentItem.cs) y cual (si alguno)
-        // tiene puesto cada clase -- un solo accesorio por personaje, sin slots de arma/armadura.
-        public List<string> OwnedItemIds = new List<string>();
+        // Inventario: instancias fisicas concretas de items del catalogo (Combat/EquipmentItem.cs)
+        // que el jugador posee -- comprar/encontrar 2 veces el mismo item del catalogo da 2
+        // EquipmentInstance distintas, cada una equipable por separado. EquippedItems dice que
+        // INSTANCIA (no que catalogo-id) tiene puesta cada clase en cada uno de sus 6 slots
+        // (Arma/Pecho/Grebas/Pie/Accesorio 1/Accesorio 2); una misma instancia nunca puede estar en
+        // 2 slots a la vez (ver SetEquippedInstance) -- es una unica cosa fisica.
+        public List<EquipmentInstance> Inventory = new List<EquipmentInstance>();
         public List<EquipmentSlot> EquippedItems = new List<EquipmentSlot>();
 
         // Codex: ids de Lore.LoreCatalog ya descubiertos explorando la mazmorra (ver
@@ -173,31 +187,96 @@ namespace Meta
             return true;
         }
 
-        public bool OwnsItem(string itemId) => !string.IsNullOrEmpty(itemId) && OwnedItemIds.Contains(itemId);
+        // Cuantas instancias de este item del catalogo se poseen en total (equipadas o no).
+        public int CountOwned(string itemId) => string.IsNullOrEmpty(itemId) ? 0 : Inventory.Count(i => i.ItemId == itemId);
+        public bool OwnsItem(string itemId) => CountOwned(itemId) > 0;
+
+        // true si ESTA instancia fisica en particular esta puesta en algun slot de algun personaje
+        // ahora mismo -- una instancia equipada no puede volver a elegirse hasta desequiparla.
+        public bool IsInstanceEquipped(string instanceId) =>
+            !string.IsNullOrEmpty(instanceId) && EquippedItems.Any(e => e.InstanceId == instanceId);
+
+        // Crea una instancia NUEVA de este item del catalogo (id invalido -> no hace nada, devuelve
+        // null) y la agrega al inventario. Comprar/encontrar el mismo item 2 veces da 2 instancias
+        // independientes -- cada una se puede equipar en un personaje distinto.
+        public EquipmentInstance AddToInventory(string itemId)
+        {
+            if (EquipmentCatalog.Find(itemId) == null) return null;
+            var instance = new EquipmentInstance { InstanceId = Guid.NewGuid().ToString("N"), ItemId = itemId };
+            Inventory.Add(instance);
+            return instance;
+        }
 
         public bool TryPurchaseItem(string itemId)
         {
             var item = EquipmentCatalog.Find(itemId);
-            if (item == null || OwnsItem(itemId) || BankedPoints < item.Cost) return false;
+            if (item == null || BankedPoints < item.Cost) return false;
             BankedPoints -= item.Cost;
-            OwnedItemIds.Add(itemId);
+            AddToInventory(itemId);
             return true;
         }
 
-        public string GetEquippedItemId(CharacterClass cls) => EquippedItems.Find(e => e.Class == cls)?.ItemId;
+        public string GetEquippedInstanceId(CharacterClass cls, EquipmentSlotType slot, int accessoryIndex = 0) =>
+            EquippedItems.Find(e => e.Class == cls && e.Slot == slot && (slot != EquipmentSlotType.Accessory || e.AccessoryIndex == accessoryIndex))?.InstanceId;
 
-        // itemId vacio/null desequipa. Si se pide un item que no se posee, no hace nada (falla en
-        // silencio: la UI no deberia dejar llegar a este caso, pero por las dudas no corrompe nada).
-        public void SetEquippedItem(CharacterClass cls, string itemId)
+        // El EquipmentItem (catalogo) resuelto a partir de la instancia puesta en este slot, o null
+        // si esta vacio -- para mostrar nombre/stats en la UI sin que le importe el instanceId.
+        public EquipmentItem GetEquippedItem(CharacterClass cls, EquipmentSlotType slot, int accessoryIndex = 0)
         {
-            if (!string.IsNullOrEmpty(itemId) && !OwnsItem(itemId)) return;
-            var slot = EquippedItems.Find(e => e.Class == cls);
-            if (slot == null)
+            string instanceId = GetEquippedInstanceId(cls, slot, accessoryIndex);
+            var instance = string.IsNullOrEmpty(instanceId) ? null : Inventory.Find(i => i.InstanceId == instanceId);
+            return instance != null ? EquipmentCatalog.Find(instance.ItemId) : null;
+        }
+
+        // instanceId vacio/null desequipa. No hace nada (falla en silencio: la UI no deberia dejar
+        // llegar a estos casos, pero por las dudas no corrompe nada) si: la instancia no se posee,
+        // ya esta puesta en OTRO slot (una misma instancia fisica no puede estar en 2 lados a la
+        // vez -- hay que desequiparla de ahi primero), el item no es del tipo que corresponde a
+        // este slot (un Chest no entra en Weapon), o es un arma con clases permitidas y cls no esta
+        // entre ellas.
+        public bool SetEquippedInstance(CharacterClass cls, EquipmentSlotType slot, string instanceId, int accessoryIndex = 0)
+        {
+            if (!string.IsNullOrEmpty(instanceId))
             {
-                slot = new EquipmentSlot { Class = cls };
-                EquippedItems.Add(slot);
+                var instance = Inventory.Find(i => i.InstanceId == instanceId);
+                if (instance == null) return false;
+                var item = EquipmentCatalog.Find(instance.ItemId);
+                if (item == null || item.Slot != slot) return false;
+                if (item.AllowedClasses.Length > 0 && Array.IndexOf(item.AllowedClasses, cls) < 0) return false;
+
+                bool equippedInThisSameSlot = EquippedItems.Any(e => e.InstanceId == instanceId
+                    && e.Class == cls && e.Slot == slot && (slot != EquipmentSlotType.Accessory || e.AccessoryIndex == accessoryIndex));
+                if (IsInstanceEquipped(instanceId) && !equippedInThisSameSlot) return false;
             }
-            slot.ItemId = itemId ?? "";
+
+            var existing = EquippedItems.Find(e => e.Class == cls && e.Slot == slot && (slot != EquipmentSlotType.Accessory || e.AccessoryIndex == accessoryIndex));
+            if (existing == null)
+            {
+                existing = new EquipmentSlot { Class = cls, Slot = slot, AccessoryIndex = accessoryIndex };
+                EquippedItems.Add(existing);
+            }
+            existing.InstanceId = instanceId ?? "";
+            return true;
+        }
+
+        // Los hasta 6 items equipados por esta clase (Arma/Pecho/Grebas/Pie/Accesorio 1/Accesorio 2),
+        // resueltos a su EquipmentItem y sin nulls -- para sumar sus bonuses (ver ApplyUpgradesToParty
+        // y Gameplay.CombatManager.SetEquippedItemLive).
+        public List<EquipmentItem> GetEquippedItems(CharacterClass cls)
+        {
+            var result = new List<EquipmentItem>();
+            void AddIfAny(EquipmentSlotType slot, int accessoryIndex = 0)
+            {
+                var item = GetEquippedItem(cls, slot, accessoryIndex);
+                if (item != null) result.Add(item);
+            }
+            AddIfAny(EquipmentSlotType.Weapon);
+            AddIfAny(EquipmentSlotType.Chest);
+            AddIfAny(EquipmentSlotType.Greaves);
+            AddIfAny(EquipmentSlotType.Feet);
+            AddIfAny(EquipmentSlotType.Accessory, 0);
+            AddIfAny(EquipmentSlotType.Accessory, 1);
+            return result;
         }
 
         public bool IsLoreUnlocked(string loreId) => !string.IsNullOrEmpty(loreId) && UnlockedLoreIds.Contains(loreId);
@@ -211,9 +290,9 @@ namespace Meta
             return true;
         }
 
-        // Aplica los niveles comprados Y el accesorio equipado como bonus fijos sobre las stats
-        // BASE de una party recien creada (PartyFactory.CreateDefaultParty), y cura HP/TP al
-        // maximo resultante.
+        // Aplica los niveles comprados Y los items equipados en los 6 slots (ver GetEquippedItems)
+        // como bonus fijos sobre las stats BASE de una party recien creada
+        // (PartyFactory.CreateDefaultParty), y cura HP/TP al maximo resultante.
         public void ApplyUpgradesToParty(List<CharacterStats> party)
         {
             foreach (var character in party)
@@ -231,19 +310,19 @@ namespace Meta
                     character.Luck += upgrade.LuckLevel * PerLevelLuck;
                 }
 
-                var item = EquipmentCatalog.Find(GetEquippedItemId(character.Class));
-                if (item != null)
-                {
-                    character.Attack += item.AttackBonus;
-                    character.Defense += item.DefenseBonus;
-                    character.Speed += item.SpeedBonus;
-                    character.MaxHP += item.MaxHpBonus;
-                    character.OnHitStatusName = item.OnHitStatusName;
-                    character.OnHitStatusChancePercent = item.OnHitStatusChancePercent;
-                    character.OnHitStatusDamagePercent = item.OnHitStatusDamagePercent;
-                    character.OnHitStatusRounds = item.OnHitStatusRounds;
-                    character.ThornsReflectPercent = item.ThornsReflectPercent;
-                }
+                var totals = EquipmentTotals.From(GetEquippedItems(character.Class));
+                character.Attack += totals.Attack;
+                character.MagicAttack += totals.MagicAttack;
+                character.Defense += totals.Defense;
+                character.Speed += totals.Speed;
+                character.MaxHP += totals.MaxHp;
+                character.Evasion += totals.Evasion;
+                character.ThornsReflectPercent += totals.Thorns;
+                character.Resistances = totals.Resistances;
+                character.OnHitStatusName = totals.OnHitWeapon?.OnHitStatusName;
+                character.OnHitStatusChancePercent = totals.OnHitWeapon?.OnHitStatusChancePercent ?? 0;
+                character.OnHitStatusDamagePercent = totals.OnHitWeapon?.OnHitStatusDamagePercent ?? 0;
+                character.OnHitStatusRounds = totals.OnHitWeapon?.OnHitStatusRounds ?? 0;
 
                 // Balas extra compradas (ver TryPurchaseBullets): no hacen nada si este personaje
                 // no es Gunner (los demas ni miran estos campos), asi que sumarlas siempre es seguro.

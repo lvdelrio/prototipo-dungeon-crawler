@@ -40,16 +40,38 @@ namespace Gameplay
 
         private QteManager QteManager => combatManager != null ? combatManager.qteManager : null;
 
-        // Ademas del boton, se puede "smashear" Espacio para el Ataque en Conjunto (mas estiloso
-        // que solo un click) -- se chequea en Update (no en OnGUI) para no disparar varias veces
-        // por el mismo frame.
+        // Ademas de los botones, varios atajos de teclado -- se chequean en Update (no en OnGUI)
+        // para no disparar varias veces por el mismo frame. Espacio hace distintas cosas segun el
+        // estado (Ataque en Conjunto listo / resumen de victoria / menu de accion normal), nunca
+        // mas de una a la vez porque esos 3 estados son mutuamente excluyentes.
         void Update()
         {
-            if (combatManager == null) return;
+            if (combatManager == null || !combatManager.IsActive) return;
+
             if (combatManager.AllOutAttackReady && Input.GetKeyDown(KeyCode.Space))
                 combatManager.TriggerAllOutAttack();
             else if (combatManager.IsShowingVictorySummary && Input.GetKeyDown(KeyCode.Space))
                 combatManager.DismissVictorySummary();
+            else if (Input.GetKeyDown(KeyCode.Space) && CanAutoAttackNow())
+                combatManager.AutoAttackRemaining();
+
+            // Esc: mismo atajo que el boton "[TEST] Saltar" (ver DungeonManager linea similar para
+            // el menu de pausa) -- SkipFightForTesting ya se auto-protege si no corresponde
+            // (!IsActive || IsResolvingRound), asi que no hace falta duplicar esa condicion aca.
+            if (Input.GetKeyDown(KeyCode.Escape))
+                combatManager.SkipFightForTesting();
+        }
+
+        // Espacio hace "Auto" (mismo que el boton) SOLO parado en el menu de acciones de nivel
+        // superior (Atacar/Habilidades/Guardia/Auto, ver el else-if de mas abajo en OnGUI) de
+        // alguien que todavia no eligio esta ronda -- nunca durante un QTE, mientras se resuelve
+        // la ronda, ni con ningun submenu (Habilidades/Items) ya abierto.
+        private bool CanAutoAttackNow()
+        {
+            if (combatManager.AllOutAttackReady || combatManager.IsShowingVictorySummary || combatManager.IsResolvingRound) return false;
+            if (QteManager != null && QteManager.IsActive) return false;
+            if (_pendingType != null || _showingAbilities || _showingItems || _pendingItem.HasValue) return false;
+            return combatManager.GetChooser() != null;
         }
 
         void OnGUI()
@@ -192,7 +214,7 @@ namespace Gameplay
                                 ? $"{chooser.SkillName} - postura propia, {(chooser.IsEnraged ? "desactivar" : "activar")} ({chooser.SkillTpCost} TP)"
                                 : chooser.IsVersatileBuffSkill
                                     ? $"{chooser.SkillName} - buffea aliado / debuffea enemigo ({chooser.SkillTpCost} TP)"
-                                    : chooser.AttacksAreAoe
+                                    : chooser.SkillIsAoe
                                         ? $"{chooser.SkillName} - {ElementLabel(chooser.SkillElement)} x{chooser.SkillPower:F1} a TODOS ({chooser.SkillTpCost} TP)"
                                         : $"{chooser.SkillName} - {ElementLabel(chooser.SkillElement)} x{chooser.SkillPower:F1} ({chooser.SkillTpCost} TP)";
                         if (UIButton.Draw(new Rect(panelX + 20, y, 340, 26), skillLabel))
@@ -200,7 +222,7 @@ namespace Gameplay
                             _showingAbilities = false;
                             if (chooser.IsSelfStanceSkill)
                                 combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.Skill });
-                            else if (chooser.AttacksAreAoe)
+                            else if (chooser.SkillIsAoe)
                                 combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.Skill });
                             else
                                 _pendingType = ActionType.Skill;
@@ -225,10 +247,9 @@ namespace Gameplay
 
                         if (DrawP5Button(new Rect(panelX + 20, y, 120, 30), "Atacar", 0))
                         {
-                            if (chooser.AttacksAreAoe)
-                                combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.Attack });
-                            else
-                                _pendingType = ActionType.Attack;
+                            // El ataque basico SIEMPRE pide objetivo, para toda clase -- a diferencia
+                            // de la habilidad, que si puede ser AoE (ver chooser.SkillIsAoe arriba).
+                            _pendingType = ActionType.Attack;
                         }
 
                         if (DrawP5Button(new Rect(panelX + 150, y, 150, 30), "Habilidades", 1))

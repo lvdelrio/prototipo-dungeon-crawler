@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Combat
 {
     public class CharacterStats
@@ -39,10 +41,10 @@ namespace Combat
         public bool IsHealSkill;
         public int HealAmount;
 
-        // Alquimista: tanto el ataque basico como la habilidad pegan a TODOS los enemigos vivos a
-        // la vez (ver CombatEngine.AoeDamageMultiplier para el descuento de dano por objetivo que
-        // lo compensa).
-        public bool AttacksAreAoe;
+        // Alquimista: su HABILIDAD (nunca el ataque basico, que siempre es a un solo objetivo como
+        // el resto de las clases) pega a TODOS los enemigos vivos a la vez (ver CombatEngine.
+        // AoeDamageMultiplier para el descuento de dano por objetivo que lo compensa).
+        public bool SkillIsAoe;
 
         // Berserker: la habilidad es una POSTURA propia (sin objetivo) que se activa/desactiva --
         // mientras IsEnraged este activo, EffectiveAttack sube y EffectiveDefense baja (ver
@@ -94,6 +96,18 @@ namespace Combat
         public int OnHitStatusDamagePercent;
         public int OnHitStatusRounds;
         public int ThornsReflectPercent;
+
+        // Resistencia elemental (de Chest/Greaves equipados, ver Combat.EquipmentTotals -- ahi vive
+        // la logica de suma/tope por elemento): reduce en este % el dano de un ataque enemigo de
+        // ESE elemento (ver CombatEngine.ExecuteEnemyAction). A lo sumo una entrada por elemento.
+        public List<(Element Element, int Percent)> Resistances = new List<(Element, int)>();
+
+        public int ResistancePercentFor(Element element)
+        {
+            foreach (var r in Resistances)
+                if (r.Element == element) return r.Percent;
+            return 0;
+        }
 
         // Formacion: 3 personajes adelante y 3 atras (ver CombatEngine.FrontRowAggroWeight). Los
         // de adelante concentran mas probabilidad de ser el blanco de los enemigos.

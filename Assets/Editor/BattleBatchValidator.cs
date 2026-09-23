@@ -681,16 +681,20 @@ public static class BattleBatchValidator
         meta.BankedPoints = 1000;
         string itemId = Combat.EquipmentCatalog.All[0].Id;
         bool bought = meta.TryPurchaseItem(itemId);
-        Check("comprar un accesorio con puntos suficientes funciona", bought && meta.OwnsItem(itemId));
+        var instance = meta.Inventory.Find(i => i.ItemId == itemId);
+        Check("comprar un accesorio con puntos suficientes funciona", bought && meta.OwnsItem(itemId) && instance != null);
 
         var warrior = _combatManager.Party.Find(p => p.Class == Combat.CharacterClass.Warrior);
         int atkBefore = warrior.Attack;
-        _combatManager.SetEquippedItemLive(meta, Combat.CharacterClass.Warrior, itemId);
+        _combatManager.SetEquippedItemLive(meta, Combat.CharacterClass.Warrior, Combat.EquipmentSlotType.Accessory, instance.InstanceId, 0);
         int expectedBonus = Combat.EquipmentCatalog.Find(itemId).AttackBonus;
         Check("equipar en vivo suma el bonus del item a la party YA creada (no hace falta empezar otra run)",
             warrior.Attack == atkBefore + expectedBonus, $"antes={atkBefore} despues={warrior.Attack} bonus={expectedBonus}");
 
-        _combatManager.SetEquippedItemLive(meta, Combat.CharacterClass.Warrior, "");
+        bool secondCharacterBlocked = !meta.SetEquippedInstance(Combat.CharacterClass.Protector, Combat.EquipmentSlotType.Accessory, instance.InstanceId, 0);
+        Check("la misma instancia NO se puede equipar en 2 personajes a la vez", secondCharacterBlocked);
+
+        _combatManager.SetEquippedItemLive(meta, Combat.CharacterClass.Warrior, Combat.EquipmentSlotType.Accessory, "", 0);
         Check("desequipar en vivo devuelve el ATK al valor original", warrior.Attack == atkBefore, $"real={warrior.Attack}");
     }
 

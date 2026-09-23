@@ -78,9 +78,10 @@ namespace Combat
                     };
 
                 case CharacterClass.Alchemist:
-                    // Ataca (basico Y habilidad) a TODOS los enemigos vivos a la vez -- ver
-                    // CombatEngine.AoeDamageMultiplier para el descuento por objetivo. Especializado
-                    // en Ataque Magico: su habilidad escala con MagicAttack, no con Attack.
+                    // Su HABILIDAD (nunca el basico, que es a un solo objetivo como todas las
+                    // clases) pega a TODOS los enemigos vivos a la vez -- ver CombatEngine.
+                    // AoeDamageMultiplier para el descuento por objetivo. Especializado en Ataque
+                    // Magico: su habilidad escala con MagicAttack, no con Attack.
                     return new CharacterStats
                     {
                         Name = "Alchemist", Class = CharacterClass.Alchemist,
@@ -89,7 +90,7 @@ namespace Combat
                         MagicAttack = 10, SkillUsesMagicAttack = true,
                         AttackElement = Element.Fire,
                         SkillName = "Lluvia de Fuego", SkillTpCost = 7, SkillPower = 1.6f, SkillElement = Element.Fire,
-                        AttacksAreAoe = true,
+                        SkillIsAoe = true,
                         SkillSequenceA = new[] { QteKey.Up, QteKey.Up, QteKey.Down },
                         SkillSequenceB = new[] { QteKey.Right, QteKey.Left, QteKey.Right },
                     };
