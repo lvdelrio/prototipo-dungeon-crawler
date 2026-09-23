@@ -11,7 +11,6 @@ public static class DungeonSceneBuilder
     public static void Build()
     {
         var settings = GetOrCreateSettings();
-        var eventTable = GetOrCreateEventTable();
 
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
@@ -44,20 +43,31 @@ public static class DungeonSceneBuilder
         RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
         RenderSettings.ambientLight = new Color(0.5f, 0.5f, 0.55f);
 
-        // Niebla de distancia: limita lo que se puede ver hacia adelante a unas 3 celdas (cellSize
-        // = 4 -> 12 unidades), version mas intensa/corta que la primera pasada (4 celdas, 16
-        // unidades) -- empieza a cerrar desde 1 celda de distancia en vez de 1.5, para que la
-        // sensacion de "todavia no se que hay ahi" se note mucho mas apenas se avanza.
+        // Niebla de distancia: limita lo que se puede ver hacia adelante a 3 CUADRANTES (celdas) a
+        // lo sumo -- CAMBIAR ESTOS 2 NUMEROS (start/end, en "cuadrantes") es lo unico que hace
+        // falta para ajustar cuanto se ve. Antes el degrade empezaba recien a partir de la celda 1
+        // y terminaba de cerrar en la 3 (o sea, entre la 1 y la 3 todavia se distinguia bastante
+        // geometria) -- ahora arranca casi de inmediato (0.6) y ya esta 100% negro a partir de la
+        // 2.4, para que la sensacion de "no se que hay mas alla" sea real y no solo nominal.
         const float cellSizeForFog = 4f;
+        const float fogStartInCells = 0.6f;
+        const float fogEndInCells = 2.4f;
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.Linear;
         RenderSettings.fogColor = new Color(0.05f, 0.05f, 0.08f);
-        RenderSettings.fogStartDistance = cellSizeForFog * 1f;
-        RenderSettings.fogEndDistance = cellSizeForFog * 3f;
+        RenderSettings.fogStartDistance = cellSizeForFog * fogStartInCells;
+        RenderSettings.fogEndDistance = cellSizeForFog * fogEndInCells;
 
         var managerGo = new GameObject("DungeonManager");
         var manager = managerGo.AddComponent<DungeonManager>();
         var builder = managerGo.AddComponent<DungeonLevelBuilder>();
+        // Cielo estrellado del Bioma 2 (piso/techo, ver DungeonLevelBuilder.BuildFloorTile/
+        // BuildCeilingTile) -- a diferencia del resto de los materiales de DungeonLevelBuilder
+        // (que se dejan null a proposito y caen al color solido de ApplyMaterial), estos SI
+        // necesitan su shader propio para que el campo de estrellas exista.
+        builder.biome2CeilingMaterial = GetOrCreateMaterial("Assets/Data/Biome2CeilingMaterial.mat", "Custom/StarrySky");
+        builder.biome2FloorMaterial = GetOrCreateMaterial("Assets/Data/Biome2FloorMaterial.mat", "Custom/StarlitFloor");
+        builder.stairsAuraMaterial = GetOrCreateMaterial("Assets/Data/StairsAuraMaterial.mat", "Custom/StairsAura");
 
         var playerGo = new GameObject("Player");
         var playerController = playerGo.AddComponent<GridPlayerController>();
@@ -97,8 +107,12 @@ public static class DungeonSceneBuilder
         var ambientGo = new GameObject("AmbientParticles");
         var ambientParticles = ambientGo.AddComponent<AmbientParticles>();
 
+        var mainMenuManagerGo = new GameObject("MainMenuManager");
+        var mainMenuManager = mainMenuManagerGo.AddComponent<MainMenuManager>();
+        var mainMenuHudGo = new GameObject("MainMenuHUD");
+        var mainMenuHud = mainMenuHudGo.AddComponent<MainMenuHUD>();
+
         manager.settings = settings;
-        manager.eventTable = eventTable;
         manager.player = playerController;
         manager.levelBuilder = builder;
         manager.hud = hud;
@@ -134,6 +148,10 @@ public static class DungeonSceneBuilder
         battleStage.fireSkillMaterial = GetOrCreateMaterial("Assets/Data/FireSkillMaterial.mat", "Custom/SkillBurst");
         battleStage.iceSkillMaterial = GetOrCreateMaterial("Assets/Data/IceSkillMaterial.mat", "Custom/SkillBurst");
         battleStage.voltSkillMaterial = GetOrCreateMaterial("Assets/Data/VoltSkillMaterial.mat", "Custom/SkillBurst");
+        // Shockwave por distorsion + spark anguloso, en TODO golpe basico y de habilidad (ver
+        // BattleStageController.shockwaveMaterial/sparkMaterial).
+        battleStage.shockwaveMaterial = GetOrCreateMaterial("Assets/Data/ShockwaveMaterial.mat", "Custom/ImpactShockwave");
+        battleStage.sparkMaterial = GetOrCreateMaterial("Assets/Data/SparkMaterial.mat", "Custom/ImpactSpark");
         playerController.dialogueManager = dialogueManager;
         dialogueHud.dialogueManager = dialogueManager;
         enemyBarsHud.combatManager = combatManager;
@@ -144,9 +162,12 @@ public static class DungeonSceneBuilder
         pauseMenuHud.pauseMenu = pauseMenu;
         pauseMenuHud.dungeonManager = manager;
         pauseMenuHud.combatManager = combatManager;
+        pauseMenuHud.player = playerController;
         ambientParticles.dungeonManager = manager;
         ambientParticles.player = playerController;
         ambientParticles.followTarget = cameraGo.transform;
+        mainMenuHud.mainMenu = mainMenuManager;
+        mainMenuHud.dungeonManager = manager;
 
         if (!AssetDatabase.IsValidFolder("Assets/Scenes"))
             AssetDatabase.CreateFolder("Assets", "Scenes");
@@ -161,14 +182,7 @@ public static class DungeonSceneBuilder
     {
         const string path = "Assets/Data/DefaultDungeonSettings.asset";
         var existing = AssetDatabase.LoadAssetAtPath<DungeonSettings>(path);
-        if (existing != null)
-        {
-            // El asset ya existia de antes: se le fuerza el valor actual de eventPercent, asi los
-            // cambios de balance (menos eventos en el mapa) aplican tambien a proyectos existentes.
-            existing.eventPercent = 0.06f;
-            EditorUtility.SetDirty(existing);
-            return existing;
-        }
+        if (existing != null) return existing;
 
         if (!AssetDatabase.IsValidFolder("Assets/Data"))
             AssetDatabase.CreateFolder("Assets", "Data");
@@ -178,7 +192,6 @@ public static class DungeonSceneBuilder
         settings.floorCount = 3;
         settings.stairPairsPerFloor = 2;
         settings.seed = 12345;
-        settings.eventPercent = 0.06f;
         settings.cellSize = 4f;
         settings.wallHeight = 3f;
         settings.wallThickness = 0.2f;
@@ -222,18 +235,4 @@ public static class DungeonSceneBuilder
         return material;
     }
 
-    private static EventTableAsset GetOrCreateEventTable()
-    {
-        const string path = "Assets/Data/DefaultEventTable.asset";
-        var existing = AssetDatabase.LoadAssetAtPath<EventTableAsset>(path);
-        if (existing != null) return existing;
-
-        if (!AssetDatabase.IsValidFolder("Assets/Data"))
-            AssetDatabase.CreateFolder("Assets", "Data");
-
-        var table = ScriptableObject.CreateInstance<EventTableAsset>();
-        table.entries = new List<EventEntry>(EventTable.Entries);
-        AssetDatabase.CreateAsset(table, path);
-        return table;
-    }
 }

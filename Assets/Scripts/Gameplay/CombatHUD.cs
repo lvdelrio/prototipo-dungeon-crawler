@@ -15,6 +15,8 @@ namespace Gameplay
         private bool _wasActive;
         private bool _inspecting;
         private bool _showingAbilities;
+        private bool _showingItems;
+        private ItemActionKind? _pendingItem;
 
         // Reveal "estiloso" del menu de accion (inspirado en Persona 5: capas apiladas, acento
         // rojo/negro, entrada en cascada) -- se reinicia cada vez que le toca elegir a alguien nuevo.
@@ -38,13 +40,38 @@ namespace Gameplay
 
         private QteManager QteManager => combatManager != null ? combatManager.qteManager : null;
 
-        // Ademas del boton, se puede "smashear" Espacio para el Ataque en Conjunto (mas estiloso
-        // que solo un click) -- se chequea en Update (no en OnGUI) para no disparar varias veces
-        // por el mismo frame.
+        // Ademas de los botones, varios atajos de teclado -- se chequean en Update (no en OnGUI)
+        // para no disparar varias veces por el mismo frame. Espacio hace distintas cosas segun el
+        // estado (Ataque en Conjunto listo / resumen de victoria / menu de accion normal), nunca
+        // mas de una a la vez porque esos 3 estados son mutuamente excluyentes.
         void Update()
         {
-            if (combatManager != null && combatManager.AllOutAttackReady && Input.GetKeyDown(KeyCode.Space))
+            if (combatManager == null || !combatManager.IsActive) return;
+
+            if (combatManager.AllOutAttackReady && Input.GetKeyDown(KeyCode.Space))
                 combatManager.TriggerAllOutAttack();
+            else if (combatManager.IsShowingVictorySummary && Input.GetKeyDown(KeyCode.Space))
+                combatManager.DismissVictorySummary();
+            else if (Input.GetKeyDown(KeyCode.Space) && CanAutoAttackNow())
+                combatManager.AutoAttackRemaining();
+
+            // Esc: mismo atajo que el boton "[TEST] Saltar" (ver DungeonManager linea similar para
+            // el menu de pausa) -- SkipFightForTesting ya se auto-protege si no corresponde
+            // (!IsActive || IsResolvingRound), asi que no hace falta duplicar esa condicion aca.
+            if (Input.GetKeyDown(KeyCode.Escape))
+                combatManager.SkipFightForTesting();
+        }
+
+        // Espacio hace "Auto" (mismo que el boton) SOLO parado en el menu de acciones de nivel
+        // superior (Atacar/Habilidades/Guardia/Auto, ver el else-if de mas abajo en OnGUI) de
+        // alguien que todavia no eligio esta ronda -- nunca durante un QTE, mientras se resuelve
+        // la ronda, ni con ningun submenu (Habilidades/Items) ya abierto.
+        private bool CanAutoAttackNow()
+        {
+            if (combatManager.AllOutAttackReady || combatManager.IsShowingVictorySummary || combatManager.IsResolvingRound) return false;
+            if (QteManager != null && QteManager.IsActive) return false;
+            if (_pendingType != null || _showingAbilities || _showingItems || _pendingItem.HasValue) return false;
+            return combatManager.GetChooser() != null;
         }
 
         void OnGUI()
@@ -54,6 +81,8 @@ namespace Gameplay
                 _pendingType = null;
                 _wasActive = false;
                 _showingAbilities = false;
+                _showingItems = false;
+                _pendingItem = null;
                 _actionMenuChooser = null;
                 return;
             }
@@ -66,6 +95,14 @@ namespace Gameplay
                 _lastPartyHp.Clear();
                 _popups.Clear();
                 _wasActive = true;
+            }
+
+            // Resumen de victoria: se dibuja SOLO esto (nada del panel normal de abajo) hasta que
+            // el jugador confirma con "Continuar" -- ver CombatManager.DismissVictorySummary.
+            if (combatManager.IsShowingVictorySummary)
+            {
+                DrawVictorySummary();
+                return;
             }
 
             // El panel se ancla abajo (deja el resto de la pantalla, arriba, libre para que se vea
@@ -96,8 +133,11 @@ namespace Gameplay
             {
                 bool isTurn = combatManager.IsResolvingRound && !combatManager.CurrentTurnIsParty && combatManager.CurrentTurnActorName == enemy.Name;
                 string status = enemy.IsAlive ? $"HP {enemy.HP}/{enemy.MaxHP}{(enemy.IsBroken ? " [ROTO: pierde su turno]" : "")}" : "derrotado";
+                string weaknessLabel = enemy.Weaknesses != null && enemy.Weaknesses.Length > 0
+                    ? string.Join("/", enemy.Weaknesses.Select(ElementLabel))
+                    : ElementLabel(Element.None);
                 string inspect = _inspecting
-                    ? $"  |  Debil: {ElementLabel(enemy.Weakness)}  Resiste: {ElementLabel(enemy.Resistance)}  DEF {enemy.Defense}  VEL {enemy.Speed}"
+                    ? $"  |  Debil: {weaknessLabel}  Resiste: {ElementLabel(enemy.Resistance)}  DEF {enemy.Defense}  VEL {enemy.Speed}"
                     : "";
                 DrawTurnLine(panelX + 20, y, panelW - 40, $"{enemy.Name} - {status}{inspect}", isTurn, isEnemyTurn: true);
                 var (popupX, popupY) = EnemyPopupPosition(combatManager.Enemies.IndexOf(enemy), panelX + panelW - 60, y);
@@ -155,17 +195,37 @@ namespace Gameplay
                     }
                     y += 24;
 
+                    // Gunner: selector de bala cargada, arriba de todo el resto del menu de
+                    // acciones (Atacar/Habilidades ya usan la que este cargada, ver
+                    // CombatEngine.ResolveElement). Ocupa su propia fila solo para esta clase.
+                    if (chooser.Class == CharacterClass.Gunner)
+                    {
+                        DrawGunnerBulletSelector(panelX, y, chooser);
+                        y += 30;
+                    }
+
                     if (_showingAbilities)
                     {
                         // Mismo lugar que el boton "Habilidades" (mover lo menos posible): solo las
                         // habilidades de ESTE personaje, cada una con su costo de TP y su boton.
                         string skillLabel = chooser.IsHealSkill
-                            ? $"{chooser.SkillName} - cura {chooser.HealAmount} HP ({chooser.SkillTpCost} TP)"
-                            : $"{chooser.SkillName} - {ElementLabel(chooser.SkillElement)} x{chooser.SkillPower:F1} ({chooser.SkillTpCost} TP)";
+                            ? $"{chooser.SkillName} - cura {chooser.HealAmount + chooser.MagicAttack / 2} HP ({chooser.SkillTpCost} TP)"
+                            : chooser.IsSelfStanceSkill
+                                ? $"{chooser.SkillName} - postura propia, {(chooser.IsEnraged ? "desactivar" : "activar")} ({chooser.SkillTpCost} TP)"
+                                : chooser.IsVersatileBuffSkill
+                                    ? $"{chooser.SkillName} - buffea aliado / debuffea enemigo ({chooser.SkillTpCost} TP)"
+                                    : chooser.SkillIsAoe
+                                        ? $"{chooser.SkillName} - {ElementLabel(chooser.SkillElement)} x{chooser.SkillPower:F1} a TODOS ({chooser.SkillTpCost} TP)"
+                                        : $"{chooser.SkillName} - {ElementLabel(chooser.SkillElement)} x{chooser.SkillPower:F1} ({chooser.SkillTpCost} TP)";
                         if (UIButton.Draw(new Rect(panelX + 20, y, 340, 26), skillLabel))
                         {
-                            _pendingType = ActionType.Skill;
                             _showingAbilities = false;
+                            if (chooser.IsSelfStanceSkill)
+                                combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.Skill });
+                            else if (chooser.SkillIsAoe)
+                                combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.Skill });
+                            else
+                                _pendingType = ActionType.Skill;
                         }
 
                         if (chooser.CanProtectAll)
@@ -181,12 +241,16 @@ namespace Gameplay
                         if (UIButton.Draw(new Rect(panelX + 600, y, 100, 26), "Cerrar"))
                             _showingAbilities = false;
                     }
-                    else if (_pendingType == null)
+                    else if (_pendingType == null && !_showingItems && !_pendingItem.HasValue)
                     {
                         TrackActionMenuReveal(chooser);
 
                         if (DrawP5Button(new Rect(panelX + 20, y, 120, 30), "Atacar", 0))
+                        {
+                            // El ataque basico SIEMPRE pide objetivo, para toda clase -- a diferencia
+                            // de la habilidad, que si puede ser AoE (ver chooser.SkillIsAoe arriba).
                             _pendingType = ActionType.Attack;
+                        }
 
                         if (DrawP5Button(new Rect(panelX + 150, y, 150, 30), "Habilidades", 1))
                             _showingAbilities = true;
@@ -202,17 +266,87 @@ namespace Gameplay
                             combatManager.AutoAttackRemaining();
                             _pendingType = null;
                         }
+
+                        if (DrawP5Button(new Rect(panelX + 620, y, 120, 30), "Ítems", 4))
+                            _showingItems = true;
+                    }
+                    else if (_showingItems)
+                    {
+                        GUI.Label(new Rect(panelX + 20, y, 300, 20), "Elegí un ítem:");
+                        y += 22;
+                        string potionLabel = $"Poción ({combatManager.PotionCharges}) - cura {CombatEngine.PotionHealAmount} HP";
+                        if (UIButton.Draw(new Rect(panelX + 20, y, 260, 26), potionLabel, enabled: combatManager.PotionCharges > 0))
+                        {
+                            _showingItems = false;
+                            _pendingItem = ItemActionKind.Potion;
+                        }
+                        string reviverLabel = $"Revivir ({combatManager.ReviverCharges}) - devuelve a un caído";
+                        if (UIButton.Draw(new Rect(panelX + 290, y, 260, 26), reviverLabel, enabled: combatManager.ReviverCharges > 0))
+                        {
+                            _showingItems = false;
+                            _pendingItem = ItemActionKind.Reviver;
+                        }
+                        if (UIButton.Draw(new Rect(panelX + 560, y, 100, 26), "Cerrar")) _showingItems = false;
+                    }
+                    else if (_pendingItem.HasValue)
+                    {
+                        bool wantsAlive = _pendingItem.Value == ItemActionKind.Potion;
+                        GUI.Label(new Rect(panelX + 20, y, 340, 20), wantsAlive ? "Elegí a quién curar:" : "Elegí a quién revivir:");
+                        y += 22;
+                        float bx = panelX + 20;
+                        foreach (var ally in combatManager.Party.Where(p => p.IsAlive == wantsAlive))
+                        {
+                            if (UIButton.Draw(new Rect(bx, y, 150, 26), ally.Name))
+                            {
+                                combatManager.SubmitItemAction(chooser, _pendingItem.Value, combatManager.Party.IndexOf(ally));
+                                _pendingItem = null;
+                            }
+                            bx += 160;
+                        }
+                        if (UIButton.Draw(new Rect(panelX + 20, y + 34, 100, 24), "Cancelar")) _pendingItem = null;
                     }
                     else if (_pendingType == ActionType.Skill && chooser.IsHealSkill)
                     {
-                        GUI.Label(new Rect(panelX + 20, y, 300, 20), "Elegí a quién curar:");
+                        GUI.Label(new Rect(panelX + 20, y, 300, 20), "Elegí a quién curar (o revivir, si está caído):");
+                        y += 22;
+                        float bx = panelX + 20;
+                        foreach (var ally in combatManager.Party)
+                        {
+                            if (UIButton.Draw(new Rect(bx, y, 150, 26), ally.IsAlive ? ally.Name : $"{ally.Name} (caído)"))
+                            {
+                                var action = new PartyAction { Actor = chooser, Type = ActionType.Skill, TargetAllyIndex = combatManager.Party.IndexOf(ally) };
+                                combatManager.SubmitAction(action);
+                                _pendingType = null;
+                            }
+                            bx += 160;
+                        }
+                        if (UIButton.Draw(new Rect(panelX + 20, y + 34, 100, 24), "Cancelar")) _pendingType = null;
+                    }
+                    else if (_pendingType == ActionType.Skill && chooser.IsVersatileBuffSkill)
+                    {
+                        // Trovador: se puede tirar sobre CUALQUIER aliado (buff) o enemigo (debuff)
+                        // -- ambas listas juntas, ver PartyAction.TargetIsAlly para distinguir cual.
+                        GUI.Label(new Rect(panelX + 20, y, 400, 20), "Elegí a quién buffear (aliado) o debuffear (enemigo):");
                         y += 22;
                         float bx = panelX + 20;
                         foreach (var ally in combatManager.Party.Where(p => p.IsAlive))
                         {
-                            if (UIButton.Draw(new Rect(bx, y, 150, 26), ally.Name))
+                            if (UIButton.Draw(new Rect(bx, y, 150, 26), $"{ally.Name} (buff)"))
                             {
-                                var action = new PartyAction { Actor = chooser, Type = ActionType.Skill, TargetAllyIndex = combatManager.Party.IndexOf(ally) };
+                                var action = new PartyAction { Actor = chooser, Type = ActionType.Skill, TargetIsAlly = true, TargetAllyIndex = combatManager.Party.IndexOf(ally) };
+                                combatManager.SubmitAction(action);
+                                _pendingType = null;
+                            }
+                            bx += 160;
+                        }
+                        y += 30;
+                        bx = panelX + 20;
+                        foreach (var enemy in combatManager.Enemies.Where(e => e.IsAlive))
+                        {
+                            int idx = combatManager.Enemies.IndexOf(enemy);
+                            if (UIButton.Draw(new Rect(bx, y, 150, 26), $"{enemy.Name} (debuff)"))
+                            {
+                                var action = new PartyAction { Actor = chooser, Type = ActionType.Skill, TargetIsAlly = false, TargetEnemyIndex = idx };
                                 combatManager.SubmitAction(action);
                                 _pendingType = null;
                             }
@@ -330,6 +464,35 @@ namespace Gameplay
             }
         }
 
+        // Gunner: fila de botones para cargar una bala elemental (o volver a las normales). El
+        // elemento cargado se guarda directo en CharacterStats.LoadedBulletElement -- CombatEngine
+        // lo lee al resolver el ataque basico Y la habilidad (ver ResolveElement), y gasta 1 bala
+        // de stock cada vez que de verdad pega con el.
+        private void DrawGunnerBulletSelector(float panelX, float y, CharacterStats gunner)
+        {
+            (Element element, string label, int stock)[] options =
+            {
+                (Element.None, "Normal", -1),
+                (Element.Fire, "Fuego", gunner.FireBullets),
+                (Element.Ice, "Hielo", gunner.IceBullets),
+                (Element.Volt, "Rayo", gunner.VoltBullets),
+            };
+
+            float bx = panelX + 20;
+            foreach (var (element, label, stock) in options)
+            {
+                bool loaded = gunner.LoadedBulletElement == element;
+                bool enabled = element == Element.None || stock > 0;
+                string text = element == Element.None ? label : $"{label} ({stock})";
+                var old = GUI.color;
+                if (loaded) GUI.color = new Color(1f, 0.85f, 0.3f);
+                if (UIButton.Draw(new Rect(bx, y, 130, 24), text, enabled: enabled))
+                    gunner.LoadedBulletElement = element;
+                GUI.color = old;
+                bx += 136;
+            }
+        }
+
         private string ElementLabel(Element element)
         {
             switch (element)
@@ -372,6 +535,61 @@ namespace Gameplay
             string buttonLabel = mashCount > 0 ? $"¡SEGUÍ MACHACANDO! x{mashCount} (Espacio)" : "¡ATAQUE EN CONJUNTO! (Espacio)";
             if (UIButton.Draw(new Rect(panelX + panelW - 260, y + 30, 240, 32), buttonLabel, accentColor: glow))
                 combatManager.TriggerAllOutAttack();
+        }
+
+        // Resumen de la pelea que se acaba de ganar: quien hizo mas dano, quien curo, quien
+        // recibio mas golpes -- inspirado en juegos que muestran esta info al final de cada
+        // combate (no solo al final de la run) para que el jugador entienda que funciono y pueda
+        // ajustar formacion/objetivos la proxima vez, en vez de un simple mensaje de "Victoria"
+        // que desaparece sin dejar nada util.
+        private void DrawVictorySummary()
+        {
+            float panelW = Mathf.Min(Screen.width - 80f, 640f);
+            float panelH = Mathf.Min(Screen.height - 80f, 60f + combatManager.Party.Count * 30f + 150f);
+            float panelX = (Screen.width - panelW) / 2f;
+            float panelY = (Screen.height - panelH) / 2f;
+
+            DrawRect(new Rect(panelX, panelY, panelW, panelH), new Color(0.06f, 0.06f, 0.08f, 0.97f));
+            DrawRect(new Rect(panelX, panelY, panelW, 4), new Color(0.85f, 0.7f, 0.15f));
+
+            var titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 22, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
+            titleStyle.normal.textColor = new Color(0.95f, 0.85f, 0.4f);
+            GUI.Label(new Rect(panelX, panelY + 10, panelW, 32), combatManager.IsBossFight ? "¡VICTORIA DE JEFE!" : "¡VICTORIA!", titleStyle);
+
+            var defeated = combatManager.Enemies.Where(e => !e.IsAlive).Select(e => e.Name).ToList();
+            GUI.Label(new Rect(panelX + 20, panelY + 46, panelW - 40, 20), $"Derrotaste a: {string.Join(", ", defeated)}");
+
+            float y = panelY + 76;
+            var headerStyle = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold };
+            GUI.Label(new Rect(panelX + 20, y, 200, 20), "Personaje", headerStyle);
+            GUI.Label(new Rect(panelX + 260, y, 120, 20), "Daño hecho", headerStyle);
+            GUI.Label(new Rect(panelX + 390, y, 120, 20), "Curación", headerStyle);
+            GUI.Label(new Rect(panelX + 510, y, 110, 20), "Daño recibido", headerStyle);
+            y += 24;
+
+            foreach (var member in combatManager.Party)
+            {
+                int dealt = combatManager.DamageDealtThisFight.TryGetValue(member, out var d) ? d : 0;
+                int healed = combatManager.HealingDoneThisFight.TryGetValue(member, out var h) ? h : 0;
+                int taken = combatManager.DamageTakenThisFight.TryGetValue(member, out var t) ? t : 0;
+                GUI.Label(new Rect(panelX + 20, y, 230, 22), member.IsAlive ? member.Name : $"{member.Name} (caído)");
+                GUI.Label(new Rect(panelX + 260, y, 120, 22), dealt.ToString());
+                GUI.Label(new Rect(panelX + 390, y, 120, 22), healed > 0 ? $"+{healed}" : "-");
+                GUI.Label(new Rect(panelX + 510, y, 110, 22), taken.ToString());
+                y += 26;
+            }
+
+            if (combatManager.AllOutAttackDamageThisFight > 0)
+            {
+                y += 6;
+                var goldStyle = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold };
+                goldStyle.normal.textColor = new Color(0.95f, 0.85f, 0.4f);
+                GUI.Label(new Rect(panelX + 20, y, panelW - 40, 22), $"Ataque en Conjunto: {combatManager.AllOutAttackDamageThisFight} de daño total", goldStyle);
+                y += 26;
+            }
+
+            if (UIButton.Draw(new Rect(panelX + panelW - 180, panelY + panelH - 44, 160, 34), "Continuar"))
+                combatManager.DismissVictorySummary();
         }
 
         private void TrackActionMenuReveal(CharacterStats chooser)

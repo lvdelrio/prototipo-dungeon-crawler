@@ -36,6 +36,12 @@ namespace Gameplay
         public Material iceSkillMaterial;
         public Material voltSkillMaterial;
 
+        [Header("Shockwave por distorsion de pantalla (Custom/ImpactShockwave), en TODO golpe")]
+        public Material shockwaveMaterial;
+
+        [Header("Spark anguloso (Custom/ImpactSpark), acento encima del shockwave")]
+        public Material sparkMaterial;
+
         private Camera _battleCamera;
         private AudioListener _battleAudioListener;
         private readonly List<Transform> _stands = new List<Transform>();
@@ -44,6 +50,14 @@ namespace Gameplay
         private readonly List<int> _viewStandIndex = new List<int>();
 
         private BattleAmbientParticles _ambientParticles;
+
+        // True cuando el combate termino (CleanupAfterCombat se llamo) mientras la carga
+        // additive de la escena de batalla TODAVIA estaba en progreso: sin esto, la escena se
+        // queda huerfana para siempre (cargada, sin nadie que la descargue nunca), porque
+        // SceneManager.GetSceneByName la devuelve con isLoaded=false en ese momento y el chequeo
+        // de limpieza la salteaba en silencio. Puede pasar en un combate real si el jugador huye
+        // (o hace algo que termine el combate) muy rapido, justo al arrancar la pelea.
+        private bool _cleanupPendingSceneLoad;
 
         // Niebla de distancia: se guarda la de la mazmorra la primera vez (ya viene cargada del
         // scene file) y se restaura al salir de combate, para que la niebla de la batalla no se
@@ -128,6 +142,16 @@ namespace Gameplay
             ApplyBattleFog(isBoss);
             if (_battleCamera != null)
                 _ambientParticles = BattleAmbientParticles.Spawn(_battleCamera.transform, isBoss);
+
+            // El combate termino MUY rapido (p.ej. Huir justo al arrancar la pelea, o
+            // SkipFightForTesting) y CleanupAfterCombat se llamo mientras la escena todavia
+            // estaba cargando: en ese momento no habia nada que descargar todavia (isLoaded era
+            // false), asi que se pospuso hasta ahora. Recien esta lista, hacerla de una.
+            if (_cleanupPendingSceneLoad)
+            {
+                _cleanupPendingSceneLoad = false;
+                CleanupAfterCombat();
+            }
         }
 
         // ---------- Niebla de distancia ----------
@@ -278,29 +302,61 @@ namespace Gameplay
             if (index >= 0 && index < _activeViews.Count) _activeViews[index]?.PlayHitPulse();
         }
 
+        // Adelanta el punto de aparicion de un efecto hacia la camara, hasta mas o menos la
+        // superficie del modelo (en vez de su centro): un efecto en el centro exacto queda medio
+        // tapado por la propia mitad cercana del modelo del enemigo, y se ve como si estuviera
+        // "atras" en vez de "al frente" -- justo lo que pidio el usuario que se corrigiera.
+        private Vector3 EffectAnchor(EnemyView view)
+        {
+            if (view == null) return Vector3.zero;
+            Vector3 pos = view.transform.position;
+            if (_battleCamera == null) return pos;
+
+            Vector3 toCamera = (_battleCamera.transform.position - pos).normalized;
+            Vector3 ext = view.Extents;
+            // Distancia (a lo largo de toCamera) hasta el borde de la caja que envuelve al modelo:
+            // trata al modelo como una caja alineada a los ejes, que para las formas primitivas
+            // actuales (esfera/capsula/cubo) es una aproximacion mas que suficiente.
+            float radius = Mathf.Abs(toCamera.x) * ext.x + Mathf.Abs(toCamera.y) * ext.y + Mathf.Abs(toCamera.z) * ext.z;
+            return pos + toCamera * radius;
+        }
+
         // Golpe de habilidad: ademas del pulso de disolucion, aparece el efecto de impacto (sprite
         // HitImpact.png) sobre el enemigo, teñido segun el elemento para que se note la diferencia
         // entre habilidades, Y el shader propio de esa habilidad (SkillMaterialFor) -- cada
         // habilidad tiene su propio shader de ataque segun su elemento (no por personaje: dos
         // habilidades del mismo elemento comparten shader). Los ataques basicos NUNCA llegan aca;
-        // solo usan el shader simple de HandleEnemyElementalHit.
-        private void HandleEnemySkillHit(int index, Element element)
+        // solo usan el shader simple de HandleEnemyElementalHit. "intensity" (SkillPower de quien
+        // la uso) agranda el efecto para las habilidades mas fuertes.
+        private void HandleEnemySkillHit(int index, Element element, float intensity)
         {
             if (index < 0 || index >= _activeViews.Count) return;
             var view = _activeViews[index];
             if (view == null) return;
 
             Quaternion facing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
+            Vector3 anchor = EffectAnchor(view);
 
             if (hitImpactFrames != null && hitImpactFrames.Length > 0)
             {
                 Color tint = Color.Lerp(Color.white, ElementVisuals.ColorFor(element), 0.55f);
-                HitImpactEffect.Spawn(hitImpactFrames, view.transform.position, tint, facing);
+                HitImpactEffect.Spawn(hitImpactFrames, anchor, tint, facing);
             }
 
             var skillMaterial = SkillMaterialFor(element);
             if (skillMaterial != null)
-                ElementalBurstEffect.Spawn(skillMaterial, view.transform.position, ElementVisuals.ColorFor(element), facing);
+                ElementalBurstEffect.Spawn(skillMaterial, anchor, ElementVisuals.ColorFor(element), facing, intensity);
+
+            // Shockwave por distorsion + spark anguloso, en TODA habilidad (antes solo Fuego,
+            // mientras se evaluaba el estilo -- ver el shader Custom/ImpactSpark para el porque de
+            // los dos modos). El modo se elige por TIPO de ataque, no por elemento especifico: fisico
+            // (Slash/Strike/Pierce) siempre tajo+cruz, magico (Fuego/Hielo/Rayo) siempre anillo+
+            // estallido -- asi cualquier habilidad nueva encaja sin tener que enseñarle un modo nuevo.
+            bool slashMode = IsPhysicalElement(element);
+            if (shockwaveMaterial != null)
+                ImpactShockwaveEffect.Spawn(shockwaveMaterial, anchor, ElementVisuals.ColorFor(element), facing, slashMode, intensity);
+            if (sparkMaterial != null)
+                ImpactSparkEffect.Spawn(sparkMaterial, anchor, ElementVisuals.ColorFor(element), facing, slashMode, intensity);
         }
 
         private Material SkillMaterialFor(Element element)
@@ -317,26 +373,48 @@ namespace Gameplay
             }
         }
 
+        // Fisico (cortante/contundente/perforante) vs magico (elemental): decide que MODO usan
+        // Custom/ImpactShockwave y Custom/ImpactSpark para un golpe de este elemento (ver mas
+        // arriba). Unica fuente de esta clasificacion -- si se agrega un elemento nuevo, alcanza
+        // con sumarlo aca para que ya salga con el modo correcto en todos lados.
+        private static bool IsPhysicalElement(Element element) =>
+            element == Element.Slash || element == Element.Strike || element == Element.Pierce;
+
         // Efecto de shader + rafaga de particulas reales (sin sprite) que se ven en CUALQUIER
         // golpe -- basico o de habilidad -- para que el elemento del ataque siempre tenga algun
         // feedback visual, no solo las habilidades (que ademas tienen el sprite de HitImpactEffect).
-        private void HandleEnemyElementalHit(int index, Element element)
+        // "intensity" (SkillPower de la habilidad, o 1 en un ataque basico) agranda y hace mas
+        // intensas las chispas cuanto mas fuerte es el golpe.
+        private void HandleEnemyElementalHit(int index, Element element, float intensity)
         {
             if (index < 0 || index >= _activeViews.Count) return;
             var view = _activeViews[index];
             if (view == null) return;
 
             Quaternion elementalFacing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
+            Vector3 anchor = EffectAnchor(view);
             if (elementalBurstMaterial != null)
-                ElementalBurstEffect.Spawn(elementalBurstMaterial, view.transform.position, ElementVisuals.ColorFor(element), elementalFacing);
+                ElementalBurstEffect.Spawn(elementalBurstMaterial, anchor, ElementVisuals.ColorFor(element), elementalFacing, intensity);
 
             // Hit spark estilo Tekken 8 (flash + puntas radiales): se dispara SIEMPRE, con el mismo
             // color que el anillo elemental de arriba (naranjo "golpe" en ataques basicos, color
             // propio en habilidades), para que cualquier golpe se sienta con mas peso/impacto.
             if (impactBurstMaterial != null)
-                ImpactBurstEffect.Spawn(impactBurstMaterial, view.transform.position, ElementVisuals.ColorFor(element), elementalFacing);
+                ImpactBurstEffect.Spawn(impactBurstMaterial, anchor, ElementVisuals.ColorFor(element), elementalFacing, intensity);
 
-            ElementalParticleEffect.Spawn(view.transform.position, element);
+            // Shockwave + spark anguloso, tambien en el golpe BASICO (Strike con intensity==1; una
+            // habilidad de Strike llega aca tambien pero con SkillPower >1, asi que no duplica el
+            // que ya dispara HandleEnemySkillHit). El basico siempre es fisico (ver
+            // IsPhysicalElement), asi que va directo a modo tajo+cruz sin necesitar la clasificacion.
+            if (element == Element.Strike && intensity <= 1.01f)
+            {
+                if (shockwaveMaterial != null)
+                    ImpactShockwaveEffect.Spawn(shockwaveMaterial, anchor, ElementVisuals.ColorFor(element), elementalFacing, slashMode: true, intensity: intensity);
+                if (sparkMaterial != null)
+                    ImpactSparkEffect.Spawn(sparkMaterial, anchor, ElementVisuals.ColorFor(element), elementalFacing, slashMode: true, intensity: intensity);
+            }
+
+            ElementalParticleEffect.Spawn(anchor, element);
         }
 
         // Se le rompio el aguante a este enemigo: pulso mas fuerte con el borde en amarillo
@@ -368,13 +446,23 @@ namespace Gameplay
                 if (isDead) continue;
 
                 view.PlayHitPulse();
+                Vector3 anchor = EffectAnchor(view);
+                // El golpe mas grande del juego (toda la party a la vez): intensidad fija bien alta,
+                // mas grande y llamativo que cualquier habilidad individual.
+                const float allOutIntensity = 2.4f;
                 if (elementalBurstMaterial != null)
-                    ElementalBurstEffect.Spawn(elementalBurstMaterial, view.transform.position, AllOutBurstColor, facing);
+                    ElementalBurstEffect.Spawn(elementalBurstMaterial, anchor, AllOutBurstColor, facing, allOutIntensity);
                 if (impactBurstMaterial != null)
-                    ImpactBurstEffect.Spawn(impactBurstMaterial, view.transform.position, AllOutBurstColor, facing);
+                    ImpactBurstEffect.Spawn(impactBurstMaterial, anchor, AllOutBurstColor, facing, allOutIntensity);
             }
         }
 
+
+        // Los primeros FrontStandCount parantes (0,1,2) son la fila de adelante, mas cerca de la
+        // camara; el resto (3,4,5) es la fila de atras, de reserva para cuando un Slime se divide
+        // con el frente ya lleno (ver BattleSceneBuilder). Coincide con el orden de
+        // StandOrderForCount y con como se nombraron/ordenaron los BattleStand_N.
+        private const int FrontStandCount = 3;
 
         private void HandleEnemyDefeated(int index)
         {
@@ -390,7 +478,35 @@ namespace Gameplay
                 // visual aunque el motor de combate SI la haya agregado a Enemies.
                 if (index < _viewStandIndex.Count) _viewStandIndex[index] = -1;
                 if (index < _activeViews.Count) _activeViews[index] = null;
+                PromoteBackRowEnemies();
             });
+        }
+
+        // Si un enemigo del frente acaba de morir y dejo un parante libre, el primero que siga
+        // vivo en la fila de atras avanza a ese lugar -- sin esto, una vez que el frente se vacia
+        // los enemigos restantes se quedan chicos y lejos en el fondo en vez de acercarse como si
+        // fueran los enemigos iniciales (justo lo que pidio el usuario).
+        private void PromoteBackRowEnemies()
+        {
+            if (_stands.Count < FrontStandCount) return;
+
+            for (int frontStand = 0; frontStand < FrontStandCount; frontStand++)
+            {
+                if (_viewStandIndex.Contains(frontStand)) continue; // ya ocupado
+
+                int backViewIndex = -1;
+                for (int i = 0; i < _viewStandIndex.Count; i++)
+                {
+                    if (_viewStandIndex[i] < FrontStandCount) continue; // -1 (libre) o ya en el frente
+                    if (_activeViews[i] == null) continue;
+                    backViewIndex = i;
+                    break;
+                }
+                if (backViewIndex < 0) break; // no queda nadie atras para promover
+
+                _viewStandIndex[backViewIndex] = frontStand;
+                _activeViews[backViewIndex].MoveTo(_stands[frontStand].position);
+            }
         }
 
         private void HandleCombatFinished(bool victory, bool wasBoss) => CleanupAfterCombat();
@@ -401,6 +517,17 @@ namespace Gameplay
 
         private void CleanupAfterCombat()
         {
+            var battleSceneCheck = SceneManager.GetSceneByName(battleSceneName);
+            if (battleSceneCheck.IsValid() && !battleSceneCheck.isLoaded)
+            {
+                // El combate termino mientras la carga additive todavia estaba en progreso (ver
+                // _cleanupPendingSceneLoad): nada de esto (camara, niebla, parantes) existe todavia
+                // de verdad, asi que no hay nada que limpiar ni descargar TODAVIA. Se reintenta
+                // completa desde OnBattleSceneLoaded en cuanto la carga termine.
+                _cleanupPendingSceneLoad = true;
+                return;
+            }
+
             ClearViews();
 
             if (_ambientParticles != null)
@@ -414,9 +541,8 @@ namespace Gameplay
             if (dungeonCamera != null) dungeonCamera.enabled = true;
             if (dungeonAudioListener != null) dungeonAudioListener.enabled = true;
 
-            var battleScene = SceneManager.GetSceneByName(battleSceneName);
-            if (battleScene.IsValid() && battleScene.isLoaded)
-                SceneManager.UnloadSceneAsync(battleScene);
+            if (battleSceneCheck.IsValid() && battleSceneCheck.isLoaded)
+                SceneManager.UnloadSceneAsync(battleSceneCheck);
         }
 
         private void ClearViews()
