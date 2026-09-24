@@ -60,14 +60,29 @@ namespace Gameplay
             if (overrideMat != null) return overrideMat;
             if (_sharedMaterial == null)
             {
-                var shader = Shader.Find("Custom/PS1Ground");
-                _sharedMaterial = new Material(shader != null ? shader : Shader.Find("Standard"));
-                if (shader == null)
+                // Un build standalone descarta ("strippea") cualquier shader que ningun Material
+                // real del proyecto referencie -- Shader.Find("Custom/PS1Ground") funciona en el
+                // Editor (ve todos los shaders) pero devuelve null en el juego compilado, y ahi
+                // mismo se rompia BeginBrandNewGame (ver Assets/Resources/Materials/PS1Ground.mat:
+                // ese SI cuenta como "usado" porque vive en Resources, asi el build lo incluye
+                // siempre). Cargarlo por asset en vez de por nombre de shader evita el problema.
+                var resourceMat = Resources.Load<Material>("Materials/PS1Ground");
+                if (resourceMat != null)
                 {
-                    // Sin el shader custom (por ejemplo si todavia no se importo en el Editor):
-                    // Standard con brillo/metalico en 0 sigue cumpliendo "roughness ninguna".
-                    _sharedMaterial.SetFloat("_Metallic", 0f);
-                    _sharedMaterial.SetFloat("_Glossiness", 0f);
+                    _sharedMaterial = new Material(resourceMat);
+                }
+                else
+                {
+                    var shader = Shader.Find("Custom/PS1Ground");
+                    _sharedMaterial = new Material(shader != null ? shader : Shader.Find("Standard"));
+                    if (shader == null)
+                    {
+                        // Ni el asset en Resources ni el shader custom aparecieron: Standard con
+                        // brillo/metalico en 0 sigue cumpliendo "roughness ninguna" como ultimo
+                        // recurso (puede fallar igual en build por el mismo motivo de arriba).
+                        _sharedMaterial.SetFloat("_Metallic", 0f);
+                        _sharedMaterial.SetFloat("_Glossiness", 0f);
+                    }
                 }
             }
             return _sharedMaterial;
