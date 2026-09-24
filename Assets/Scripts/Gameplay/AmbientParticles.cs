@@ -39,10 +39,16 @@ namespace Gameplay
         // Cuanto se adelanta el volumen "cerca" en la direccion en la que mira la camara.
         private const float NearForwardOffset = 1.1f;
 
+        // Las hojas nacen 2 CASILLAS adelante del jugador (cellSize=4, ver DungeonSettings) en vez
+        // de esparcidas en una caja grande centrada arriba suyo -- asi se ven aparecer en un punto
+        // mas o menos fijo adelante, en vez de perderse como ambiente difuso por todos lados.
+        private const float LeafForwardOffset = 8f;
+
         private static readonly Color MysteryNearColor = new Color(0.85f, 0.9f, 0.95f, 0.4f);
         private static readonly Color MysteryFarColor = new Color(0.55f, 0.62f, 0.7f, 0.09f);
         private static readonly Color StormNearColor = new Color(0.6f, 0.68f, 0.85f, 0.4f);
         private static readonly Color StormFarColor = new Color(0.18f, 0.2f, 0.3f, 0.16f);
+        private static readonly Color LightShaftColor = new Color(1f, 0.93f, 0.72f);
         private static readonly Color LightningColor = new Color(0.75f, 0.85f, 1f);
         private static readonly Color ShootingStarColor = new Color(0.9f, 0.93f, 1f);
 
@@ -54,6 +60,15 @@ namespace Gameplay
         private ParticleSystem _near;
         private ParticleSystem _far;
         private ParticleSystem _wisps;
+        // Hojas cayendo (ver ConfigureLeafLayer): solo en el Bioma 1 (el "normal", con plantas --
+        // el Bioma 2 es la cueva intergalactica con cielo estrellado, no pega tematicamente ahi),
+        // toggleada junto con la estrella fugaz en el mismo chequeo de inBiome2 en LateUpdate.
+        private ParticleSystem _leaves;
+        private static readonly Color LeafColorA = new Color(0.62f, 0.42f, 0.14f); // ocre/naranja seco
+        private static readonly Color LeafColorB = new Color(0.45f, 0.5f, 0.16f); // verde oliva
+        // Rayos de luz de bosque (ver ConfigureLightShaftLayer): pocos, grandes y casi quietos --
+        // MISMA condicion de Bioma 1 que las hojas (se togglean juntos en LateUpdate).
+        private ParticleSystem _lightShafts;
         // Sistema dedicado para el rayo: renderMode Stretch (particulas "estiradas" segun su
         // velocidad, se ven como rayas/lineas) en vez del Billboard redondo de _wisps -- antes el
         // rayo se armaba con puntitos redondos de _wisps, que no se leian como un relampago de
@@ -87,6 +102,14 @@ namespace Gameplay
             ConfigureWispFlicker(_wisps);
             ConfigureStreakLayer(_lightningStreaks);
 
+            _leaves = ParticleLayerFactory.CreateLayer(transform, "AmbientLeaves");
+            _leaves.GetComponent<ParticleSystemRenderer>().material = ParticleTextureFactory.LeafMaterial;
+            ConfigureLeafLayer(_leaves);
+
+            _lightShafts = ParticleLayerFactory.CreateLayer(transform, "AmbientLightShafts");
+            _lightShafts.GetComponent<ParticleSystemRenderer>().material = ParticleTextureFactory.BeamMaterial;
+            ConfigureLightShaftLayer(_lightShafts);
+
             var stormGo = new GameObject("StormLight");
             stormGo.transform.SetParent(transform, false);
             _stormLight = stormGo.AddComponent<Light>();
@@ -115,6 +138,106 @@ namespace Gameplay
             ParticleLayerFactory.Activate(_wisps);
             ParticleLayerFactory.Activate(_lightningStreaks);
             ParticleLayerFactory.Activate(_starStreaks);
+            ParticleLayerFactory.Activate(_leaves);
+            ParticleLayerFactory.Activate(_lightShafts);
+        }
+
+        // Rayos de luz filtrandose desde el techo, tipo luz de bosque entre las copas: pocas
+        // franjas (ConfigureLightShaftLayer/Beam en ParticleTextureFactory) grandes, casi quietas
+        // (sin gravedad, con un vaiven organico chico via Noise en vez de caer), que aparecen y se
+        // desvanecen despacio (colorOverLifetime) en vez de aparecer/desaparecer de golpe.
+        // startSize3D permite estirarlas mucho en Y (altas, como una columna de luz) sin ensanchar
+        // en X -- la textura Beam en si ya es angosta al centro, esto la hace ademas bien alta.
+        private void ConfigureLightShaftLayer(ParticleSystem ps)
+        {
+            var main = ps.main;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.loop = true;
+            main.playOnAwake = true;
+            main.maxParticles = 10;
+            main.startSpeed = 0f;
+            main.gravityModifier = 0f;
+            main.startColor = new Color(LightShaftColor.r, LightShaftColor.g, LightShaftColor.b, 0.1f);
+            main.startLifetime = new ParticleSystem.MinMaxCurve(10f, 16f);
+            main.startRotation = 0f;
+            main.startSize3D = true;
+            main.startSizeX = new ParticleSystem.MinMaxCurve(0.4f, 0.8f);
+            main.startSizeY = new ParticleSystem.MinMaxCurve(2.6f, 3.4f);
+            main.startSizeZ = new ParticleSystem.MinMaxCurve(0.4f, 0.8f);
+
+            var shape = ps.shape;
+            shape.shapeType = ParticleSystemShapeType.Box;
+            shape.scale = new Vector3(10f, 0.2f, 10f);
+
+            var emission = ps.emission;
+            emission.rateOverTime = 0.12f; // muy poco a poco: son columnas grandes, no hace falta que sean muchas
+
+            var noise = ps.noise;
+            noise.enabled = true;
+            noise.strength = 0.06f;
+            noise.frequency = 0.08f;
+            noise.scrollSpeed = 0.05f;
+
+            var col = ps.colorOverLifetime;
+            col.enabled = true;
+            var gradient = new Gradient();
+            gradient.SetKeys(
+                new[] { new GradientColorKey(Color.white, 0f), new GradientColorKey(Color.white, 1f) },
+                new[] { new GradientAlphaKey(0f, 0f), new GradientAlphaKey(1f, 0.25f), new GradientAlphaKey(1f, 0.75f), new GradientAlphaKey(0f, 1f) });
+            col.color = gradient;
+        }
+
+        // Caja fina cerca del techo (altura de pared ~3, ver DungeonSettings.wallHeight) de la que
+        // "nacen" las hojas, cayendo con velocidad vertical fija (no gravityModifier -- asi cae
+        // siempre a un ritmo parejo y lento, sin importar el peso/tamaño de la particula) mas un
+        // vaiven horizontal con Noise (turbulencia con textura Perlin) para que floten de costado
+        // en vez de caer en linea recta, y un giro continuo (rotationOverLifetime) para que
+        // tambaleen como una hoja de verdad. El color sale de 2 tonos otoño (ver LeafColorA/B) via
+        // startColor en modo "random entre 2 colores", nunca de la textura (Leaf es blanca).
+        private void ConfigureLeafLayer(ParticleSystem ps)
+        {
+            var main = ps.main;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.loop = true;
+            main.playOnAwake = true;
+            main.maxParticles = 60;
+            main.startSpeed = 0f;
+            main.gravityModifier = 0f;
+            main.startSize = new ParticleSystem.MinMaxCurve(0.09f, 0.16f);
+            main.startLifetime = new ParticleSystem.MinMaxCurve(6f, 9f);
+            main.startRotation = new ParticleSystem.MinMaxCurve(0f, 360f * Mathf.Deg2Rad);
+            main.startColor = new ParticleSystem.MinMaxGradient(LeafColorA, LeafColorB);
+
+            var shape = ps.shape;
+            shape.shapeType = ParticleSystemShapeType.Box;
+            shape.scale = new Vector3(4f, 0.3f, 4f);
+
+            var emission = ps.emission;
+            emission.rateOverTime = 3.5f;
+
+            var vel = ps.velocityOverLifetime;
+            vel.enabled = true;
+            vel.x = new ParticleSystem.MinMaxCurve(-0.08f, 0.08f);
+            vel.y = new ParticleSystem.MinMaxCurve(-0.35f, -0.22f); // caida lenta y pareja
+            vel.z = new ParticleSystem.MinMaxCurve(-0.08f, 0.08f);
+
+            var noise = ps.noise;
+            noise.enabled = true;
+            noise.strength = 0.15f;
+            noise.frequency = 0.25f;
+            noise.scrollSpeed = 0.2f;
+
+            var rot = ps.rotationOverLifetime;
+            rot.enabled = true;
+            rot.z = new ParticleSystem.MinMaxCurve(-60f * Mathf.Deg2Rad, 60f * Mathf.Deg2Rad);
+
+            var col = ps.colorOverLifetime;
+            col.enabled = true;
+            var gradient = new Gradient();
+            gradient.SetKeys(
+                new[] { new GradientColorKey(Color.white, 0f), new GradientColorKey(Color.white, 1f) },
+                new[] { new GradientAlphaKey(0f, 0f), new GradientAlphaKey(1f, 0.15f), new GradientAlphaKey(1f, 0.85f), new GradientAlphaKey(0f, 1f) });
+            col.color = gradient;
         }
 
         // Sistema SOLO para rafagas por Emit() (el rayo y sus chispas): sin emision ambiente propia
@@ -186,6 +309,14 @@ namespace Gameplay
                 _far.transform.position = followTarget.position;
                 _near.transform.position = followTarget.position + followTarget.forward * NearForwardOffset;
                 _wisps.transform.position = followTarget.position;
+                // 2 casillas adelante (LeafForwardOffset) Y cerca del techo (wallHeight ~3, ver
+                // DungeonSettings) para que las hojas tengan recorrido de sobra antes de
+                // "tocar piso" (en realidad nunca chocan de verdad, solo se desvanecen por
+                // colorOverLifetime -- ver ConfigureLeafLayer).
+                _leaves.transform.position = followTarget.position + followTarget.forward * LeafForwardOffset + Vector3.up * 2.6f;
+                // A media altura de pared (~1.5, wallHeight=3) para que la columna estirada
+                // (startSizeY 2.6-3.4) llegue comoda de casi el techo a casi el piso.
+                _lightShafts.transform.position = followTarget.position + Vector3.up * 1.5f;
             }
             if (dungeonManager == null || player == null || !dungeonManager.IsReady) return;
 
@@ -238,6 +369,14 @@ namespace Gameplay
                     _shootingStarRoutine = null;
                     _starLight.intensity = 0f;
                 }
+
+                // Hojas y rayos de luz SOLO en Bioma 1 (con plantas) -- en la cueva intergalactica
+                // (Bioma 2, cielo estrellado) no pegan tematicamente, se apagan del todo en vez de
+                // seguir cayendo/brillando.
+                var leafEmission = _leaves.emission;
+                leafEmission.enabled = !inBiome2;
+                var shaftEmission = _lightShafts.emission;
+                shaftEmission.enabled = !inBiome2;
             }
         }
 
@@ -274,12 +413,15 @@ namespace Gameplay
             }
             else
             {
+                // Rates bajados de nuevo (12->8, 2->1.3, wisps 1.6->1.1 mas abajo) a pedido -- se
+                // seguia sintiendo cargado el polvo blanco "de siempre" (fuera de la tormenta de
+                // jefe, que no se toco: ese es un momento especial, no la ambientacion diaria).
                 SetLayer(nearMain, nearEmission, nearVel,
                     color: MysteryNearColor, speed: (0.05f, 0.15f), size: (0.06f, 0.13f),
-                    life: (3f, 4.5f), gravity: 0f, rate: 18f, drift: (-0.05f, 0.05f));
+                    life: (3f, 4.5f), gravity: 0f, rate: 8f, drift: (-0.05f, 0.05f));
                 SetLayer(farMain, farEmission, farVel,
                     color: MysteryFarColor, speed: (0.02f, 0.05f), size: (0.5f, 0.9f),
-                    life: (12f, 18f), gravity: 0f, rate: 3f, drift: (-0.04f, 0.04f));
+                    life: (12f, 18f), gravity: 0f, rate: 1.3f, drift: (-0.04f, 0.04f));
             }
 
             var wispMain = _wisps.main;
@@ -288,7 +430,7 @@ namespace Gameplay
             SetLayer(wispMain, wispEmission, wispVel,
                 color: nearBossRoom ? LightningColor : Color.white,
                 speed: (0.02f, 0.06f), size: (0.09f, 0.16f),
-                life: (4f, 6f), gravity: 0f, rate: nearBossRoom ? 4f : 2.2f, drift: (-0.03f, 0.03f));
+                life: (4f, 6f), gravity: 0f, rate: nearBossRoom ? 4f : 1.1f, drift: (-0.03f, 0.03f));
         }
 
         // Relampago real de sala de jefe: espera un intervalo random y despues dispara un flash de

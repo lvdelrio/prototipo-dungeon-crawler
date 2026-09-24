@@ -1,11 +1,12 @@
-using System;
 using System.Collections.Generic;
 using UnityEngine;
 using DungeonGen;
 
 namespace Gameplay
 {
-    [Serializable]
+    // Sin "using System;" a proposito: ese using trae System.Random al alcance y choca (referencia
+    // ambigua) con UnityEngine.Random, que este archivo usa para el polvillo de carbon.
+    [System.Serializable]
     public struct MapIconEntry
     {
         public string Id;
@@ -51,6 +52,17 @@ namespace Gameplay
 
         private Vector2Int? _pendingVertex;
         private static Texture2D _whiteTex;
+
+        // Polvillo de carbon (ver EnsurePencilDust/EmitPencilDust): un puñado de motas oscuras que
+        // saltan del trazo cada vez que se PINTA una pared (nunca al borrar), simulando el rayar de
+        // un lapiz sobre el papel. Se crea recien la primera vez que hace falta (no en Awake: este
+        // componente no tiene Awake propio, y mapViewer todavia podria no estar wireado tan temprano).
+        private ParticleSystem _pencilDust;
+        private static readonly Color PencilDustColor = new Color(0.1f, 0.09f, 0.08f, 0.9f);
+        // Drawing ya esta en Z local -0.01 respecto a Paper (ver PlayerMapPropBuilder) -- el
+        // polvillo se dibuja bien ADELANTE de eso (-0.03) para que nunca quede tapado por el
+        // dibujo, ni siquiera con el jitter de EmitPencilDust en el peor caso.
+        private const float PencilDustZBias = -0.03f;
 
         // true mientras hay una arista elegida (click) esperando que las flechitas del teclado
         // digan hacia donde pintar (ver Update()/ToggleSegmentFromVertex). Las flechitas ya no
@@ -115,6 +127,90 @@ namespace Gameplay
             return new Vector2(sp.x, Screen.height - sp.y);
         }
 
+        // Posicion en el MUNDO de un vertice de la grilla (misma idea que las esquinas de
+        // GetMapScreenRect, pero para un punto interior cualquiera): interpola dentro del rectangulo
+        // local del sprite "Drawing" y lo transforma con SU transform -- funciona sin importar la
+        // pose actual del prop (abriendo/abierto/con vaiven). Y se invierte (fy=0 -> +half.y) porque
+        // el vertice 0 de nuestra convencion es la fila de ARRIBA (ver DungeonMapRenderer.DrawCore),
+        // mientras que el espacio local del sprite tiene +Y hacia arriba de la textura.
+        // localZBias: cuanto se adelanta hacia la camara (Z local NEGATIVO en la jerarquia del
+        // prop, ver PlayerMapPropBuilder: Drawing ya esta en -0.01 relativo a Paper=0, "mas cerca")
+        // respecto del plano del sprite -- lo usa el polvillo de carbon para garantizar que quede
+        // ADELANTE del dibujo en vez de coplanar con el (ver EmitPencilDust).
+        private Vector3 VertexToWorld(Vector2Int v, DungeonFloor floor, float localZBias = 0f)
+        {
+            var renderer = mapViewer.drawingRenderer;
+            if (renderer == null || renderer.sprite == null) return mapViewer.transform.position;
+
+            var sprite = renderer.sprite;
+            Vector2 half = new Vector2(sprite.rect.width, sprite.rect.height) / sprite.pixelsPerUnit / 2f;
+            float fx = v.x / (float)floor.Width;
+            float fy = v.y / (float)floor.Height;
+            float localX = Mathf.Lerp(-half.x, half.x, fx);
+            float localY = Mathf.Lerp(half.y, -half.y, fy);
+            return renderer.transform.TransformPoint(new Vector3(localX, localY, localZBias));
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // Polvillo de carbon (feedback de "rayar con un lapiz" al pintar una pared)
+        // ---------------------------------------------------------------------------------------
+
+        private void EnsurePencilDust()
+        {
+            if (_pencilDust != null || mapViewer == null) return;
+
+            _pencilDust = ParticleLayerFactory.CreateLayer(mapViewer.transform, "PencilDust");
+            // sortingOrder mas alto que Paper(0) y Drawing(1) -- SIN esto, aunque el punto este
+            // adelante en Z, sortingOrder empataba/perdia contra el sprite del dibujo (que cubre
+            // TODA su superficie en opaco con VoidColor) y el polvillo quedaba tapado del todo, que
+            // era exactamente el bug reportado ("no se ve ningun polvillo").
+            _pencilDust.GetComponent<ParticleSystemRenderer>().sortingOrder = 5;
+            var main = _pencilDust.main;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.loop = true;
+            main.playOnAwake = false;
+            main.maxParticles = 150;
+            main.startSpeed = 0f;
+            main.gravityModifier = 0.1f;
+            main.startSize = new ParticleSystem.MinMaxCurve(0.01f, 0.022f);
+            main.startLifetime = new ParticleSystem.MinMaxCurve(0.3f, 0.55f);
+            main.startColor = PencilDustColor;
+
+            var emission = _pencilDust.emission;
+            emission.rateOverTime = 0f; // solo por Emit(), nunca ambiente
+
+            var col = _pencilDust.colorOverLifetime;
+            col.enabled = true;
+            var gradient = new Gradient();
+            gradient.SetKeys(
+                new[] { new GradientColorKey(Color.white, 0f), new GradientColorKey(Color.white, 1f) },
+                new[] { new GradientAlphaKey(1f, 0f), new GradientAlphaKey(0f, 1f) });
+            col.color = gradient;
+
+            ParticleLayerFactory.Activate(_pencilDust);
+        }
+
+        // Un puñado de motas oscuras a lo largo del trazo recien pintado (worldA a worldB, con un
+        // poco de jitter para que no queden en fila perfecta) -- como el polvo de grafito/carbon
+        // que salta al pasar un lapiz fuerte por el papel.
+        private void EmitPencilDust(Vector3 worldA, Vector3 worldB)
+        {
+            EnsurePencilDust();
+            if (_pencilDust == null) return;
+
+            const int count = 7;
+            var emitParams = new ParticleSystem.EmitParams();
+            for (int i = 0; i < count; i++)
+            {
+                float t = count <= 1 ? 0.5f : i / (float)(count - 1);
+                Vector3 pos = Vector3.Lerp(worldA, worldB, t) + Random.insideUnitSphere * 0.012f;
+                emitParams.position = pos;
+                emitParams.velocity = new Vector3(Random.Range(-0.03f, 0.03f), Random.Range(0.01f, 0.05f), Random.Range(-0.03f, 0.03f));
+                emitParams.startSize = Random.Range(0.01f, 0.022f);
+                _pencilDust.Emit(emitParams, 1);
+            }
+        }
+
         // Flechitas del teclado: con una arista ya elegida (_pendingVertex, ver HandleMapClick),
         // cada flecha pinta (o borra) el tramo de pared de UN paso en esa direccion y mueve la
         // arista elegida un paso mas alla -- asi una seguidilla de flechas dibuja un trazo largo
@@ -135,20 +231,26 @@ namespace Gameplay
         private void ToggleSegmentFromVertex(DungeonFloor floor, int dx, int dy)
         {
             var v = _pendingVertex.Value;
+            var next = v;
+            bool painting;
             if (dy != 0)
             {
                 int j = dy < 0 ? v.y - 1 : v.y;
                 if (j < 0 || j >= floor.Height) return;
-                SetVerticalSegment(floor, v.x, j, !VerticalSegmentPainted(floor, v.x, j));
-                v.y += dy;
+                painting = !VerticalSegmentPainted(floor, v.x, j);
+                SetVerticalSegment(floor, v.x, j, painting);
+                next.y += dy;
             }
             else
             {
                 int i = dx < 0 ? v.x - 1 : v.x;
                 if (i < 0 || i >= floor.Width) return;
-                SetHorizontalSegment(floor, i, v.y, !HorizontalSegmentPainted(floor, i, v.y));
-                v.x += dx;
+                painting = !HorizontalSegmentPainted(floor, i, v.y);
+                SetHorizontalSegment(floor, i, v.y, painting);
+                next.x += dx;
             }
+            if (painting) EmitPencilDust(VertexToWorld(v, floor, PencilDustZBias), VertexToWorld(next, floor, PencilDustZBias));
+            v = next;
             if (v.x >= 0 && v.x <= floor.Width && v.y >= 0 && v.y <= floor.Height)
                 _pendingVertex = v;
             mapViewer.MarkDirty();
@@ -268,21 +370,27 @@ namespace Gameplay
         private void ToggleWallLine(DungeonFloor floor, Vector2Int a, Vector2Int b)
         {
             if (a == b) return;
+            bool painting;
 
             if (a.y == b.y)
             {
                 int cy = a.y;
                 int xMin = Mathf.Min(a.x, b.x), xMax = Mathf.Max(a.x, b.x);
-                bool targetState = !HorizontalSegmentPainted(floor, xMin, cy);
-                for (int i = xMin; i < xMax; i++) SetHorizontalSegment(floor, i, cy, targetState);
+                painting = !HorizontalSegmentPainted(floor, xMin, cy);
+                for (int i = xMin; i < xMax; i++) SetHorizontalSegment(floor, i, cy, painting);
             }
             else if (a.x == b.x)
             {
                 int cx = a.x;
                 int yMin = Mathf.Min(a.y, b.y), yMax = Mathf.Max(a.y, b.y);
-                bool targetState = !VerticalSegmentPainted(floor, cx, yMin);
-                for (int j = yMin; j < yMax; j++) SetVerticalSegment(floor, cx, j, targetState);
+                painting = !VerticalSegmentPainted(floor, cx, yMin);
+                for (int j = yMin; j < yMax; j++) SetVerticalSegment(floor, cx, j, painting);
             }
+            else return;
+
+            // Polvillo de carbon SOLO al pintar (nunca al borrar) -- "el rayar con un lapiz", no
+            // el borrar con goma.
+            if (painting) EmitPencilDust(VertexToWorld(a, floor, PencilDustZBias), VertexToWorld(b, floor, PencilDustZBias));
         }
 
         // "Segmento horizontal i" = el tramo de grilla entre los vertices (i,cy) y (i+1,cy): el
@@ -397,6 +505,16 @@ namespace Gameplay
             }
 
             y += 8;
+            // Modo simplificado, opt-in (default apagado): con esto prendido, caminar solo ya
+            // pinta las paredes reales de cada celda nueva (ver DungeonManager.OnPlayerEnterCell/
+            // AutoPaintCellWalls) -- para quien prefiere el automapa de siempre en vez de dibujar
+            // todo a mano.
+            bool autoPaint = dungeonManager != null && dungeonManager.AutoPaintWalls;
+            string autoPaintLabel = (autoPaint ? "> " : "") + "Auto-pintar paredes: " + (autoPaint ? "ON" : "OFF");
+            if (UIButton.Draw(new Rect(rect.x, y, rect.width, 24), autoPaintLabel) && dungeonManager != null)
+                dungeonManager.AutoPaintWalls = !dungeonManager.AutoPaintWalls;
+            y += 30;
+
             if (UIButton.Draw(new Rect(rect.x, y, rect.width, 24), "Limpiar dibujo de este piso"))
                 ClearAnnotations(floor);
             y += 30;

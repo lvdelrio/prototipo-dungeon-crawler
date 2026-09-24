@@ -79,6 +79,13 @@ namespace Gameplay
         [Tooltip("DEBUG/testeo: si esta prendido, el FOE se ve en el mapa aunque este parado en una celda que todavia no descubriste. Apagalo para el comportamiento real (niebla de guerra tambien lo tapa a el).")]
         public bool debugFoeAlwaysVisibleOnMap = true;
 
+        // Toggleable desde el mapa fisico (ver PlayerMapEditorHUD, boton "Auto-pintar paredes"):
+        // apagado por default (el mapa es 100% a mano, ver DungeonMapRenderer handDrawn). Si se
+        // prende, cada celda nueva que el jugador pisa copia sus paredes REALES a PaintedWalls (ver
+        // OnPlayerEnterCell) -- mismo resultado visual que el automapa clasico de antes, pero
+        // escrito en la capa de anotaciones, asi convive con lo que el jugador ya dibujo a mano.
+        public bool AutoPaintWalls;
+
         public MetaProgress Meta => _meta;
         public bool IsGameOverShopActive { get; private set; }
         public bool LastRunWasVictory { get; private set; }
@@ -305,6 +312,7 @@ namespace Gameplay
         {
             var cell = CurrentFloor.Cells[x, y];
             cell.Discovered = true;
+            if (AutoPaintWalls) AutoPaintCellWalls(cell);
 
             if (cell.Type == CellType.Normal && !IsCombatActive)
                 AccumulateDangerAndMaybeEncounter(cell);
@@ -435,6 +443,16 @@ namespace Gameplay
                     break;
             }
             if (message != null && hud != null) hud.SetLastMessage(message);
+        }
+
+        // Copia las paredes REALES de la celda a PaintedWalls -- mismo resultado visual que el
+        // automapa clasico (revelar solo, sin dibujar nada del jugador), pero escrito en la capa de
+        // anotaciones para que conviva con lo que ya dibujaste a mano en vez de pisarlo. Solo se usa
+        // si AutoPaintWalls esta prendido (ver el toggle en PlayerMapEditorHUD).
+        private static void AutoPaintCellWalls(DungeonCell cell)
+        {
+            foreach (var d in DirectionExtensions.All)
+                if (cell.HasWall(d)) cell.SetPaintedWall(d, true);
         }
 
         // Cofre garantizado (3 a 5 por piso, ver DungeonGenerator.EnsureTreasure): 50% plata, 30%

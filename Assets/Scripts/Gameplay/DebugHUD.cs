@@ -24,7 +24,7 @@ namespace Gameplay
             GUI.Box(new Rect(10, 10, 460, 210), "");
             GUI.Label(new Rect(20, 15, 440, 20),
                 $"Piso: {dungeonManager.CurrentFloorIndex} | Celda: ({player.CellX},{player.CellY}) | Mirando: {player.Facing}");
-            GUI.Label(new Rect(20, 35, 440, 40), "W/S: caminar | A/D: girar | Espacio: interactuar | Tab: modo mapa\nM: levantar mapa fisico (flechitas: pintar pared) | L: usar item Mapa | P: usar Perforador | N: usar Incienso | I: menú de pausa | T: dialogo DEMO (taberna de prueba)");
+            GUI.Label(new Rect(20, 35, 440, 50), "W/S: caminar | A/D: girar | Espacio: interactuar | Tab: modo mapa | Shift (mantener): ocultar minimapa\nM: levantar mapa fisico (flechitas: pintar pared) | L: usar item Mapa | P: usar Perforador | N: usar Incienso | I: menú de pausa | T: dialogo DEMO (taberna de prueba)");
             GUI.Label(new Rect(20, 75, 440, 40), $"Ultimo evento: {_lastMessage}");
             GUI.Label(new Rect(20, 115, 440, 20), $"Peligro acumulado: {dungeonManager.CurrentWalkingCounter} / {dungeonManager.CurrentEncounterThreshold} (limite oculto real en el juego; visible aca solo para debug)");
             if (dungeonManager.Meta != null)

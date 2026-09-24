@@ -31,6 +31,9 @@ namespace Gameplay
             // menu de pausa: en todos los casos hay otro panel mas importante que no debe quedar tapado.
             if (dungeonManager.IsCombatActive || dungeonManager.IsGameOverShopActive) return;
             if (pauseMenu != null && pauseMenu.IsOpen) return;
+            // Mantener Shift oculta el minimapa (para sacar una captura limpia, o simplemente ver
+            // la esquina sin el panel encima) -- se mantiene apretado, no es un toggle.
+            if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) return;
             var floor = dungeonManager.CurrentFloor;
             if (floor == null) return;
 
