@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using DungeonGen;
+using Lore;
 
 namespace Gameplay
 {
@@ -26,6 +27,12 @@ namespace Gameplay
         public Material leverMarkerMaterial;
         public Material treasureMarkerMaterial;
         public Material trapMarkerMaterial;
+
+        // Restos alrededor del marcador de lore (ver Lore.SceneDressing / BuildLoreSceneDressing).
+        // Un solo campo compartido por las 4 variantes -- igual que trapMarkerMaterial cubre tanto
+        // la linea de flechas como los picos, el color/forma de cada prop ya las distingue entre si
+        // aun si un artista termina asignando el mismo material a todas.
+        public Material loreDressingMaterial;
 
         // Tinte distinto (piso/pared/techo) para la zona aislada de cada piso: en BotW un mundo con
         // regiones visualmente distinguibles hace que el jugador arme su propio mapa mental
@@ -127,8 +134,8 @@ namespace Gameplay
 
                     BuildMarker(cell, center, cellSize, wallHeight);
                     if (cell.IsTrapCell && !floor.TrapDisabled) BuildTrapMarker(center, cellSize, floor.TrapKind);
-                    if (cell.IsMandatoryHazard && !cell.EventConsumed) BuildMandatoryHazardMarker(center, cellSize);
                     if (cell.IsPuzzleTile) BuildPuzzleTile(center, cellSize, cell.IsPuzzleTileSafe, floor.LoreCorridorKind);
+                    if (cell.Type == CellType.Lore) BuildLoreSceneDressing(cell, center, cellSize);
                 }
             }
         }
@@ -178,23 +185,6 @@ namespace Gameplay
 
                 ApplyMaterial(go, trapMarkerMaterial, new Color(0.3f, 0.06f, 0.05f));
             }
-        }
-
-        // Marcador de la casilla obligatoria del camino critico (ver
-        // DungeonGenerator.PlaceMandatoryPathHazard): una placa naranja, distinta del rojo de la
-        // sala de trampas opcional -- "esto tambien es peligroso, pero no lo podes evitar del todo".
-        private void BuildMandatoryHazardMarker(Vector3 center, float cellSize)
-        {
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            go.name = "MandatoryHazardMarker";
-            go.transform.SetParent(_root.transform, false);
-            go.transform.position = center + new Vector3(0, 0.03f, 0);
-            go.transform.localScale = new Vector3(cellSize * 0.85f, 0.05f, cellSize * 0.85f);
-
-            var col = go.GetComponent<Collider>();
-            if (col != null) Destroy(col);
-
-            ApplyMaterial(go, trapMarkerMaterial, new Color(0.85f, 0.45f, 0.05f));
         }
 
         // Celda de una sala de pistas (ver DungeonGenerator.AddLoreCorridorRoom). Brasas/Polvo de
@@ -325,6 +315,129 @@ namespace Gameplay
             renderer.sortingOrder = -1; // detras de la capa clara principal
 
             ParticleLayerFactory.Activate(ps);
+        }
+
+        // Puesta en escena de la celda de lore (ver Lore.SceneDressing): busca el fragmento
+        // asignado y, si describe un evento con marca fisica, agrega 2-3 props chicos ALREDEDOR del
+        // marcador ya construido por BuildMarker -- la idea es que la sala respalde lo que el texto
+        // cuenta en vez de que el fragmento sea la unica fuente de la escena. Silencioso si el id no
+        // resuelve o el fragmento es None (ver comentario en LoreEntry.cs): no forzar escombros que
+        // el texto no sostiene.
+        private void BuildLoreSceneDressing(DungeonCell cell, Vector3 center, float cellSize)
+        {
+            var entry = LoreCatalog.Find(cell.AssignedLoreId);
+            if (entry == null) return;
+
+            switch (entry.Dressing)
+            {
+                case SceneDressing.Scorched: BuildScorchedDressing(center, cellSize); break;
+                case SceneDressing.Collapsed: BuildCollapsedDressing(center, cellSize); break;
+                case SceneDressing.Ambush: BuildAmbushDressing(center, cellSize); break;
+                case SceneDressing.Camp: BuildCampDressing(center, cellSize); break;
+                default: return; // None: nada que agregar, a proposito
+            }
+        }
+
+        // "Un trozo de mapa, quemado en los bordes" (mapa_fragmentado): parches de ceniza chatos
+        // pegados al piso alrededor del marcador, como el rastro de un fuego que ya se apago.
+        private void BuildScorchedDressing(Vector3 center, float cellSize)
+        {
+            var offsets = new[] { new Vector2(-0.32f, 0.1f), new Vector2(0.28f, 0.22f), new Vector2(0.05f, -0.35f) };
+            foreach (var off in offsets)
+            {
+                var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                go.name = "LoreDressing_Ash";
+                go.transform.SetParent(_root.transform, false);
+                go.transform.position = center + new Vector3(off.x * cellSize, 0.025f, off.y * cellSize);
+                go.transform.rotation = Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f);
+                go.transform.localScale = new Vector3(cellSize * 0.22f, 0.03f, cellSize * 0.18f);
+
+                var col = go.GetComponent<Collider>();
+                if (col != null) Destroy(col);
+
+                ApplyMaterial(go, loreDressingMaterial, new Color(0.07f, 0.06f, 0.05f));
+            }
+        }
+
+        // "Mucho antes de que llegaramos", eco sin firma (voz_en_la_piedra): un par de escombros
+        // caidos e irregulares, mas viejos que el resto de la sala -- esto lleva ahi mucho tiempo.
+        private void BuildCollapsedDressing(Vector3 center, float cellSize)
+        {
+            var rubble = new[]
+            {
+                (pos: new Vector2(-0.3f, -0.22f), scale: 0.22f, rotY: 12f),
+                (pos: new Vector2(0.26f, -0.12f), scale: 0.16f, rotY: 50f),
+                (pos: new Vector2(0.02f, 0.33f), scale: 0.19f, rotY: 205f),
+            };
+            foreach (var r in rubble)
+            {
+                var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                go.name = "LoreDressing_Rubble";
+                go.transform.SetParent(_root.transform, false);
+                go.transform.position = center + new Vector3(r.pos.x * cellSize, cellSize * r.scale * 0.5f, r.pos.y * cellSize);
+                go.transform.rotation = Quaternion.Euler(UnityEngine.Random.Range(-8f, 8f), r.rotY, UnityEngine.Random.Range(-8f, 8f));
+                go.transform.localScale = Vector3.one * cellSize * r.scale;
+
+                var col = go.GetComponent<Collider>();
+                if (col != null) Destroy(col);
+
+                ApplyMaterial(go, loreDressingMaterial, new Color(0.32f, 0.29f, 0.26f));
+            }
+        }
+
+        // "Golpean donde la formacion esta mas expuesta" (cronicas_guardianes): restos de un
+        // combate ya terminado -- una placa quebrada en el piso y un par de esquirlas oscuras, no
+        // otra trampa activa (esto ya paso, no es un peligro presente).
+        private void BuildAmbushDressing(Vector3 center, float cellSize)
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = "LoreDressing_BrokenPlate";
+            go.transform.SetParent(_root.transform, false);
+            go.transform.position = center + new Vector3(-0.05f * cellSize, 0.03f, 0.28f * cellSize);
+            go.transform.rotation = Quaternion.Euler(0f, 20f, 6f);
+            go.transform.localScale = new Vector3(cellSize * 0.4f, 0.05f, cellSize * 0.32f);
+            var col = go.GetComponent<Collider>();
+            if (col != null) Destroy(col);
+            ApplyMaterial(go, loreDressingMaterial, new Color(0.35f, 0.14f, 0.1f));
+
+            var shardOffsets = new[] { new Vector2(0.24f, -0.2f), new Vector2(-0.3f, -0.08f) };
+            foreach (var off in shardOffsets)
+            {
+                var shard = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                shard.name = "LoreDressing_Shard";
+                shard.transform.SetParent(_root.transform, false);
+                shard.transform.position = center + new Vector3(off.x * cellSize, cellSize * 0.09f, off.y * cellSize);
+                shard.transform.rotation = Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 35f);
+                shard.transform.localScale = new Vector3(cellSize * 0.1f, cellSize * 0.18f, cellSize * 0.05f);
+                var shardCol = shard.GetComponent<Collider>();
+                if (shardCol != null) Destroy(shardCol);
+                ApplyMaterial(shard, loreDressingMaterial, new Color(0.22f, 0.08f, 0.07f));
+            }
+        }
+
+        // Las 3 pistas de la Puerta Fria (puerta_fria_1/2/3): la misma expedicion acampo en cada
+        // punto de su recorrido. Un pozo de fogata apagado + algo parecido a un lugar donde dormir,
+        // para que las 3 salas se lean como el mismo camino en vez de tres escenas sin relacion.
+        private void BuildCampDressing(Vector3 center, float cellSize)
+        {
+            var pit = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            pit.name = "LoreDressing_FirePit";
+            pit.transform.SetParent(_root.transform, false);
+            pit.transform.position = center + new Vector3(0.26f * cellSize, 0.02f, -0.24f * cellSize);
+            pit.transform.localScale = new Vector3(cellSize * 0.22f, 0.02f, cellSize * 0.22f);
+            var pitCol = pit.GetComponent<Collider>();
+            if (pitCol != null) Destroy(pitCol);
+            ApplyMaterial(pit, loreDressingMaterial, new Color(0.1f, 0.09f, 0.08f));
+
+            var bedroll = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            bedroll.name = "LoreDressing_Bedroll";
+            bedroll.transform.SetParent(_root.transform, false);
+            bedroll.transform.position = center + new Vector3(-0.28f * cellSize, 0.035f, 0.2f * cellSize);
+            bedroll.transform.rotation = Quaternion.Euler(0f, 30f, 0f);
+            bedroll.transform.localScale = new Vector3(cellSize * 0.4f, 0.07f, cellSize * 0.18f);
+            var bedrollCol = bedroll.GetComponent<Collider>();
+            if (bedrollCol != null) Destroy(bedrollCol);
+            ApplyMaterial(bedroll, loreDressingMaterial, new Color(0.3f, 0.24f, 0.15f));
         }
 
         // Un bloque solido de piso a techo (y un poco mas, para que no se vean costuras) que ocupa

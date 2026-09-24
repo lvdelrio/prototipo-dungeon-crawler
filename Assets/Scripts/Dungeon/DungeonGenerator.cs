@@ -27,6 +27,18 @@ namespace DungeonGen
                 var floor = GenerateFloor(width, height, indexOffset + i, rng);
                 floor.Biome = biome;
 
+                // Tiene que ir ANTES de cualquier sala especial (jefe/trampas/candado/cofre/lore):
+                // en este punto floor.Cells solo tiene Start/End/SecundariaQuest/Switch/Landing
+                // (puestos por GenerateFloor) y el resto es Normal, asi que abrir cruces extra aca
+                // no puede pisar ninguna sala que todavia no existe. Igual de importante: tiene que
+                // ir ANTES de PlacePacingPillars (ver mas abajo) -- su verificacion de "cortar esta
+                // arista de verdad desconecta todo" ya sabe lidiar con ciclos (los prueba con BFS),
+                // pero solo si los ciclos YA EXISTEN cuando elige donde poner el candado. Si los
+                // cruces se agregaran despues, el candado podria terminar en un tramo que un cruce
+                // recien abierto vuelve esquivable.
+                int crossingsAdded = AddCrossingPaths(floor, rng);
+                log.Add($"Piso {i}: {crossingsAdded} cruce(s) extra abiertos cerca del camino Start->End.");
+
                 bool isBossFloor = bossFloorInterval > 0 && i >= bossFloorStart && (i - bossFloorStart) % bossFloorInterval == 0;
                 if (isBossFloor)
                 {
@@ -80,17 +92,24 @@ namespace DungeonGen
                 for (int lc = 0; lc < loreCorridorFloors.Length; lc++)
                 {
                     if (loreCorridorFloors[lc] != i) continue;
-                    bool corridorAdded = AddLoreCorridorRoom(floor, rng, BiomeGateLoreIds[lc], (PuzzleKind)(lc % 3));
+
+                    // Goteras es la unica de las 3 variantes que hace caer al piso de ABAJO
+                    // (floorIndex+1, ver DungeonManager.OnPlayerEnterCell) en vez de solo doler
+                    // como Brasas/Polvo de Cuarzo -- el piso 0 es el piso de respiro (mismo
+                    // criterio que mas abajo en PlaceFoeRoute: nunca en el Index 0), asi que no
+                    // tiene sentido que la primerisima sala de pistas de la run mande al jugador
+                    // de sorpresa a un piso mas dificil sin ningun aviso previo. La forzamos al
+                    // piso 1 en cambio: con floorCount por defecto (3, ver DungeonSettings) el
+                    // piso 1 siempre tiene un piso 2 debajo al que caer de verdad -- el piso 2
+                    // seria el ULTIMO en ese caso, y ahi la caida degradaria en un dano de trampa
+                    // comun (ver el fallback en DungeonManager) en vez de cambiar de piso de verdad.
+                    PuzzleKind kind = i == 0 ? PuzzleKind.Brasas : i == 1 ? PuzzleKind.Goteras : PuzzleKind.PolvoDeCuarzo;
+
+                    bool corridorAdded = AddLoreCorridorRoom(floor, rng, BiomeGateLoreIds[lc], kind);
                     log.Add(corridorAdded
                         ? $"Piso {i}: sala de pistas ({floor.LoreCorridorKind}) con {BiomeGateLoreIds[lc]}."
                         : $"Piso {i}: no se pudo colocar la sala de pistas de {BiomeGateLoreIds[lc]} (mapa demasiado chico/denso).");
                 }
-
-                // Casilla especial GARANTIZADA en el camino critico Start->End: a diferencia de la
-                // sala de trampas de arriba (opcional, fuera del camino), esta hace que CUALQUIER
-                // recorrido normal del piso se tope con un peligro real, sin poder evitarlo del todo.
-                bool hazardAdded = PlaceMandatoryPathHazard(floor, rng);
-                log.Add(hazardAdded ? $"Piso {i}: casilla peligrosa obligatoria en el camino critico." : $"Piso {i}: camino critico muy corto, sin casilla obligatoria.");
 
                 PlaceFoeRoute(floor, rng);
                 log.Add(floor.HasFoe
@@ -208,14 +227,16 @@ namespace DungeonGen
             int gateIndex = floor.Gates.Count - 1;
 
             // 4. Start = farthest reachable cell from an outside-region seed cell; End = farthest cell from Start.
-            //    Start NUNCA puede caer dentro de la zona aislada (es el area "secreta" detras del
-            //    atajo/switch): como la entrada permanente la conecta al resto del arbol, sin esta
-            //    restriccion la celda mas lejana de outsideSeed bien puede terminar ahi adentro, y
-            //    el jugador arrancaria la run parado en medio de la zona que se supone que tiene que
-            //    descubrir explorando.
+            //    Ninguno de los dos puede caer dentro de la zona aislada (el area "secreta" detras
+            //    del atajo/switch): como la entrada permanente la conecta al resto del arbol, sin
+            //    esta restriccion la celda mas lejana bien puede terminar ahi adentro. Para Start
+            //    eso significaria arrancar la run parado en medio del secreto que se supone hay que
+            //    descubrir explorando; para End (que PlaceStairsBetween usa como anclaje real de la
+            //    escalera de bajada, ver mas abajo) seria peor -- la zona aislada dejaria de ser
+            //    opcional, porque la escalera obligatoria para seguir bajando quedaria adentro.
             var outsideSeed = FirstCellMatching(floor, (x, y) => !floor.IsInIsolatedZone(x, y)) ?? (0, 0);
             var (startPos, _) = FarthestCell(floor, outsideSeed, allowed: c => !floor.IsInIsolatedZone(c.Item1, c.Item2));
-            var (endPos, _) = FarthestCell(floor, startPos, new HashSet<(int, int)> { startPos });
+            var (endPos, _) = FarthestCell(floor, startPos, new HashSet<(int, int)> { startPos }, allowed: c => !floor.IsInIsolatedZone(c.Item1, c.Item2));
             floor.StartPos = startPos;
             floor.EndPos = endPos;
             floor.Cells[startPos.x, startPos.y].Type = CellType.Start;
@@ -271,6 +292,63 @@ namespace DungeonGen
                     }
                 }
             }
+        }
+
+        // ---------- Caminos multiples entre Start y End ----------
+
+        // El laberinto base (Carve, en GenerateFloor) es un arbol de expansion perfecto: por
+        // definicion existe UN SOLO camino entre dos celdas cualesquiera. El foco del piso son sus
+        // dos extremos -- Start por un lado, End por el otro -- asi que en vez de dejar una unica
+        // ruta obligatoria entre ambos, esto abre unas pocas paredes extra cerca del camino critico
+        // Start->End para que existan VARIAS formas reales de avanzar que se cruzan entre si
+        // (bifurcan y se reencuentran mas adelante), sin tocar la zona aislada ni ninguna sala
+        // especial. Rescatado y reimplementado desde feature/laberinto-caminos-cruzados (commit
+        // 300e0e3, rama vieja nunca mergeada): la idea original seguia intacta, solo el codigo
+        // estaba desactualizado (usaba CellType.Event, borrado hace tiempo con el sistema de
+        // eventos). Cada pared abierta agrega un ciclo real al grafo -- los pilares de pacing
+        // (PlacePacingPillars) ya saben detectar y esquivar ciclos con BFS al elegir donde poner el
+        // candado obligatorio, asi que esto es seguro de combinar con el resto de la generacion
+        // SIEMPRE que corra antes (ver el comentario en GenerateDungeon). Devuelve cuantos cruces
+        // extra pudo abrir (0 a 3): en mapas chicos o muy densos puede no encontrar vecino valido en
+        // alguno de los 3 puntos de bifurcacion -- no es un error, ver AddLoreCorridorRoom para el
+        // mismo patron de fallback silencioso.
+        private int AddCrossingPaths(DungeonFloor floor, Random rng)
+        {
+            var mainPath = FindPath(floor, floor.StartPos, floor.EndPos);
+            if (mainPath.Count < 8) return 0; // camino muy corto, no hay lugar para cruces reales
+
+            const int margin = 2;
+            int[] forkIndices = { mainPath.Count / 4, mainPath.Count / 2, mainPath.Count * 3 / 4 };
+            int opened = 0;
+
+            foreach (int idx in forkIndices)
+            {
+                if (idx < margin || idx >= mainPath.Count - margin) continue;
+                var (cx, cy) = mainPath[idx];
+                var cell = floor.Cells[cx, cy];
+                if (cell.Type != CellType.Normal) continue;
+
+                var dirs = new List<Direction>(DirectionExtensions.All);
+                Shuffle(dirs, rng);
+                foreach (var dir in dirs)
+                {
+                    if (!cell.HasWall(dir)) continue; // ya conectado (o es el propio camino)
+                    var (ox, oy) = dir.Offset();
+                    int nx = cx + ox, ny = cy + oy;
+                    if (!floor.InBounds(nx, ny)) continue;
+
+                    var neighbor = floor.Cells[nx, ny];
+                    if (neighbor.Type != CellType.Normal) continue;
+                    if (neighbor.IsBossRoom || neighbor.IsTrapRoom || neighbor.IsTreasureRoom) continue;
+                    if (floor.IsInIsolatedZone(nx, ny) != floor.IsInIsolatedZone(cx, cy)) continue;
+
+                    OpenWallBetween(floor, cx, cy, dir);
+                    opened++;
+                    break;
+                }
+            }
+
+            return opened;
         }
 
         // ---------- Sala de jefe ----------
@@ -894,6 +972,49 @@ namespace DungeonGen
 
         public void PlaceStairsBetween(DungeonFloor lower, DungeonFloor upper, Random rng, int pairCount, IList<(int, int)> restrictLowerTo = null)
         {
+            int pairsPlaced = 0;
+
+            // Primer par: coincide con EndPos(lower)/StartPos(upper) -- el mismo backbone al que ya
+            // se anclan AddCrossingPaths/PlacePacingPillars/PlaceFoeRoute/AssignLoreLock. Antes, ese
+            // backbone se calculaba sobre dos celdas que solo eran marcadores de sabor (CellType.
+            // Start/End no hacen nada mecanico), mientras la escalera real -- por donde el jugador
+            // EN LOS HECHOS entra y sale del piso, ver DungeonManager.OnPlayerEnterCell -> ChangeFloor
+            // usando StairTargetX/Y -- se elegia aparte, al azar, sin ninguna relacion. Resultado: la
+            // ruta que el generador diversifica con cuidado no era la que el jugador de verdad
+            // recorria para progresar. Esto los une: la celda EndPos deja de ser un cartel decorativo
+            // y pasa a ser la escalera de subida de verdad (y StartPos del piso de arriba, la de
+            // bajada). Nada del resto del piso cambia -- zona aislada, mision secundaria, cofres,
+            // ramas muertas siguen exactamente igual -- asi que el mapa sigue sintiendose como un
+            // mapa real para explorar, no un pasillo. Nunca se hace en pisos de jefe (restrictLowerTo
+            // != null: la escalera tiene que salir DENTRO de la sala del jefe, sin importar donde
+            // haya quedado EndPos). El chequeo de zona aislada es un segundo seguro nada mas --
+            // GenerateFloor ya excluye la zona aislada al elegir EndPos (mismo motivo que StartPos:
+            // si la escalera obligatoria quedara ahi adentro, el secreto dejaria de ser opcional) --
+            // pero si esa garantia cambia algun dia sin tocar esta funcion, mejor caer al fallback
+            // de abajo que dejar la zona aislada obligatoria en silencio.
+            if (restrictLowerTo == null && !lower.IsInIsolatedZone(lower.EndPos.x, lower.EndPos.y))
+            {
+                var lowerEnd = lower.EndPos;
+                var upperStart = upper.StartPos;
+
+                var lCell = lower.Cells[lowerEnd.x, lowerEnd.y];
+                lCell.Type = CellType.StairsUp;
+                lCell.StairTargetFloor = upper.Index;
+                lCell.StairTargetX = upperStart.x;
+                lCell.StairTargetY = upperStart.y;
+
+                var uCell = upper.Cells[upperStart.x, upperStart.y];
+                uCell.Type = CellType.StairsDown;
+                uCell.StairTargetFloor = lower.Index;
+                uCell.StairTargetX = lowerEnd.x;
+                uCell.StairTargetY = lowerEnd.y;
+
+                pairsPlaced = 1;
+            }
+
+            // Pares adicionales (o el unico par, en piso de jefe): celdas libres al azar, igual que
+            // antes -- son la variedad extra de "mas de una forma fisica de bajar", no la ruta
+            // garantizada.
             var lowerFree = (restrictLowerTo != null && restrictLowerTo.Count > 0)
                 ? restrictLowerTo.Where(c => lower.Cells[c.Item1, c.Item2].Type == CellType.Normal).ToList()
                 : FreeNormalCells(lower);
@@ -901,7 +1022,8 @@ namespace DungeonGen
             Shuffle(lowerFree, rng);
             Shuffle(upperFree, rng);
 
-            int count = Math.Min(pairCount, Math.Min(lowerFree.Count, upperFree.Count));
+            int remaining = Math.Max(0, pairCount - pairsPlaced);
+            int count = Math.Min(remaining, Math.Min(lowerFree.Count, upperFree.Count));
             for (int i = 0; i < count; i++)
             {
                 var lPos = lowerFree[i];
@@ -929,7 +1051,7 @@ namespace DungeonGen
             for (int x = 0; x < floor.Width; x++)
                 for (int y = 0; y < floor.Height; y++)
                     if (floor.Cells[x, y].Type == CellType.Normal && !floor.Cells[x, y].IsBossRoom && !floor.Cells[x, y].IsTreasureRoom
-                        && !floor.Cells[x, y].IsTrapRoom && !floor.Cells[x, y].IsPuzzleTile && !floor.Cells[x, y].IsMandatoryHazard)
+                        && !floor.Cells[x, y].IsTrapRoom && !floor.Cells[x, y].IsPuzzleTile)
                         list.Add((x, y));
             return list;
         }
@@ -1219,42 +1341,87 @@ namespace DungeonGen
                     yield return (x, y);
         }
 
-        // BFS restringido a `set`: true si se puede llegar de `from` a `to` pasando SOLO por
-        // celdas de `set` (4-conectado). Usado para garantizar que el patron al azar de
-        // seguras/inseguras de una sala de pistas realmente tenga un camino resolvible.
-        private bool IsConnectedWithinSet((int x, int y) from, (int x, int y) to, HashSet<(int, int)> set)
+        // Camino serpenteado dentro de un area totalmente abierta (la sala de pistas fusiona TODAS
+        // sus paredes internas, ver AddLoreCorridorRoom): random walk con backtracking, igual
+        // tecnica que Carve (el laberinto base), acotado a `allowed` y detenido apenas se alcanza
+        // `to` -- en ese momento el stack ES el camino simple (sin revisitar celdas) de `from` a
+        // `to`. Siempre encuentra camino porque `allowed` es un rectangulo solido (4-conectado, sin
+        // huecos).
+        //
+        // SESGADO hacia `to` a proposito (medido con un diagnostico temporal: sin sesgo, la
+        // variante sin sesgo dejaba la sala 80-100% "segura" en varios seeds -- un random walk sin
+        // preferencia de direccion tiende a explorar CASI TODA el area chica antes de chocar con el
+        // objetivo de pura casualidad, exactamente lo opuesto de "ruta correcta minoritaria rodeada
+        // de obstaculo"). Cada paso prefiere (75% de las veces, si hay alguna opcion asi) una celda
+        // que ACERQUE en distancia Manhattan a `to`; el resto de las veces elige cualquier opcion
+        // valida -- eso sigue dando el zigzag serpenteado sin dejar que el camino se coma la sala.
+        private List<(int x, int y)> CarveSerpentinePath(HashSet<(int, int)> allowed, (int x, int y) from, (int x, int y) to, Random rng)
         {
             var visited = new HashSet<(int, int)> { from };
-            var queue = new Queue<(int, int)>();
-            queue.Enqueue(from);
-            while (queue.Count > 0)
+            var stack = new List<(int, int)> { from };
+
+            while (stack[stack.Count - 1] != to)
             {
-                var (cx, cy) = queue.Dequeue();
-                if ((cx, cy) == to) return true;
+                var (cx, cy) = stack[stack.Count - 1];
+                var options = new List<(int, int)>();
                 foreach (var dir in DirectionExtensions.All)
                 {
                     var (ox, oy) = dir.Offset();
                     var next = (cx + ox, cy + oy);
-                    if (!set.Contains(next) || visited.Contains(next)) continue;
-                    visited.Add(next);
-                    queue.Enqueue(next);
+                    if (allowed.Contains(next) && !visited.Contains(next)) options.Add(next);
                 }
+
+                if (options.Count == 0)
+                {
+                    stack.RemoveAt(stack.Count - 1);
+                    if (stack.Count == 0) return null; // no deberia pasar: allowed es un rectangulo solido conexo
+                    continue;
+                }
+
+                int curDist = ManhattanDistance((cx, cy), to);
+                var improving = options.Where(o => ManhattanDistance(o, to) < curDist).ToList();
+                var pick = (improving.Count > 0 && rng.NextDouble() < 0.75)
+                    ? improving[rng.Next(improving.Count)]
+                    : options[rng.Next(options.Count)];
+
+                visited.Add(pick);
+                stack.Add(pick);
             }
-            return false;
+
+            return stack;
         }
+
+        private int ManhattanDistance((int x, int y) a, (int x, int y) b) => Math.Abs(a.x - b.x) + Math.Abs(a.y - b.y);
 
         // Sala de pistas (ver DungeonFloor.LoreCorridorKind / Gameplay/DungeonLevelBuilder.
         // BuildPuzzleTile): fusiona un rectangulo grande en una sola sala (mismo patron que
-        // AddBossRoom/AddTrapRoom). El ANILLO exterior siempre es piso real (para que no importa
-        // por donde entres, arrancas en terreno seguro); el INTERIOR es una grilla al azar de
-        // piso real/falso, solo distinguible por un tell de particulas -- nunca por color de
-        // marcador como una trampa comun. El fragmento de lore queda en el centro del interior, Y
-        // SIEMPRE hay un camino de piso real desde el anillo hasta el (se reintenta el patron
-        // random hasta 20 veces antes de descartar la ubicacion entera).
+        // AddBossRoom/AddTrapRoom). A diferencia de antes (anillo siempre seguro + interior al
+        // azar), ahora hay una RUTA deliberada: se eligen 2 celdas del anillo que ya tenian una
+        // conexion real hacia afuera del rectangulo ("portales", entrada y salida -- las mas
+        // alejadas entre si si hay varias candidatas) y se traza un camino serpenteado (ver
+        // CarveSerpentinePath) desde la entrada hasta el fragmento de lore, y otro desde el lore
+        // hasta la salida. Todo lo que NO sea esa ruta (resto del anillo incluido) es obstaculo --
+        // real (Goteras) u oculto (Brasas/Polvo de Cuarzo), segun PuzzleKind. Si el rectangulo
+        // candidato no tiene al menos 2 portales, se descarta y se prueba otro (mismo reintento
+        // acotado de siempre): sin 2 conexiones reales a la mazmorra no hay como definir una
+        // entrada y una salida distintas.
         private bool AddLoreCorridorRoom(DungeonFloor floor, Random rng, string loreId, PuzzleKind kind)
         {
             int minSide = 4, maxSide = 6;
             if (Math.Min(floor.Width, floor.Height) - 1 < minSide) return false;
+
+            // Esta funcion corre DESPUES de PlacePacingPillars (necesita floor.TreasureRoomCells y
+            // floor.BiomeGatePos ya resueltos para no pisarlos, ver RectOverlapsSpecialCells), asi
+            // que a esta altura puede existir un candado ya cerrado y verificado. Fusionar un
+            // rectangulo entero en una sala abierta (como ya hacen AddBossRoom/AddTrapRoom, ambas
+            // ANTES del candado) puede crear un ciclo real en el grafo -- si ese rectangulo tiene
+            // celdas de los DOS lados de una puerta cerrada, el candado deja de bloquear nada
+            // aunque su propia verificacion (BFS en PlacePacingPillars) haya sido correcta en su
+            // momento, porque ese ciclo todavia no existia cuando se hizo esa verificacion.
+            // reachableFromStart es el estado "de arranque" (candados cerrados, tal cual esta el
+            // piso ahora mismo): si un candidato pisa celdas de ambos lados, se descarta y se
+            // prueba otro rectangulo, mismo reintento acotado que ya usa el resto de la funcion.
+            var reachableFromStart = BfsReachable(floor, floor.StartPos);
 
             for (int attempt = 0; attempt < 40; attempt++)
             {
@@ -1276,23 +1443,51 @@ namespace DungeonGen
                 if (blocked) continue;
 
                 var cells = RectCells(rx, ry, rw, rh).ToList();
+                if (cells.Any(c => reachableFromStart.Contains(c)) && cells.Any(c => !reachableFromStart.Contains(c)))
+                    continue; // fusionar esto bypassearia un candado ya cerrado
                 var ring = cells.Where(c => c.x == rx || c.x == rx + rw - 1 || c.y == ry || c.y == ry + rh - 1).ToList();
                 var interior = cells.Except(ring).ToList();
                 if (interior.Count == 0) continue;
 
-                var loreCell = interior[interior.Count / 2];
-
-                bool solved = false;
-                HashSet<(int, int)> safeSet = null;
-                for (int patternAttempt = 0; patternAttempt < 20 && !solved; patternAttempt++)
+                // Portales: celdas del anillo que YA tenian una conexion real hacia afuera del
+                // rectangulo (una pared abierta hacia un vecino fuera de sus limites) -- las unicas
+                // que sirven de entrada/salida de verdad, porque esta funcion nunca toca las
+                // paredes EXTERNAS del rectangulo, solo fusiona las internas.
+                var portals = new List<(int x, int y)>();
+                foreach (var (x, y) in ring)
                 {
-                    safeSet = new HashSet<(int, int)>(ring) { loreCell };
-                    foreach (var c in interior)
-                        if (c != loreCell && rng.NextDouble() >= 0.45)
-                            safeSet.Add(c);
-                    solved = IsConnectedWithinSet(ring[0], loreCell, safeSet);
+                    var cell = floor.Cells[x, y];
+                    foreach (var dir in DirectionExtensions.All)
+                    {
+                        var (ox, oy) = dir.Offset();
+                        int nx = x + ox, ny = y + oy;
+                        bool outsideRect = nx < rx || nx >= rx + rw || ny < ry || ny >= ry + rh;
+                        if (outsideRect && !cell.HasWall(dir)) { portals.Add((x, y)); break; }
+                    }
                 }
-                if (!solved) continue;
+                if (portals.Count < 2) continue; // sin 2 conexiones reales no hay entrada Y salida distintas
+
+                // Entrada/salida = el par de portales mas alejado entre si (si hay varios
+                // candidatos), para que el cruce real de la sala sea largo en vez de un atajo
+                // pegado a una esquina.
+                (int x, int y) entrance = portals[0], exit = portals[1];
+                int bestDist = -1;
+                for (int a = 0; a < portals.Count; a++)
+                    for (int b = a + 1; b < portals.Count; b++)
+                    {
+                        int d = Math.Abs(portals[a].x - portals[b].x) + Math.Abs(portals[a].y - portals[b].y);
+                        if (d > bestDist) { bestDist = d; entrance = portals[a]; exit = portals[b]; }
+                    }
+
+                var loreCell = interior[interior.Count / 2];
+                var allowed = new HashSet<(int, int)>(cells);
+
+                var pathIn = CarveSerpentinePath(allowed, entrance, loreCell, rng);
+                var pathOut = CarveSerpentinePath(allowed, loreCell, exit, rng);
+                if (pathIn == null || pathOut == null) continue; // no deberia pasar (rectangulo solido)
+
+                var safeSet = new HashSet<(int, int)>(pathIn);
+                safeSet.UnionWith(pathOut);
 
                 foreach (var (x, y) in cells)
                 {
@@ -1317,37 +1512,6 @@ namespace DungeonGen
                 return true;
             }
             return false;
-        }
-
-        // Casilla especial GARANTIZADA en el camino critico Start->End (a diferencia de la sala de
-        // trampas, opcional y fuera del camino): el jugador SI O SI se topa con un peligro real
-        // solo por jugar el piso normal. Duele una sola vez (EventConsumed marca "ya la
-        // cruzaste"), para que cruzar de ida y vuelta el mismo pasillo no sea un castigo infinito.
-        private bool PlaceMandatoryPathHazard(DungeonFloor floor, Random rng)
-        {
-            var path = FindPath(floor, floor.StartPos, floor.EndPos);
-            const int margin = 1;
-            if (path.Count < margin * 2 + 2) return false;
-
-            var used = new HashSet<(int, int)> { floor.StartPos, floor.EndPos, floor.SecondaryQuestPos };
-            if (floor.TreasureRoomCells != null) foreach (var c in floor.TreasureRoomCells) used.Add(c);
-            foreach (var door in floor.LockedDoors) { used.Add((door.DoorX, door.DoorY)); used.Add((door.LeverX, door.LeverY)); }
-            foreach (var gate in floor.Gates) { used.Add((gate.SwitchX, gate.SwitchY)); used.Add((gate.LandingX, gate.LandingY)); }
-
-            var candidates = new List<(int, int)>();
-            for (int i = margin; i < path.Count - margin; i++)
-            {
-                var (px, py) = path[i];
-                if (used.Contains(path[i])) continue;
-                var cell = floor.Cells[px, py];
-                if (cell.Type != CellType.Normal || cell.IsBossRoom || cell.IsTrapRoom || cell.IsPuzzleTile) continue;
-                candidates.Add(path[i]);
-            }
-            if (candidates.Count == 0) return false;
-
-            var pos = candidates[rng.Next(candidates.Count)];
-            floor.Cells[pos.Item1, pos.Item2].IsMandatoryHazard = true;
-            return true;
         }
 
         // Ruta fija de patrulla para el FOE de este piso (enemigo fuerte que se pasea, ver
@@ -1457,7 +1621,7 @@ namespace DungeonGen
                 for (int y = 0; y < floor.Height; y++)
                 {
                     var cell = floor.Cells[x, y];
-                    if (cell.Type != CellType.Normal || cell.IsBossRoom || cell.IsPuzzleTile || cell.IsMandatoryHazard) continue;
+                    if (cell.Type != CellType.Normal || cell.IsBossRoom || cell.IsPuzzleTile) continue;
                     if (exclude.Contains((x, y))) continue;
                     if (within != null && !within.Contains((x, y))) continue;
                     if (Degree(floor, x, y) == 1) result.Add((x, y));

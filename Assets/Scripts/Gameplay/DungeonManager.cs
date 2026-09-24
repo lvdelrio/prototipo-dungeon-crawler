@@ -333,14 +333,6 @@ namespace Gameplay
                     ApplyTrapDamage("¡Pisaste una trampa de picos!");
             }
 
-            // Casilla obligatoria del camino critico (ver DungeonGenerator.PlaceMandatoryPathHazard):
-            // duele una sola vez (EventConsumed), no en cada backtrack por el mismo pasillo.
-            if (cell.IsMandatoryHazard && !cell.EventConsumed && !IsCombatActive)
-            {
-                cell.EventConsumed = true;
-                ApplyTrapDamage("¡Una trampa te alcanza en pleno camino!");
-            }
-
             // Sala de pistas (ver DungeonGenerator.AddLoreCorridorRoom): pisar una celda de la
             // grilla que NO es piso real. En Goteras (agua) el piso directamente NO ESTA (ver
             // DungeonLevelBuilder.Build) y esto te hace caer de verdad al piso de abajo -- no

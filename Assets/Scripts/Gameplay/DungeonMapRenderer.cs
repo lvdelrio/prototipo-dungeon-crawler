@@ -110,8 +110,6 @@ namespace Gameplay
                 return cell.IsTrapCell ? new Color(0.55f, 0.22f, 0.05f) : new Color(0.4f, 0.28f, 0.12f);
             if (cell.IsPuzzleTile)
                 return cell.IsPuzzleTileSafe ? new Color(0.35f, 0.45f, 0.5f) : new Color(0.5f, 0.28f, 0.1f);
-            if (cell.IsMandatoryHazard && !cell.EventConsumed)
-                return new Color(0.6f, 0.35f, 0.05f);
             return cell.IsIsolatedZone ? new Color(0.30f, 0.20f, 0.35f) : PathColor;
         }
 
