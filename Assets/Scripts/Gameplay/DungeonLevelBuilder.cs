@@ -33,6 +33,8 @@ namespace Gameplay
         public bool useForestGroundTiles = true;
         [Tooltip("Material opcional para el tilemap de pasto (shader Custom/PS1Ground); si se deja vacio se genera uno en runtime.")]
         public Material groundTileMaterial;
+        [Tooltip("Material opcional para el parche de piso al rojo vivo de las celdas peligrosas de Brasas (ver BuildBrasasDangerFloor); si se deja vacio usa un color solido de respaldo.")]
+        public Material brasasDangerFloorMaterial;
 
         // Restos alrededor del marcador de lore (ver Lore.SceneDressing / BuildLoreSceneDressing).
         // Un solo campo compartido por las 4 variantes -- igual que trapMarkerMaterial cubre tanto
@@ -141,6 +143,12 @@ namespace Gameplay
                     BuildMarker(cell, center, cellSize, wallHeight);
                     if (cell.IsTrapCell && !floor.TrapDisabled) BuildTrapMarker(center, cellSize, floor.TrapKind);
                     if (cell.IsPuzzleTile) BuildPuzzleTile(center, cellSize, cell.IsPuzzleTileSafe, floor.LoreCorridorKind);
+                    // Brasas: la celda "falsa" duele igual que un pico (ver DungeonManager.
+                    // OnPlayerEnterCell) pero el unico aviso era la particula de brasas cayendo
+                    // desde arriba -- facil de perder de vista. Esto pone el peligro EN el piso
+                    // mismo, bien visible, sin tocar el mecanismo del puzzle.
+                    if (cell.IsPuzzleTile && !cell.IsPuzzleTileSafe && floor.LoreCorridorKind == PuzzleKind.Brasas)
+                        BuildBrasasDangerFloor(center, cellSize);
                     if (cell.Type == CellType.Lore) BuildLoreSceneDressing(cell, center, cellSize);
                 }
             }
@@ -321,6 +329,45 @@ namespace Gameplay
             renderer.sortingOrder = -1; // detras de la capa clara principal
 
             ParticleLayerFactory.Activate(ps);
+        }
+
+        // Parche de piso agrietado al rojo vivo sobre una celda de Brasas peligrosa (ver Build):
+        // reemplaza la unica pista anterior (la particula de brasas cayendo, facil de perder de
+        // vista) por algo que se lee de un vistazo SIN tocar el mecanismo del puzzle -- la celda
+        // sigue siendo la misma, IsPuzzleTileSafe sigue decidiendo el dano en DungeonManager.
+        // OnPlayerEnterCell, esto es solo el aviso. Sin collider: es decoracion sobre el piso real.
+        private void BuildBrasasDangerFloor(Vector3 center, float cellSize)
+        {
+            var basePatch = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            basePatch.name = "BrasasDangerFloor";
+            basePatch.transform.SetParent(_root.transform, false);
+            basePatch.transform.position = center + new Vector3(0, 0.055f, 0);
+            basePatch.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
+            basePatch.transform.localScale = new Vector3(cellSize * 0.92f, cellSize * 0.92f, 1f);
+            var baseCol = basePatch.GetComponent<Collider>();
+            if (baseCol != null) Destroy(baseCol);
+            ApplyMaterial(basePatch, brasasDangerFloorMaterial, new Color(0.14f, 0.03f, 0.02f));
+
+            // 3 grietas brillantes tipo lava encima de la base oscura -- el contraste oscuro/al rojo
+            // vivo es lo que se lee como "peligro" a distancia, no un color plano.
+            var cracks = new[]
+            {
+                (offset: new Vector2(-0.2f, 0.1f), rotY: 30f),
+                (offset: new Vector2(0.15f, -0.15f), rotY: 110f),
+                (offset: new Vector2(0.02f, 0.25f), rotY: 70f),
+            };
+            foreach (var crack in cracks)
+            {
+                var go = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                go.name = "BrasasCrack";
+                go.transform.SetParent(_root.transform, false);
+                go.transform.position = center + new Vector3(crack.offset.x * cellSize, 0.06f, crack.offset.y * cellSize);
+                go.transform.rotation = Quaternion.Euler(90f, crack.rotY, 0f);
+                go.transform.localScale = new Vector3(cellSize * 0.5f, cellSize * 0.09f, 1f);
+                var col = go.GetComponent<Collider>();
+                if (col != null) Destroy(col);
+                ApplyMaterial(go, null, new Color(1f, 0.35f, 0.05f));
+            }
         }
 
         // Puesta en escena de la celda de lore (ver Lore.SceneDressing): busca el fragmento

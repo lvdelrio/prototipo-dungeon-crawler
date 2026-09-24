@@ -26,6 +26,11 @@ namespace Gameplay
 
         void OnGUI()
         {
+            // El minimapa digital era una ayuda de desarrollo -- la navegacion real del juego
+            // terminado es el mapa fisico dibujado a mano (ver PlayerMapEditorHUD/PlayerMapViewer).
+            // Application.isEditor es false en cualquier build (Development o Release), asi que
+            // esto lo saca del juego compilado sin afectar las pruebas en el Editor.
+            if (!Application.isEditor) return;
             if (dungeonManager == null || player == null || !dungeonManager.IsReady) return;
             // El mapa desaparece durante el combate, la pantalla de tienda/mejoras post-run y el
             // menu de pausa: en todos los casos hay otro panel mas importante que no debe quedar tapado.

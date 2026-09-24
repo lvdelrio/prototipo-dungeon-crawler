@@ -23,6 +23,11 @@ namespace Meta
         // vez por run).
         public bool FirstChestBonusGiven;
 
+        // Se pone en true la primera vez que el jugador cierra el cartel de controles basicos
+        // (ver Gameplay.ControlsTutorialHUD) -- asi no vuelve a aparecer en partidas siguientes de
+        // la misma instalacion, solo una vez en la vida del guardado.
+        public bool SeenControlsTutorial;
+
         // Carga de Incienso: al usarse (ver DungeonManager.TryUseIncense) reduce a la mitad el
         // peligro que acumulan los pasos durante un tramo de exploracion, asi tardas mas en
         // toparte con un encuentro -- util para cruzar rapido un piso sin pelear tanto.

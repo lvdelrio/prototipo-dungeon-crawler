@@ -15,6 +15,11 @@ namespace Gameplay
 
         void OnGUI()
         {
+            // Panel de debug (contador de peligro oculto, boton "Validar Dungeon", etc.): solo
+            // tiene sentido para desarrollo, nunca en un build real -- Application.isEditor es
+            // false en cualquier .exe compilado (Development o Release), aunque siga true al
+            // darle Play adentro del Editor.
+            if (!Application.isEditor) return;
             if (dungeonManager == null || player == null || !dungeonManager.IsReady) return;
             // Se esconde durante el combate, la pantalla de tienda/mejoras post-run y el menu de
             // pausa: en todos los casos hay otro panel mas importante que no debe quedar tapado.

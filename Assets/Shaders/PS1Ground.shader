@@ -21,13 +21,18 @@ Shader "Custom/PS1Ground"
             CGPROGRAM
             #pragma vertex vert
             #pragma fragment frag
+            #pragma multi_compile_fog
             #include "UnityCG.cginc"
 
             fixed4 _Color;
             float _SnapScale;
 
             struct appdata { float4 vertex : POSITION; float3 normal : NORMAL; };
-            struct v2f { float4 vertex : SV_POSITION; fixed3 shade : COLOR0; };
+            // UNITY_FOG_COORDS/UNITY_TRANSFER_FOG/UNITY_APPLY_FOG (abajo): sin esto el piso
+            // ignoraba por completo la niebla lineal de la escena (RenderSettings.fog, la que
+            // oscurece la mazmorra a partir de ~2-3 celdas) -- techo/paredes/marcadores la reciben
+            // gratis por venir del shader Standard, pero un CGPROGRAM a mano no la aplica solo.
+            struct v2f { float4 vertex : SV_POSITION; fixed3 shade : COLOR0; UNITY_FOG_COORDS(1) };
 
             v2f vert (appdata v)
             {
@@ -43,12 +48,15 @@ Shader "Custom/PS1Ground"
                 float3 worldNormal = normalize(mul((float3x3)unity_ObjectToWorld, v.normal));
                 float topLight = saturate(worldNormal.y * 0.5 + 0.5);
                 o.shade = lerp(fixed3(0.55, 0.55, 0.55), fixed3(1, 1, 1), topLight);
+                UNITY_TRANSFER_FOG(o, o.vertex);
                 return o;
             }
 
             fixed4 frag (v2f i) : SV_Target
             {
-                return fixed4(_Color.rgb * i.shade, 1.0);
+                fixed4 col = fixed4(_Color.rgb * i.shade, 1.0);
+                UNITY_APPLY_FOG(i.fogCoord, col);
+                return col;
             }
             ENDCG
         }

@@ -10,6 +10,7 @@ namespace Gameplay
         public DialogueManager dialogueManager;
         public PauseMenuManager pauseMenu;
         public PlayerMapViewer mapViewer;
+        public ControlsTutorialHUD controlsTutorial;
         public float moveDuration = 0.18f;
         public float turnDuration = 0.12f;
 
@@ -53,6 +54,7 @@ namespace Gameplay
         {
             if (_busy || dungeonManager == null || !dungeonManager.IsReady) return; // IsReady en false = todavia esta el menu inicial (Continuar/Nueva Partida)
             if (dungeonManager.IsCombatActive || dungeonManager.IsGameOverShopActive) return; // congelado en combate o en la tienda post-derrota
+            if (controlsTutorial != null && controlsTutorial.IsOpen) return; // congelado hasta cerrar el cartel de controles (solo la primera vez)
             if (dialogueManager != null && dialogueManager.IsActive)
             {
                 // Espacio avanza el dialogo (solo si NO tiene opciones -- esas se eligen con su
