@@ -157,6 +157,21 @@ public static class DungeonSceneBuilder
         enemyBarsHud.combatManager = combatManager;
         enemyBarsHud.battleStage = battleStage;
         playerController.pauseMenu = pauseMenu;
+        // Mapa fisico que el personaje levanta cerca de camara (tecla M, ver PlayerMapViewer) --
+        // colgado de la MISMA camara que cameraBobTarget de arriba, para que se mueva con el bob
+        // de caminata como cualquier objeto sostenido en primera persona.
+        var mapViewer = PlayerMapPropBuilder.Attach(cameraGo.transform, manager, playerController, pauseMenu);
+
+        // Panel de edicion (grilla + herramientas Pared/Pintar piso/Simbolos, ver
+        // PlayerMapEditorHUD): pantalla completa, aparece mientras mapViewer.IsOpen.
+        var mapEditorGo = new GameObject("PlayerMapEditorHUD");
+        var mapEditorHud = mapEditorGo.AddComponent<PlayerMapEditorHUD>();
+        mapEditorHud.dungeonManager = manager;
+        mapEditorHud.player = playerController;
+        mapEditorHud.mapViewer = mapViewer;
+        MapIconImporter.EnsureConfigured();
+        foreach (var kv in MapIconImporter.LoadAll())
+            mapEditorHud.icons.Add(new MapIconEntry { Id = kv.Key, Label = kv.Key, Sprite = kv.Value });
         hud.pauseMenu = pauseMenu;
         minimap.pauseMenu = pauseMenu;
         pauseMenuHud.pauseMenu = pauseMenu;

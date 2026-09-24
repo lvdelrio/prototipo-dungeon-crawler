@@ -9,6 +9,7 @@ namespace Gameplay
         public DungeonManager dungeonManager;
         public DialogueManager dialogueManager;
         public PauseMenuManager pauseMenu;
+        public PlayerMapViewer mapViewer;
         public float moveDuration = 0.18f;
         public float turnDuration = 0.12f;
 
@@ -75,7 +76,10 @@ namespace Gameplay
                 return;
             }
 
-            if (Input.GetKeyDown(KeyCode.M)) { dungeonManager.TryUseMap(); return; }
+            // M levanta el mapa fisico cerca de camara (ver PlayerMapViewer) -- el item consumible
+            // "Mapa" (revela el piso de golpe) se movio a L para liberar M, que antes lo usaba.
+            if (mapViewer != null && Input.GetKeyDown(KeyCode.M)) { mapViewer.Toggle(); return; }
+            if (Input.GetKeyDown(KeyCode.L)) { dungeonManager.TryUseMap(); return; }
             if (Input.GetKeyDown(KeyCode.P)) { dungeonManager.TryUseDrill(_x, _y, _facing); return; }
             if (Input.GetKeyDown(KeyCode.N)) { dungeonManager.TryUseIncense(); return; }
 
@@ -92,14 +96,17 @@ namespace Gameplay
                 return;
             }
 
-            if (Input.GetKeyDown(KeyCode.LeftArrow)) { StartCoroutine(Turn(-1)); return; }
-            if (Input.GetKeyDown(KeyCode.RightArrow)) { StartCoroutine(Turn(1)); return; }
+            // Control tipo "tanque" en WASD: W/S caminan, A/D giran -- las flechitas quedaron
+            // LIBRES por completo para la herramienta Pared del mapa fisico (ver
+            // PlayerMapEditorHUD), sin ningun conflicto que resolver: como el giro ya no depende
+            // de las flechitas, podes girar la camara con A/D para mirar donde estan las paredes
+            // reales MIENTRAS estas a mitad de dibujar una (a pedido).
+            if (Input.GetKeyDown(KeyCode.A)) { StartCoroutine(Turn(-1)); return; }
+            if (Input.GetKeyDown(KeyCode.D)) { StartCoroutine(Turn(1)); return; }
 
             Direction? moveDir = null;
-            if (Input.GetKeyDown(KeyCode.W) || Input.GetKeyDown(KeyCode.UpArrow)) moveDir = _facing;
-            else if (Input.GetKeyDown(KeyCode.S) || Input.GetKeyDown(KeyCode.DownArrow)) moveDir = _facing.Opposite();
-            else if (Input.GetKeyDown(KeyCode.A)) moveDir = TurnDirection(_facing, -1);
-            else if (Input.GetKeyDown(KeyCode.D)) moveDir = TurnDirection(_facing, 1);
+            if (Input.GetKeyDown(KeyCode.W)) moveDir = _facing;
+            else if (Input.GetKeyDown(KeyCode.S)) moveDir = _facing.Opposite();
 
             if (moveDir.HasValue)
             {

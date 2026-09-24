@@ -30,6 +30,17 @@ namespace DungeonGen
         public bool EventConsumed;
         public bool Discovered; // runtime: revelado en el minimapa del jugador al pisarlo
 
+        // Anotaciones a mano del jugador sobre SU copia del mapa (ver PlayerMapEditorHUD): NO
+        // forman parte de la mazmorra real -- Walls arriba sigue siendo la unica fuente de verdad
+        // para movimiento/colision, esto es solo dibujo/notas encima. Mismo ciclo de vida que
+        // Discovered (en memoria durante la run, no se guarda en el archivo de save).
+        public bool[] PaintedWalls = { false, false, false, false };
+        public int PaintedFloorColorIndex = -1; // -1 = sin pintar; indice en DungeonMapRenderer.FloorPaintColors
+        public string PaintedSymbolIcon; // null = sin simbolo; nombre de icono en MapIconImporter.IconNames
+
+        public bool HasPaintedWall(Direction d) => PaintedWalls[(int)d];
+        public void SetPaintedWall(Direction d, bool value) => PaintedWalls[(int)d] = value;
+
         // Valor de peligro (0-5) usado por el sistema real de encuentros de Etrian Odyssey: se
         // suma a un contador de pasos cada vez que se pisa la celda. Solo celdas Normal tienen un
         // valor mayor a 0; el resto (Start/End/escaleras/vacio/etc.) es siempre seguro.

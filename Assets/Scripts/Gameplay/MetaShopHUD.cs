@@ -228,7 +228,7 @@ namespace Gameplay
             var hintStyle = new GUIStyle(GUI.skin.label) { fontSize = 11, wordWrap = true };
             hintStyle.normal.textColor = new Color(0.65f, 0.65f, 0.65f);
             GUI.Label(new Rect(0, cy, listW - 20f, 34),
-                "El Mapa revela de golpe todo el piso actual (tecla M). El Perforador abre un paso permanente en la pared que tengas enfrente, si hay algo real detrás (tecla P). El Incienso reduce a la mitad el peligro de cada paso por un buen tramo (tecla N).",
+                "El Mapa revela de golpe todo el piso actual (tecla L). El Perforador abre un paso permanente en la pared que tengas enfrente, si hay algo real detrás (tecla P). El Incienso reduce a la mitad el peligro de cada paso por un buen tramo (tecla N).",
                 hintStyle);
             cy += 44;
 

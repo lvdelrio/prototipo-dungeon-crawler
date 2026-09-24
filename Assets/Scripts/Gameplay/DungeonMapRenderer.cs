@@ -1,17 +1,47 @@
+using System;
 using UnityEngine;
 using DungeonGen;
 
 namespace Gameplay
 {
-    // Dibujo del mapa de un piso (grilla + paredes + marcadores), en IMGUI puro (GUI.DrawTexture),
-    // factorizado de MinimapUI para que el mismo dibujo se pueda usar tanto en el minimapa de
-    // esquina (un solo piso, el actual) como en la pestaña "Mapa" del menu de pausa (cualquier piso
-    // ya explorado, con sub-pestanas -- ver PauseMenuHUD.DrawMap). Paleta calcada de un automapa
-    // real de Etrian Odyssey: piso celeste, vacio azul oscuro.
+    // Dibujo del mapa de un piso (grilla + paredes + marcadores), factorizado de MinimapUI para
+    // que el mismo dibujo se pueda usar en el minimapa de esquina (IMGUI, un solo piso, el
+    // actual), en la pestaña "Mapa" del menu de pausa (IMGUI, cualquier piso ya explorado, ver
+    // PauseMenuHUD.DrawMap) Y en el mapa fisico que el personaje sostiene cerca de camara
+    // (Texture2D, ver PlayerMapViewer) -- misma geometria de celdas/paredes/marcadores en los 3
+    // casos, solo cambia DONDE se pinta cada rect (DrawCore recibe ese "donde" como delegate).
+    // Paleta calcada de un automapa real de Etrian Odyssey: piso celeste, vacio azul oscuro.
     public static class DungeonMapRenderer
     {
         public static readonly Color VoidColor = new Color(0.04f, 0.1f, 0.2f);
         public static readonly Color PathColor = new Color(0.47f, 0.67f, 0.82f);
+
+        // Anotaciones del jugador (ver DungeonCell.PaintedWalls/PaintedFloorColorIndex y
+        // PlayerMapEditorHUD, que es quien las escribe): capa aparte de la mazmorra REAL de
+        // arriba, dibujada encima. GridLineColor son las lineas de "cuaderno cuadriculado" (un
+        // borde por celda, ADEMAS de los muros) -- celeste mas oscuro que el piso (PathColor), no
+        // blanco, para que no compita visualmente con las paredes pintadas de abajo. PaintedWallColor
+        // es blanca y gruesa (ver paintedWallThickness en DrawCore) para que un trazo del jugador
+        // se lea fuerte y clarito contra el piso, bien distinto del VoidColor oscuro de un muro
+        // real revelado por el automapa. Los 3 colores de piso son EXACTAMENTE los que ya usa
+        // FloorColor/MarkerColor mas abajo (piso normal celeste, trampa naranja, tesoro dorado).
+        public static readonly Color GridLineColor = new Color(0.22f, 0.42f, 0.55f, 0.85f);
+        public static readonly Color PaintedWallColor = new Color(1f, 1f, 1f, 0.97f);
+
+        // Modo "mapa a mano" (handDrawn, ver DrawCore): el automapa NO revela piso/paredes/
+        // marcadores -- el jugador arma su propio mapa con las herramientas. Lo UNICO automatico
+        // es este celeste (WalkedColor) marcando por donde ya caminaste, como una miguitas de pan.
+        // Mas brillante/opaco que la primera version (0.55 de alpha se perdia contra el fondo
+        // oscuro -- subido a 0.85 y un poco mas claro para que se note bien).
+        public static readonly Color WalkedColor = new Color(0.3f, 0.65f, 1f, 0.85f);
+
+        public static readonly Color[] FloorPaintColors =
+        {
+            PathColor,
+            new Color(0.55f, 0.22f, 0.05f),
+            new Color(1f, 0.82f, 0.1f),
+        };
+        public static readonly string[] FloorPaintNames = { "Normal", "Peligro", "Objetivo" };
 
         private static Texture2D _whiteTex;
 
@@ -29,13 +59,43 @@ namespace Gameplay
         // Respeta la niebla de guerra igual que el resto del mapa (solo se ve si la celda donde
         // esta parado ya fue Discovered) SALVO que foeAlwaysVisible sea true (ver
         // DungeonManager.debugFoeAlwaysVisibleOnMap -- pensado para testeo).
-        public static void Draw(Vector2 origin, DungeonFloor floor, bool playerMode, int cellPixelSize, int wallPixelThickness,
-            GridPlayerController player, bool showPlayerMarker, FoeController foe = null, bool foeAlwaysVisible = false)
+        public static void Draw(Vector2 origin, DungeonFloor floor, bool playerMode, int cellPixelSize, float wallPixelThickness,
+            GridPlayerController player, bool showPlayerMarker, FoeController foe = null, bool foeAlwaysVisible = false, bool showGrid = false, bool showAnnotations = false, bool handDrawn = false)
+        {
+            DrawCore(DrawRect, origin, floor, playerMode, cellPixelSize, wallPixelThickness, player, showPlayerMarker, foe, foeAlwaysVisible, showGrid, showAnnotations, handDrawn);
+        }
+
+        // Mismo dibujo que Draw, pero volcado a una Texture2D (coordenadas Y abajo-arriba, al
+        // reves que GUI) en vez de a pantalla -- usado por PlayerMapViewer para el "dibujo" que
+        // se ve sobre el papel del mapa fisico. Llama Apply() al final; el llamador es responsable
+        // de crear la textura del tamaño correcto (floor.Width/Height * cellPixelSize).
+        public static void DrawToTexture(Texture2D tex, DungeonFloor floor, bool playerMode, int cellPixelSize, float wallPixelThickness,
+            GridPlayerController player, bool showPlayerMarker, FoeController foe = null, bool foeAlwaysVisible = false, bool showGrid = false, bool showAnnotations = false, bool handDrawn = false)
+        {
+            if (tex == null) return;
+            var clearColor = new Color(0f, 0f, 0f, 0f);
+            var clearPixels = new Color[tex.width * tex.height];
+            for (int i = 0; i < clearPixels.Length; i++) clearPixels[i] = clearColor;
+            tex.SetPixels(clearPixels);
+
+            void TexRect(Rect r, Color c) => FillTexRect(tex, r, c);
+            DrawCore(TexRect, Vector2.zero, floor, playerMode, cellPixelSize, wallPixelThickness, player, showPlayerMarker, foe, foeAlwaysVisible, showGrid, showAnnotations, handDrawn);
+            tex.Apply();
+        }
+
+        private static void DrawCore(Action<Rect, Color> drawRect, Vector2 origin, DungeonFloor floor, bool playerMode, int cellPixelSize, float wallPixelThickness,
+            GridPlayerController player, bool showPlayerMarker, FoeController foe, bool foeAlwaysVisible, bool showGrid, bool showAnnotations, bool handDrawn)
         {
             if (floor == null) return;
 
             int w = floor.Width;
             int h = floor.Height;
+            // Trazo de pared a mano: ANTES se le sumaba +1 fijo a wallPixelThickness (para que
+            // siempre quedara un pelo mas grueso que un muro real) -- eso topeaba el minimo y no
+            // dejaba ajustar el grosor con libertad desde el Inspector, asi que se saco: ahora
+            // wallPixelThickness (PlayerMapViewer, en el mapa a mano nunca se dibuja un muro real
+            // de todas formas) ES directamente el grosor pintado, sin piso ni suma escondida.
+            float paintedWallThickness = wallPixelThickness;
 
             for (int x = 0; x < w; x++)
             {
@@ -44,36 +104,114 @@ namespace Gameplay
                     var cell = floor.Cells[x, y];
                     float px = origin.x + x * cellPixelSize;
                     float py = origin.y + (h - 1 - y) * cellPixelSize;
+                    var cellRect = new Rect(px, py, cellPixelSize, cellPixelSize);
 
-                    if (cell.Type == CellType.Void)
+                    bool isVoid = cell.Type == CellType.Void;
+                    bool revealed = !isVoid && (!playerMode || cell.Discovered);
+
+                    if (handDrawn)
                     {
-                        DrawRect(new Rect(px, py, cellPixelSize, cellPixelSize), VoidColor);
-                        continue;
+                        // "El jugador arma el mapa": nada de piso/paredes/marcadores reales se
+                        // regala solo. Lo UNICO automatico es un celeste marcando las celdas ya
+                        // pisadas (WalkedColor), como una miguitas de pan -- ni siquiera eso
+                        // distingue pared de piso, solo "estuviste aca".
+                        drawRect(cellRect, VoidColor);
+                        if (cell.Discovered) drawRect(cellRect, WalkedColor);
+                    }
+                    else
+                    {
+                        drawRect(cellRect, revealed ? FloorColor(cell, floor.TrapDisabled) : VoidColor);
                     }
 
-                    bool revealed = !playerMode || cell.Discovered;
-                    if (!revealed)
+                    // Grilla "cuaderno cuadriculado": TODO el piso arranca cuadriculado, como una
+                    // hoja de cuaderno en blanco -- ANTES de explorar nada, no solo en las celdas ya
+                    // reveladas (a pedido: "todo el mapa debe partir cuadriculado"). Se dibuja ANTES
+                    // de los muros reales/pintados (que son mas gruesos y opacos y quedan por
+                    // encima), asi que en un borde con muro real la linea de grilla ni se nota --
+                    // solo se ve en los bordes "abiertos".
+                    if (showGrid)
                     {
-                        DrawRect(new Rect(px, py, cellPixelSize, cellPixelSize), VoidColor);
-                        continue;
+                        const float gridThickness = 1f;
+                        drawRect(new Rect(px, py, cellPixelSize, gridThickness), GridLineColor);
+                        drawRect(new Rect(px, py + cellPixelSize - gridThickness, cellPixelSize, gridThickness), GridLineColor);
+                        drawRect(new Rect(px, py, gridThickness, cellPixelSize), GridLineColor);
+                        drawRect(new Rect(px + cellPixelSize - gridThickness, py, gridThickness, cellPixelSize), GridLineColor);
                     }
 
-                    DrawRect(new Rect(px, py, cellPixelSize, cellPixelSize), FloorColor(cell, floor.TrapDisabled));
+                    // Las anotaciones del jugador (piso pintado, paredes a mano) valen en CUALQUIER
+                    // celda -- descubierta o no, real o "erronea" -- a proposito: el jugador tiene
+                    // que poder equivocarse o dibujar por adelantado, igual que en un mapa de papel
+                    // de verdad (a pedido: "toda la libertad"). Nunca dependen de `revealed`.
+                    if (showAnnotations && cell.PaintedFloorColorIndex >= 0 && cell.PaintedFloorColorIndex < FloorPaintColors.Length)
+                    {
+                        var paint = FloorPaintColors[cell.PaintedFloorColorIndex];
+                        drawRect(cellRect, new Color(paint.r, paint.g, paint.b, 0.65f));
+                    }
+
+                    if (showAnnotations)
+                    {
+                        if (cell.HasPaintedWall(Direction.North))
+                            drawRect(new Rect(px, py, cellPixelSize, paintedWallThickness), PaintedWallColor);
+                        if (cell.HasPaintedWall(Direction.South))
+                            drawRect(new Rect(px, py + cellPixelSize - paintedWallThickness, cellPixelSize, paintedWallThickness), PaintedWallColor);
+                        if (cell.HasPaintedWall(Direction.West))
+                            drawRect(new Rect(px, py, paintedWallThickness, cellPixelSize), PaintedWallColor);
+                        if (cell.HasPaintedWall(Direction.East))
+                            drawRect(new Rect(px + cellPixelSize - paintedWallThickness, py, paintedWallThickness, cellPixelSize), PaintedWallColor);
+
+                        // Simbolo colocado a mano (ver PlayerMapEditorHUD): no se puede blitear el
+                        // icono vectorial de verdad a esta resolucion tan chica sin que quede un
+                        // borron, asi que se marca con un punto de color -- el color sale de un
+                        // hash del nombre del icono, asi cada tipo de simbolo queda siempre con el
+                        // mismo color sin necesitar una tabla aparte. La barra de herramientas
+                        // (2D) es la que muestra el icono real al elegirlo.
+                        if (!string.IsNullOrEmpty(cell.PaintedSymbolIcon))
+                        {
+                            float m = cellPixelSize * 0.55f;
+                            drawRect(new Rect(px + (cellPixelSize - m) / 2f, py + (cellPixelSize - m) / 2f, m, m), SymbolMarkerColor(cell.PaintedSymbolIcon));
+                        }
+                    }
+
+                    if (handDrawn || !revealed) continue; // modo a mano: nunca hay paredes/marcadores reales. Sin explorar: tampoco.
 
                     if (cell.HasWall(Direction.North))
-                        DrawRect(new Rect(px, py, cellPixelSize, wallPixelThickness), VoidColor);
+                        drawRect(new Rect(px, py, cellPixelSize, wallPixelThickness), VoidColor);
                     if (cell.HasWall(Direction.South))
-                        DrawRect(new Rect(px, py + cellPixelSize - wallPixelThickness, cellPixelSize, wallPixelThickness), VoidColor);
+                        drawRect(new Rect(px, py + cellPixelSize - wallPixelThickness, cellPixelSize, wallPixelThickness), VoidColor);
                     if (cell.HasWall(Direction.West))
-                        DrawRect(new Rect(px, py, wallPixelThickness, cellPixelSize), VoidColor);
+                        drawRect(new Rect(px, py, wallPixelThickness, cellPixelSize), VoidColor);
                     if (cell.HasWall(Direction.East))
-                        DrawRect(new Rect(px + cellPixelSize - wallPixelThickness, py, wallPixelThickness, cellPixelSize), VoidColor);
+                        drawRect(new Rect(px + cellPixelSize - wallPixelThickness, py, wallPixelThickness, cellPixelSize), VoidColor);
 
                     Color? markerColor = MarkerColor(cell);
                     if (markerColor.HasValue)
                     {
                         float m = cellPixelSize * 0.4f;
-                        DrawRect(new Rect(px + (cellPixelSize - m) / 2f, py + (cellPixelSize - m) / 2f, m, m), markerColor.Value);
+                        drawRect(new Rect(px + (cellPixelSize - m) / 2f, py + (cellPixelSize - m) / 2f, m, m), markerColor.Value);
+                    }
+                }
+            }
+
+            // Relleno de esquinas del trazo pintado: cuando un giro de 90 grados esta partido
+            // entre DOS CELDAS DISTINTAS (p.ej. el muro Este de una celda y el Sur de la celda de
+            // al lado, formando un escalon), cada tira solo entra "paintedWallThickness" pixeles
+            // en SU propia celda y las dos tiras no llegan a superponerse en el vertice
+            // compartido -- queda un huequito exactamente en la esquina. Se recorre cada vertice
+            // de la grilla y, si hay algun segmento pintado horizontal Y alguno vertical
+            // tocandolo (sin importar de que celda salga cada uno), se tapa el hueco con un
+            // cuadradito centrado ahi.
+            if (showAnnotations)
+            {
+                for (int cx = 0; cx <= w; cx++)
+                {
+                    for (int cy = 0; cy <= h; cy++)
+                    {
+                        if (!IsHorizontalSegmentPainted(floor, cx - 1, cy) && !IsHorizontalSegmentPainted(floor, cx, cy)) continue;
+                        if (!IsVerticalSegmentPainted(floor, cx, cy - 1) && !IsVerticalSegmentPainted(floor, cx, cy)) continue;
+
+                        float vx = origin.x + cx * cellPixelSize;
+                        float vy = origin.y + cy * cellPixelSize;
+                        drawRect(new Rect(vx - paintedWallThickness / 2f, vy - paintedWallThickness / 2f, paintedWallThickness, paintedWallThickness), PaintedWallColor);
                     }
                 }
             }
@@ -83,7 +221,7 @@ namespace Gameplay
                 float fpx = origin.x + foe.X * cellPixelSize + cellPixelSize / 2f;
                 float fpy = origin.y + (h - 1 - foe.Y) * cellPixelSize + cellPixelSize / 2f;
                 float m = cellPixelSize * 0.6f;
-                DrawRect(new Rect(fpx - m / 2f, fpy - m / 2f, m, m), foe.IsChasing ? FoeChaseColor : FoeCalmColor);
+                drawRect(new Rect(fpx - m / 2f, fpy - m / 2f, m, m), foe.IsChasing ? FoeChaseColor : FoeCalmColor);
             }
 
             if (showPlayerMarker && player != null)
@@ -94,8 +232,8 @@ namespace Gameplay
                 float facingPx = ppx + fx * (cellPixelSize * 0.35f);
                 float facingPy = ppy - fy * (cellPixelSize * 0.35f);
 
-                DrawRect(new Rect(ppx - 4, ppy - 4, 8, 8), Color.magenta);
-                DrawRect(new Rect(facingPx - 2, facingPy - 2, 4, 4), Color.magenta);
+                drawRect(new Rect(ppx - 4, ppy - 4, 8, 8), Color.magenta);
+                drawRect(new Rect(facingPx - 2, facingPy - 2, 4, 4), Color.magenta);
             }
         }
 
@@ -186,6 +324,41 @@ namespace Gameplay
             new LegendEntry(VoidColor, "Sin explorar / vacío", "Roca solida real, o una celda que todavia no pisaste (niebla de guerra)."),
         };
 
+        // "Segmento horizontal i" = el tramo de grilla entre los vertices (i,cy) y (i+1,cy) --
+        // MISMA convencion que PlayerMapEditorHUD (que es quien pinta estos segmentos con las
+        // herramientas): esta pintado si CUALQUIERA de las 2 celdas que comparten ese borde lo
+        // tiene marcado de su lado (North de la celda de abajo, o South de la de arriba).
+        public static bool IsHorizontalSegmentPainted(DungeonFloor floor, int i, int cy)
+        {
+            int w = floor.Width, h = floor.Height;
+            if (i < 0 || i >= w) return false;
+            if (cy < h && floor.Cells[i, h - 1 - cy].HasPaintedWall(Direction.North)) return true;
+            if (cy - 1 >= 0 && h - cy < h && floor.Cells[i, h - cy].HasPaintedWall(Direction.South)) return true;
+            return false;
+        }
+
+        // "Segmento vertical j" = el tramo entre los vertices (cx,j) y (cx,j+1): pintado si
+        // cualquiera de las 2 celdas que comparten ese borde lo tiene marcado (West de la celda
+        // de la derecha, o East de la de la izquierda).
+        public static bool IsVerticalSegmentPainted(DungeonFloor floor, int cx, int j)
+        {
+            int w = floor.Width, h = floor.Height;
+            if (j < 0 || j >= h) return false;
+            int worldY = h - 1 - j;
+            if (cx < w && floor.Cells[cx, worldY].HasPaintedWall(Direction.West)) return true;
+            if (cx - 1 >= 0 && floor.Cells[cx - 1, worldY].HasPaintedWall(Direction.East)) return true;
+            return false;
+        }
+
+        // Color estable por icono (hash del nombre -> tono), ver el comentario en DrawCore.
+        private static Color SymbolMarkerColor(string iconId)
+        {
+            int hash = 0;
+            unchecked { foreach (char c in iconId) hash = hash * 31 + c; }
+            float hue = (Mathf.Abs(hash) % 360) / 360f;
+            return Color.HSVToRGB(hue, 0.7f, 0.95f);
+        }
+
         // Un piso cuenta como "explorado" (para las sub-pestanas del menu de pausa) si el jugador
         // ya piso al menos una celda; evita listar pisos que todavia no se visitaron nunca.
         public static bool HasAnyDiscoveredCell(DungeonFloor floor)
@@ -208,6 +381,54 @@ namespace Gameplay
             GUI.color = color;
             GUI.DrawTexture(rect, _whiteTex);
             GUI.color = oldColor;
+        }
+
+        // Equivalente de DrawRect pero pintando pixeles reales de una Texture2D en vez de un
+        // GUI.DrawTexture -- DrawCore genera coordenadas estilo GUI (origen arriba-izquierda, Y
+        // crece hacia abajo); Texture2D.SetPixel usa origen abajo-izquierda, asi que se invierte Y
+        // aca (un solo lugar) en vez de duplicar toda la logica de celdas/paredes para el caso texture.
+        private static void FillTexRect(Texture2D tex, Rect rect, Color color)
+        {
+            int x0 = Mathf.RoundToInt(rect.x);
+            int y0 = Mathf.RoundToInt(rect.y);
+            int w = Mathf.Max(1, Mathf.RoundToInt(rect.width));
+            int h = Mathf.Max(1, Mathf.RoundToInt(rect.height));
+            int flippedY0 = tex.height - y0 - h;
+
+            int clampedX0 = Mathf.Clamp(x0, 0, tex.width);
+            int clampedY0 = Mathf.Clamp(flippedY0, 0, tex.height);
+            int clampedX1 = Mathf.Clamp(x0 + w, 0, tex.width);
+            int clampedY1 = Mathf.Clamp(flippedY0 + h, 0, tex.height);
+            int blockW = clampedX1 - clampedX0;
+            int blockH = clampedY1 - clampedY0;
+            if (blockW <= 0 || blockH <= 0) return;
+
+            if (color.a >= 0.999f)
+            {
+                // Opaco: no hace falta leer lo que habia antes.
+                var block = new Color[blockW * blockH];
+                for (int i = 0; i < block.Length; i++) block[i] = color;
+                tex.SetPixels(clampedX0, clampedY0, blockW, blockH, block);
+                return;
+            }
+
+            // Semi-transparente (lineas de grilla, piso pintado, celeste de "caminado"): se mezcla
+            // ("over" de Porter-Duff) con lo que YA HABIA en la textura en vez de reemplazarlo --
+            // si no, SetPixels tira el contenido anterior y el color translucido recien se mezcla
+            // al renderizar el sprite, contra lo que haya DETRAS en la escena (el papel), no contra
+            // el resto del dibujo (mismo resultado visual que GUI.DrawTexture da gratis en pantalla).
+            var existing = tex.GetPixels(clampedX0, clampedY0, blockW, blockH);
+            for (int i = 0; i < existing.Length; i++)
+            {
+                var bg = existing[i];
+                float outA = color.a + bg.a * (1f - color.a);
+                if (outA <= 0.0001f) { existing[i] = new Color(0f, 0f, 0f, 0f); continue; }
+                float r = (color.r * color.a + bg.r * bg.a * (1f - color.a)) / outA;
+                float g = (color.g * color.a + bg.g * bg.a * (1f - color.a)) / outA;
+                float b = (color.b * color.a + bg.b * bg.a * (1f - color.a)) / outA;
+                existing[i] = new Color(r, g, b, outA);
+            }
+            tex.SetPixels(clampedX0, clampedY0, blockW, blockH, existing);
         }
     }
 }
