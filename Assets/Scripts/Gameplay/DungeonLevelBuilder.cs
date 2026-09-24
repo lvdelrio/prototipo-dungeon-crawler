@@ -28,6 +28,12 @@ namespace Gameplay
         public Material treasureMarkerMaterial;
         public Material trapMarkerMaterial;
 
+        [Header("Suelo de bosque: tilemap de pasto/tierra/hojas/camino (ver GroundTileFactory)")]
+        [Tooltip("Reemplaza el piso chato de las celdas normales (no zona aislada, no Bioma 2) por el tilemap variado de pasto/tierra/hojas/camino, estilo PS1. Desactivar vuelve al piso liso de un solo color (floorMaterial).")]
+        public bool useForestGroundTiles = true;
+        [Tooltip("Material opcional para el tilemap de pasto (shader Custom/PS1Ground); si se deja vacio se genera uno en runtime.")]
+        public Material groundTileMaterial;
+
         // Restos alrededor del marcador de lore (ver Lore.SceneDressing / BuildLoreSceneDressing).
         // Un solo campo compartido por las 4 variantes -- igual que trapMarkerMaterial cubre tanto
         // la linea de flechas como los picos, el color/forma de cada prop ya las distingue entre si
@@ -456,6 +462,16 @@ namespace Gameplay
 
         private void BuildFloorTile(Vector3 center, float cellSize, bool isIso, bool isBiome2)
         {
+            // Zona normal del bosque (ni zona aislada con su propio tinte, ni Bioma 2 con su piso
+            // estrellado): en vez de un cubo chato de un solo color, el tilemap variado de
+            // GroundTileFactory. La zona aislada y Bioma 2 mantienen su piso propio sin tocar --
+            // mezclar pasto ahi rompería el tinte/identidad visual que ya tienen.
+            if (!isIso && !isBiome2 && useForestGroundTiles)
+            {
+                GroundTileFactory.BuildTile(_root.transform, center, cellSize, groundTileMaterial);
+                return;
+            }
+
             var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
             go.name = "Floor";
             go.transform.SetParent(_root.transform, false);
