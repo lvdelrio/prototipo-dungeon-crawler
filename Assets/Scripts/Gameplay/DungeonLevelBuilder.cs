@@ -656,6 +656,28 @@ namespace Gameplay
             }
         }
 
+        private static Material _fallbackStandardMaterial;
+
+        // Shader.Find("Standard") anda en el Editor (ve todos los shaders) pero un build
+        // standalone descarta cualquier shader que ningun Material real referencie -- como NINGUNO
+        // de los campos de material de este componente esta asignado por defecto (son "opcionales",
+        // ver los [Header] de arriba), ese fallback devolvia null en el juego compilado y explotaba
+        // ApplyMaterial (ver Assets/Resources/Materials/FallbackStandard.mat: al vivir en Resources
+        // el build siempre lo incluye).
+        private static Material FallbackStandardMaterial()
+        {
+            if (_fallbackStandardMaterial == null)
+            {
+                _fallbackStandardMaterial = Resources.Load<Material>("Materials/FallbackStandard");
+                if (_fallbackStandardMaterial == null)
+                {
+                    var shader = Shader.Find("Standard");
+                    _fallbackStandardMaterial = new Material(shader != null ? shader : Shader.Find("Diffuse"));
+                }
+            }
+            return _fallbackStandardMaterial;
+        }
+
         private void ApplyMaterial(GameObject go, Material mat, Color fallbackColor)
         {
             var renderer = go.GetComponent<Renderer>();
@@ -665,7 +687,7 @@ namespace Gameplay
             }
             else
             {
-                var instanced = new Material(Shader.Find("Standard"));
+                var instanced = new Material(FallbackStandardMaterial());
                 instanced.color = fallbackColor;
                 renderer.material = instanced;
             }
