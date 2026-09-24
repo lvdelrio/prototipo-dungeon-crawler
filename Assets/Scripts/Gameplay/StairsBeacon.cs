@@ -62,8 +62,15 @@ namespace Gameplay
             colorOverLifetime.color = gradient;
 
             // Nace pegada al piso (subida) o al techo (bajada), asi el flujo entero atraviesa la
-            // altura del pasillo en la direccion correcta.
-            transform.localPosition = goingUp ? new Vector3(0f, 0.15f, 0f) : new Vector3(0f, wallHeight - 0.15f, 0f);
+            // altura del pasillo en la direccion correcta. OJO: solo se ajusta la altura (Y) --
+            // pisar todo transform.localPosition con un Vector3 nuevo tiraba a la basura el X/Z que
+            // el creador (DungeonLevelBuilder.BuildMarker) ya habia fijado bien via
+            // transform.position = center ANTES de llamar a Configure(); el bug real era que TODAS
+            // las balizas de escalera de un piso quedaban apiladas en el origen local del piso
+            // (0, y, 0) en vez de en su propia celda -- por eso no se veian en las escaleras.
+            var localPos = transform.localPosition;
+            localPos.y = goingUp ? 0.15f : wallHeight - 0.15f;
+            transform.localPosition = localPos;
 
             ParticleLayerFactory.Activate(_column);
         }
