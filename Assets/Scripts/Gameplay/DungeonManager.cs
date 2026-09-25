@@ -190,7 +190,12 @@ namespace Gameplay
             RollNewEncounterThreshold();
 
             var start = CurrentFloor.StartPos;
-            player.Warp(start.x, start.y, Direction.North);
+            // Mirando siempre hacia la PRIMERA salida real de la celda (ver DungeonCell.
+            // FirstOpenDirection) en vez de al Norte fijo -- asi el jugador arranca mirando de
+            // frente hacia donde de verdad puede caminar, que es tambien donde
+            // DungeonLevelBuilder.BuildSpawnSignposts clava los carteles de controles.
+            var startFacing = CurrentFloor.Cells[start.x, start.y].FirstOpenDirection();
+            player.Warp(start.x, start.y, startFacing);
             OnPlayerEnterCell(start.x, start.y, advanceFoe: false);
             IsReady = true;
         }

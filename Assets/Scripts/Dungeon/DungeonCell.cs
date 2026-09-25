@@ -65,5 +65,18 @@ namespace DungeonGen
 
         public bool HasWall(Direction d) => Walls[(int)d];
         public void SetWall(Direction d, bool value) => Walls[(int)d] = value;
+
+        // Primera direccion sin pared, en el orden fijo Norte/Este/Sur/Oeste -- usado para saber
+        // hacia donde mirar al arrancar en esta celda (ver DungeonManager.GenerateAndEnterDungeon
+        // y Gameplay.DungeonLevelBuilder.BuildSpawnSignposts, que TIENEN que coincidir en el
+        // resultado para que el jugador arranque mirando justo a los carteles). fallback por si
+        // esta celda no tuviera ningun lado abierto (no deberia pasar en una celda real conectada
+        // al resto de la mazmorra).
+        public Direction FirstOpenDirection(Direction fallback = Direction.North)
+        {
+            foreach (var dir in DirectionExtensions.All)
+                if (!HasWall(dir)) return dir;
+            return fallback;
+        }
     }
 }

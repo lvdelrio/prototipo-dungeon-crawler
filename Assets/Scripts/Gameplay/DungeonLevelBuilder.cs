@@ -126,7 +126,11 @@ namespace Gameplay
                     bool isVisibleVoidHole = cell.IsPuzzleTile && !cell.IsPuzzleTileSafe && floor.LoreCorridorKind == PuzzleKind.Goteras;
                     if (!cell.IsBossRoom)
                     {
-                        if (!isVisibleVoidHole) BuildFloorTile(center, cellSize, isIso, isBiome2);
+                        // Las celdas de escalera fuerzan Grass (sin props): una roca de
+                        // GrassRockDirt saliendo justo debajo del icono pseudo-3D de la escalera
+                        // (ver BuildStairsIcon) se veia amontonado con el.
+                        bool forceCleanFloor = cell.Type == CellType.StairsUp || cell.Type == CellType.StairsDown;
+                        if (!isVisibleVoidHole) BuildFloorTile(center, cellSize, isIso, isBiome2, forceCleanFloor);
                         BuildCeilingTile(center, cellSize, wallHeight, isIso, isBiome2);
                     }
 
@@ -390,22 +394,47 @@ namespace Gameplay
             }
         }
 
-        // Dos carteles de madera clavados en el piso donde arranca la run (ver Build): uno con
-        // WASD (moverse) y otro con M (levantar el mapa fisico). El jugador siempre aparece
-        // mirando al Norte (ver DungeonManager.GenerateAndEnterDungeon), asi que van un poco
-        // adelante y a cada costado -- a la vista apenas arranca, sin tapar el paso.
+        // Dos carteles de madera en la celda SIGUIENTE a donde arranca la run (ver Build), no en
+        // la propia celda de Start -- y mirando hacia atras, al jugador. "Siguiente" es la
+        // primera salida real de la celda de Start (ver DungeonCell.FirstOpenDirection), la MISMA
+        // cuenta que usa DungeonManager.GenerateAndEnterDungeon para pararlo mirando para aca: el
+        // jugador siempre arranca mirando de frente hacia los carteles, nunca de costado o de
+        // espaldas.
         private void BuildSpawnSignposts(DungeonFloor floor, float cellSize)
         {
-            Vector3 start = CellCenter(floor.StartPos.x, floor.StartPos.y, cellSize);
-            BuildSignpost(start + new Vector3(-cellSize * 0.3f, 0, cellSize * 0.18f), signpostMoveText);
-            BuildSignpost(start + new Vector3(cellSize * 0.3f, 0, cellSize * 0.18f), signpostMapText);
+            var startCell = floor.Cells[floor.StartPos.x, floor.StartPos.y];
+            Direction facing = startCell.FirstOpenDirection();
+            var (ox, oy) = facing.Offset();
+
+            Vector3 aheadCenter = CellCenter(floor.StartPos.x + ox, floor.StartPos.y + oy, cellSize);
+            // Perpendicular a la direccion de avance (rotar 90 grados en el plano XZ), para
+            // separar los dos carteles a los costados de la celda de llegada.
+            Vector3 side = new Vector3(-oy, 0, ox) * cellSize * 0.28f;
+            // El cartel tiene que MIRAR hacia atras, de vuelta al jugador que viene desde Start --
+            // por eso +180 sobre el yaw de la misma direccion "facing".
+            float signYaw = DirectionYaw(facing) + 180f;
+
+            BuildSignpost(aheadCenter - side, signpostMoveText, signYaw);
+            BuildSignpost(aheadCenter + side, signpostMapText, signYaw);
         }
 
-        private void BuildSignpost(Vector3 basePos, string text)
+        // Mismo mapeo Direction -> yaw que GridPlayerController.FacingRotation (TIENEN que
+        // coincidir: es el mismo "hacia donde mira" para el jugador y para el cartel).
+        private static float DirectionYaw(Direction d) => d switch
+        {
+            Direction.North => 0f,
+            Direction.East => 90f,
+            Direction.South => 180f,
+            Direction.West => 270f,
+            _ => 0f
+        };
+
+        private void BuildSignpost(Vector3 basePos, string text, float facingYaw)
         {
             var root = new GameObject("Signpost");
             root.transform.SetParent(_root.transform, false);
             root.transform.position = basePos;
+            root.transform.rotation = Quaternion.Euler(0, facingYaw, 0);
 
             const float postHeight = 1.5f;
             const float postThickness = 0.12f;
@@ -429,19 +458,18 @@ namespace Gameplay
             if (boardCol != null) Destroy(boardCol);
             ApplyMaterial(board, signpostBoardMaterial, new Color(0.42f, 0.27f, 0.15f));
 
-            // Texto de los DOS lados (no dependemos de adivinar bien la convencion de "cara
-            // visible" por defecto de TextMesh) -- practicamente gratis y asi se lee sin importar
-            // desde que lado camine el jugador hasta ahi.
-            BuildSignText(root.transform, new Vector3(0, boardY, 0.045f), 0f, text);
-            BuildSignText(root.transform, new Vector3(0, boardY, -0.045f), 180f, text);
+            // UN solo texto (antes eran dos, uno de cada lado, y sin cull de backface se veian
+            // los dos superpuestos/mezclados) -- ahora sabemos con certeza desde que lado lo va a
+            // ver el jugador (root ya esta rotado hacia el), asi que alcanza con el lado de
+            // adelante.
+            BuildSignText(root.transform, new Vector3(0, boardY, 0.045f), text);
         }
 
-        private void BuildSignText(Transform parent, Vector3 localPos, float yaw, string text)
+        private void BuildSignText(Transform parent, Vector3 localPos, string text)
         {
             var go = new GameObject("SignText");
             go.transform.SetParent(parent, false);
             go.transform.localPosition = localPos;
-            go.transform.localRotation = Quaternion.Euler(0, yaw, 0);
 
             var tm = go.AddComponent<TextMesh>();
             tm.text = text;
@@ -589,7 +617,7 @@ namespace Gameplay
 
         public Vector3 CellCenter(int x, int y, float cellSize) => new Vector3(x * cellSize, 0f, y * cellSize);
 
-        private void BuildFloorTile(Vector3 center, float cellSize, bool isIso, bool isBiome2)
+        private void BuildFloorTile(Vector3 center, float cellSize, bool isIso, bool isBiome2, bool forceCleanFloor = false)
         {
             // Zona normal del bosque (ni zona aislada con su propio tinte, ni Bioma 2 con su piso
             // estrellado): en vez de un cubo chato de un solo color, el tilemap variado de
@@ -597,7 +625,10 @@ namespace Gameplay
             // mezclar pasto ahi rompería el tinte/identidad visual que ya tienen.
             if (!isIso && !isBiome2 && useForestGroundTiles)
             {
-                GroundTileFactory.BuildTile(_root.transform, center, cellSize, groundTileMaterial);
+                // forceCleanFloor (escaleras): Grass a proposito, sin props -- nunca una roca u
+                // otro prop saliendo debajo del icono pseudo-3D de la escalera.
+                var forcedKind = forceCleanFloor ? GroundTileKind.Grass : (GroundTileKind?)null;
+                GroundTileFactory.BuildTile(_root.transform, center, cellSize, groundTileMaterial, forcedKind);
                 return;
             }
 
@@ -809,19 +840,29 @@ namespace Gameplay
             root.transform.position = center;
             root.AddComponent<BillboardY>();
 
+            // Inclinacion fija hacia atras (una sola vez, no cambia frame a frame): BillboardY
+            // solo gira `root` en Y para mirar al jugador, asi que este tilt en un HIJO se queda
+            // fijo relativo al grupo. Sin esto solo se verian las caras frontales de los escalones
+            // (un grafico de barras) -- reclinandolo se alcanza a ver la TAPA de cada escalon, que
+            // es lo que de verdad lo hace leerse como una escalera (el mismo truco de sprite
+            // isometrico viejo: la camara "mira" siempre desde un angulo fijo, nunca de frente pura).
+            var tilt = new GameObject("Tilt");
+            tilt.transform.SetParent(root.transform, false);
+            tilt.transform.localRotation = Quaternion.Euler(30f, 0f, 0f);
+
             const int steps = 4;
-            float totalW = scale * 0.9f;
+            float totalW = scale * 1.1f; // "ligeramente mas largo, que cubra mas del espacio" -- pedido puntual
             float stepW = totalW / steps;
-            float depth = scale * 0.22f;
+            float depth = scale * 0.3f;
             for (int i = 0; i < steps; i++)
             {
-                float stepH = scale * (0.18f + i * 0.16f);
+                float stepH = scale * (0.2f + i * 0.18f);
                 var block = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 block.name = "StairStep";
-                block.transform.SetParent(root.transform, false);
+                block.transform.SetParent(tilt.transform, false);
                 float x = -totalW * 0.5f + stepW * (i + 0.5f);
                 block.transform.localPosition = new Vector3(x, stepH * 0.5f, 0);
-                block.transform.localScale = new Vector3(stepW * 0.92f, stepH, depth);
+                block.transform.localScale = new Vector3(stepW, stepH, depth); // sin hueco entre escalones, silueta continua
 
                 var col = block.GetComponent<Collider>();
                 if (col != null) Destroy(col);

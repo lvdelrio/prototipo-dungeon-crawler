@@ -197,31 +197,58 @@ namespace Gameplay
             }
         }
 
-        // Grietas de tierra seca y curtida ("caminos borrascosos" -- pedido puntual): lineas finas
-        // e irregulares, mas oscuras que la base, cruzando el parche. Mismo lenguaje visual que
-        // BuildBrasasDangerFloor (ver DungeonLevelBuilder.cs) pero en tonos tierra en vez de
-        // brasas -- asi Dirt deja de ser un color plano y se lee como un camino castigado.
+        // Grietas de tierra seca y curtida ("caminos borrascosos" -- pedido puntual): una red de
+        // segmentos CORTOS que se ramifican desde un centro comun, no un par de lineas largas al
+        // azar cruzando el parche (eso se leia como dos rayones sueltos, no como una textura
+        // agrietada). Cada "grieta principal" tiene chance de tirar una ramita mas corta a mitad
+        // de camino, el mismo patron ramificado de una grieta real de barro seco.
         private static void BuildCrackedPathLines(Transform parent, Material mat, float cellSize)
         {
-            int count = Random.Range(3, 5);
-            for (int i = 0; i < count; i++)
+            Vector2 hub = Random.insideUnitCircle * cellSize * 0.12f;
+            int primaryCount = Random.Range(3, 5);
+            float baseAngle = Random.Range(0f, 360f);
+            for (int i = 0; i < primaryCount; i++)
             {
-                var crack = GameObject.CreatePrimitive(PrimitiveType.Quad);
-                crack.name = "DirtCrack";
-                crack.transform.SetParent(parent, false);
-                Vector2 off = Random.insideUnitCircle * cellSize * 0.3f;
-                crack.transform.localPosition = new Vector3(off.x, 0.05f, off.y);
-                crack.transform.localRotation = Quaternion.Euler(90f, Random.Range(0f, 360f), 0f);
-                float length = cellSize * Random.Range(0.35f, 0.6f);
-                float width = cellSize * Random.Range(0.03f, 0.06f);
-                crack.transform.localScale = new Vector3(length, width, 1f);
+                float angle = baseAngle + i * (360f / primaryCount) + Random.Range(-20f, 20f);
+                float length = cellSize * Random.Range(0.16f, 0.28f);
+                Vector2 dir = new Vector2(Mathf.Cos(angle * Mathf.Deg2Rad), Mathf.Sin(angle * Mathf.Deg2Rad));
+                Vector2 mid = hub + dir * (length * 0.5f);
+                BuildCrackSegment(parent, mat, mid, angle, length, cellSize);
 
-                var col = crack.GetComponent<Collider>();
-                if (col != null) Object.Destroy(col);
-
-                float shade = Random.Range(0.5f, 0.7f);
-                Tint(crack, mat, new Color(0.12f * shade, 0.08f * shade, 0.05f * shade));
+                // Ramita corta desde un punto a mitad del segmento principal -- rompe la linea
+                // recta, se lee mas como una grieta real que como un palito.
+                if (Random.value < 0.7f)
+                {
+                    Vector2 branchOrigin = hub + dir * (length * Random.Range(0.4f, 0.8f));
+                    float branchAngle = angle + (Random.value < 0.5f ? 1f : -1f) * Random.Range(35f, 70f);
+                    float branchLength = length * Random.Range(0.35f, 0.6f);
+                    Vector2 branchDir = new Vector2(Mathf.Cos(branchAngle * Mathf.Deg2Rad), Mathf.Sin(branchAngle * Mathf.Deg2Rad));
+                    Vector2 branchMid = branchOrigin + branchDir * (branchLength * 0.5f);
+                    BuildCrackSegment(parent, mat, branchMid, branchAngle, branchLength, cellSize);
+                }
             }
+        }
+
+        // Un segmento de grieta: posXZ es el CENTRO del segmento (en espacio local XZ de la
+        // celda), angleDeg su direccion (misma convencion que Mathf.Cos/Sin usados para ubicarlo).
+        private static void BuildCrackSegment(Transform parent, Material mat, Vector2 posXZ, float angleDeg, float length, float cellSize)
+        {
+            var crack = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            crack.name = "DirtCrack";
+            crack.transform.SetParent(parent, false);
+            crack.transform.localPosition = new Vector3(posXZ.x, 0.05f, posXZ.y);
+            // -angleDeg: asi el eje "largo" del quad (su X local) queda alineado con la misma
+            // direccion (cos,sin) que se uso para calcular la posicion -- ver derivacion en el eje
+            // Y despues de la inclinacion de 90 en X.
+            crack.transform.localRotation = Quaternion.Euler(90f, -angleDeg, 0f);
+            float width = cellSize * Random.Range(0.02f, 0.035f);
+            crack.transform.localScale = new Vector3(length, width, 1f);
+
+            var col = crack.GetComponent<Collider>();
+            if (col != null) Object.Destroy(col);
+
+            float shade = Random.Range(0.5f, 0.7f);
+            Tint(crack, mat, new Color(0.12f * shade, 0.08f * shade, 0.05f * shade));
         }
 
         private static void Tint(GameObject go, Material mat, Color color)
