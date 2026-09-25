@@ -36,6 +36,10 @@ namespace Gameplay
         [Tooltip("Material opcional para el parche de piso al rojo vivo de las celdas peligrosas de Brasas (ver BuildBrasasDangerFloor); si se deja vacio usa un color solido de respaldo.")]
         public Material brasasDangerFloorMaterial;
 
+        [Header("Carteles de madera con los controles, clavados donde arranca la run (ver BuildSpawnSignposts)")]
+        public Material signpostWoodMaterial;
+        public Material signpostBoardMaterial;
+
         // Restos alrededor del marcador de lore (ver Lore.SceneDressing / BuildLoreSceneDressing).
         // Un solo campo compartido por las 4 variantes -- igual que trapMarkerMaterial cubre tanto
         // la linea de flechas como los picos, el color/forma de cada prop ya las distingue entre si
@@ -152,6 +156,14 @@ namespace Gameplay
                     if (cell.Type == CellType.Lore) BuildLoreSceneDressing(cell, center, cellSize);
                 }
             }
+
+            // Carteles de madera con los controles basicos, SOLO en el piso 0 (el arranque real de
+            // la run) y clavados justo donde aparece el jugador -- a diferencia de un cartel de UI
+            // (ControlsTutorialHUD, que necesita que lo enganchen a mano en la escena), esto sale
+            // gratis con cada Build() porque es geometria de la mazmorra como cualquier otra, asi
+            // que SIEMPRE esta ahi sin depender de wiring manual.
+            if (floor.Index == 0)
+                BuildSpawnSignposts(floor, cellSize);
         }
 
         // Marcador de peligro, chato y pegado al piso (no un marcador "de interaccion" como los de
@@ -368,6 +380,68 @@ namespace Gameplay
                 if (col != null) Destroy(col);
                 ApplyMaterial(go, null, new Color(1f, 0.35f, 0.05f));
             }
+        }
+
+        // Dos carteles de madera clavados en el piso donde arranca la run (ver Build): uno con
+        // WASD (moverse) y otro con M (levantar el mapa fisico). El jugador siempre aparece
+        // mirando al Norte (ver DungeonManager.GenerateAndEnterDungeon), asi que van un poco
+        // adelante y a cada costado -- a la vista apenas arranca, sin tapar el paso.
+        private void BuildSpawnSignposts(DungeonFloor floor, float cellSize)
+        {
+            Vector3 start = CellCenter(floor.StartPos.x, floor.StartPos.y, cellSize);
+            BuildSignpost(start + new Vector3(-cellSize * 0.3f, 0, cellSize * 0.18f), "WASD\nMOVERSE");
+            BuildSignpost(start + new Vector3(cellSize * 0.3f, 0, cellSize * 0.18f), "M\nMAPA");
+        }
+
+        private void BuildSignpost(Vector3 basePos, string text)
+        {
+            var root = new GameObject("Signpost");
+            root.transform.SetParent(_root.transform, false);
+            root.transform.position = basePos;
+
+            const float postHeight = 1.5f;
+            const float postThickness = 0.12f;
+            float boardY = postHeight * 0.82f;
+
+            var post = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            post.name = "SignpostPost";
+            post.transform.SetParent(root.transform, false);
+            post.transform.localPosition = new Vector3(0, postHeight * 0.5f, 0);
+            post.transform.localScale = new Vector3(postThickness, postHeight, postThickness);
+            var postCol = post.GetComponent<Collider>();
+            if (postCol != null) Destroy(postCol);
+            ApplyMaterial(post, signpostWoodMaterial, new Color(0.32f, 0.2f, 0.12f));
+
+            var board = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            board.name = "SignpostBoard";
+            board.transform.SetParent(root.transform, false);
+            board.transform.localPosition = new Vector3(0, boardY, 0);
+            board.transform.localScale = new Vector3(1.15f, 0.55f, 0.07f);
+            var boardCol = board.GetComponent<Collider>();
+            if (boardCol != null) Destroy(boardCol);
+            ApplyMaterial(board, signpostBoardMaterial, new Color(0.42f, 0.27f, 0.15f));
+
+            // Texto de los DOS lados (no dependemos de adivinar bien la convencion de "cara
+            // visible" por defecto de TextMesh) -- practicamente gratis y asi se lee sin importar
+            // desde que lado camine el jugador hasta ahi.
+            BuildSignText(root.transform, new Vector3(0, boardY, 0.045f), 0f, text);
+            BuildSignText(root.transform, new Vector3(0, boardY, -0.045f), 180f, text);
+        }
+
+        private void BuildSignText(Transform parent, Vector3 localPos, float yaw, string text)
+        {
+            var go = new GameObject("SignText");
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = localPos;
+            go.transform.localRotation = Quaternion.Euler(0, yaw, 0);
+
+            var tm = go.AddComponent<TextMesh>();
+            tm.text = text;
+            tm.characterSize = 0.13f;
+            tm.fontSize = 48;
+            tm.anchor = TextAnchor.MiddleCenter;
+            tm.alignment = TextAlignment.Center;
+            tm.color = new Color(0.95f, 0.9f, 0.75f);
         }
 
         // Puesta en escena de la celda de lore (ver Lore.SceneDressing): busca el fragmento
