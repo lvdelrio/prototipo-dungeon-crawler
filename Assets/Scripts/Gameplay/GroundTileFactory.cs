@@ -122,7 +122,7 @@ namespace Gameplay
                 case GroundTileKind.GrassLeaves: BuildLeafCards(root.transform, mat, cellSize, count: 3); break;
                 case GroundTileKind.Leaves: BuildLeafCards(root.transform, mat, cellSize, count: 5); break;
                 case GroundTileKind.GrassRockDirt: BuildRockAndDirtPatch(root.transform, mat, cellSize); break;
-                case GroundTileKind.Dirt: BuildPebbles(root.transform, mat, cellSize); break;
+                case GroundTileKind.Dirt: BuildPebbles(root.transform, mat, cellSize); BuildCrackedPathLines(root.transform, mat, cellSize); break;
                 default: break; // Grass y Path: solo la base, sin props
             }
         }
@@ -194,6 +194,33 @@ namespace Gameplay
                 var col = pebble.GetComponent<Collider>();
                 if (col != null) Object.Destroy(col);
                 Tint(pebble, mat, new Color(0.38f, 0.32f, 0.26f));
+            }
+        }
+
+        // Grietas de tierra seca y curtida ("caminos borrascosos" -- pedido puntual): lineas finas
+        // e irregulares, mas oscuras que la base, cruzando el parche. Mismo lenguaje visual que
+        // BuildBrasasDangerFloor (ver DungeonLevelBuilder.cs) pero en tonos tierra en vez de
+        // brasas -- asi Dirt deja de ser un color plano y se lee como un camino castigado.
+        private static void BuildCrackedPathLines(Transform parent, Material mat, float cellSize)
+        {
+            int count = Random.Range(3, 5);
+            for (int i = 0; i < count; i++)
+            {
+                var crack = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                crack.name = "DirtCrack";
+                crack.transform.SetParent(parent, false);
+                Vector2 off = Random.insideUnitCircle * cellSize * 0.3f;
+                crack.transform.localPosition = new Vector3(off.x, 0.05f, off.y);
+                crack.transform.localRotation = Quaternion.Euler(90f, Random.Range(0f, 360f), 0f);
+                float length = cellSize * Random.Range(0.35f, 0.6f);
+                float width = cellSize * Random.Range(0.03f, 0.06f);
+                crack.transform.localScale = new Vector3(length, width, 1f);
+
+                var col = crack.GetComponent<Collider>();
+                if (col != null) Object.Destroy(col);
+
+                float shade = Random.Range(0.5f, 0.7f);
+                Tint(crack, mat, new Color(0.12f * shade, 0.08f * shade, 0.05f * shade));
             }
         }
 

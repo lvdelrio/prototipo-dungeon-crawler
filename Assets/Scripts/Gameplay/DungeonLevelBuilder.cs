@@ -745,18 +745,40 @@ namespace Gameplay
                 default: return;
             }
 
-            var go = GameObject.CreatePrimitive(shape);
-            go.name = $"Marker_{cell.Type}";
-            go.transform.SetParent(_root.transform, false);
-            go.transform.position = center + new Vector3(0, scale * 0.5f, 0);
-            go.transform.localScale = Vector3.one * scale;
+            bool isStairs = cell.Type == CellType.StairsUp || cell.Type == CellType.StairsDown;
+            if (isStairs)
+            {
+                // Antes: un cubo liso cyan/naranja. Ahora: una silueta de escalera con volumen
+                // real (pseudo-3D, no un sprite chato) que gira sobre si misma para mirar siempre
+                // al jugador (ver BillboardY) -- se distingue de cualquier otro bloque de la
+                // mazmorra de un vistazo, no solo por el color.
+                BuildStairsIcon(center, scale * 1.4f, color, mat);
+            }
+            else
+            {
+                var go = GameObject.CreatePrimitive(shape);
+                go.name = $"Marker_{cell.Type}";
+                go.transform.SetParent(_root.transform, false);
+                go.transform.position = center + new Vector3(0, scale * 0.5f, 0);
+                go.transform.localScale = Vector3.one * scale;
 
-            var col = go.GetComponent<Collider>();
-            if (col != null) Destroy(col);
+                var col = go.GetComponent<Collider>();
+                if (col != null) Destroy(col);
 
-            ApplyMaterial(go, mat, color);
+                ApplyMaterial(go, mat, color);
 
-            if (cell.Type == CellType.StairsUp || cell.Type == CellType.StairsDown)
+                if (cell.Type == CellType.LockedDoor)
+                    _lockedDoorMarkers[(cell.X, cell.Y)] = go;
+
+                if (cell.Type == CellType.ShortcutSwitch || cell.Type == CellType.ShortcutLanding)
+                {
+                    var entry = _shortcutMarkers.TryGetValue(cell.ControlledGateIndex, out var pair) ? pair : (null, null);
+                    if (cell.Type == CellType.ShortcutSwitch) entry.switchGo = go; else entry.landingGo = go;
+                    _shortcutMarkers[cell.ControlledGateIndex] = entry;
+                }
+            }
+
+            if (isStairs)
             {
                 var beaconGo = new GameObject("StairsBeacon");
                 beaconGo.transform.SetParent(_root.transform, false);
@@ -765,15 +787,37 @@ namespace Gameplay
 
                 BuildStairsFloorAura(center, cellSize, cell.Type == CellType.StairsUp);
             }
+        }
 
-            if (cell.Type == CellType.LockedDoor)
-                _lockedDoorMarkers[(cell.X, cell.Y)] = go;
+        // Silueta de escalera ascendente (4 escalones, cada uno mas alto que el anterior) con
+        // volumen real -- no un sprite chato -- envuelta en BillboardY para que siempre presente
+        // esa cara al jugador sin importar desde que pasillo se la mire. El mismo perfil sirve
+        // para subir y para bajar: el color (cyan/naranja, igual que antes) sigue siendo lo que
+        // distingue cual es cual, exactamente como cuando ambas eran un cubo liso.
+        private void BuildStairsIcon(Vector3 center, float scale, Color color, Material mat)
+        {
+            var root = new GameObject("StairsIcon");
+            root.transform.SetParent(_root.transform, false);
+            root.transform.position = center;
+            root.AddComponent<BillboardY>();
 
-            if (cell.Type == CellType.ShortcutSwitch || cell.Type == CellType.ShortcutLanding)
+            const int steps = 4;
+            float totalW = scale * 0.9f;
+            float stepW = totalW / steps;
+            float depth = scale * 0.22f;
+            for (int i = 0; i < steps; i++)
             {
-                var entry = _shortcutMarkers.TryGetValue(cell.ControlledGateIndex, out var pair) ? pair : (null, null);
-                if (cell.Type == CellType.ShortcutSwitch) entry.switchGo = go; else entry.landingGo = go;
-                _shortcutMarkers[cell.ControlledGateIndex] = entry;
+                float stepH = scale * (0.18f + i * 0.16f);
+                var block = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                block.name = "StairStep";
+                block.transform.SetParent(root.transform, false);
+                float x = -totalW * 0.5f + stepW * (i + 0.5f);
+                block.transform.localPosition = new Vector3(x, stepH * 0.5f, 0);
+                block.transform.localScale = new Vector3(stepW * 0.92f, stepH, depth);
+
+                var col = block.GetComponent<Collider>();
+                if (col != null) Destroy(col);
+                ApplyMaterial(block, mat, color);
             }
         }
 
