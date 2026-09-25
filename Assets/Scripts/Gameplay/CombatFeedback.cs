@@ -63,11 +63,24 @@ namespace Gameplay
 
         void Awake()
         {
-            if (flashShader == null) flashShader = Shader.Find("Hidden/HitFlash");
-            if (flashShader != null) _flashMat = new Material(flashShader);
+            _flashMat = LoadEffectMaterial("Materials/HitFlash", flashShader, "Hidden/HitFlash");
+            _edgeMat = LoadEffectMaterial("Materials/ElementalEdgeGlow", edgeGlowShader, "Hidden/ElementalEdgeGlow");
+        }
 
-            if (edgeGlowShader == null) edgeGlowShader = Shader.Find("Hidden/ElementalEdgeGlow");
-            if (edgeGlowShader != null) _edgeMat = new Material(edgeGlowShader);
+        // Un build standalone descarta ("strippea") cualquier shader que ningun Material real del
+        // proyecto referencie -- Shader.Find funciona en el Editor (ve todos los shaders) pero
+        // devuelve null en el juego compilado, y ahi se rompia el post-proceso de OnRenderImage
+        // (ver Assets/Resources/Materials/HitFlash.mat y ElementalEdgeGlow.mat: esos SI cuentan
+        // como "usados" porque viven en Resources, asi el build los incluye siempre).
+        private static Material LoadEffectMaterial(string resourcePath, Shader overrideShader, string shaderName)
+        {
+            if (overrideShader != null) return new Material(overrideShader);
+
+            var resourceMat = Resources.Load<Material>(resourcePath);
+            if (resourceMat != null) return new Material(resourceMat);
+
+            var shader = Shader.Find(shaderName);
+            return shader != null ? new Material(shader) : null;
         }
 
         public void OnEnemyHit(int damage) => Impact(enemyHitFlashColor, enemyHitFlashDuration, enemyHitShakeDuration, enemyHitShakeMagnitude);
