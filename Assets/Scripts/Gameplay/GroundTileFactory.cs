@@ -15,6 +15,7 @@ namespace Gameplay
     public static class GroundTileFactory
     {
         private static Material _sharedMaterial;
+        private static Material _grassMaterial;
 
         // Pesos de aparicion: el pasto domina (bosque tranquilo de fondo), camino y tierra marcan
         // rutas/claros, y las variantes con props (hojas, roca) son las menos comunes para que se
@@ -88,6 +89,31 @@ namespace Gameplay
             return _sharedMaterial;
         }
 
+        // Mismo patron que SharedMaterial de arriba (Resources primero, Shader.Find como ultimo
+        // recurso) para Custom/PS1Grass -- ver Assets/Resources/Materials/PS1Grass.mat.
+        private static Material GrassMaterial()
+        {
+            if (_grassMaterial == null)
+            {
+                var resourceMat = Resources.Load<Material>("Materials/PS1Grass");
+                if (resourceMat != null)
+                {
+                    _grassMaterial = new Material(resourceMat);
+                }
+                else
+                {
+                    var shader = Shader.Find("Custom/PS1Grass");
+                    _grassMaterial = new Material(shader != null ? shader : Shader.Find("Standard"));
+                    if (shader == null)
+                    {
+                        _grassMaterial.SetFloat("_Metallic", 0f);
+                        _grassMaterial.SetFloat("_Glossiness", 0f);
+                    }
+                }
+            }
+            return _grassMaterial;
+        }
+
         // Construye una celda de piso completa: la base (mismo tamano/posicion que el cubo chato
         // anterior, top en Y=0 igual que antes -- el jugador y los marcadores asumen esa altura) mas
         // los props de la variante elegida, todo bajo un unico GameObject rotado al azar en pasos de
@@ -117,14 +143,92 @@ namespace Gameplay
             baseTile.transform.localScale = new Vector3(cellSize, 0.2f, cellSize);
             Tint(baseTile, mat, tint);
 
+            // Relieve general (pedido puntual: "que no sean tan planos y lisos"): unos pocos
+            // bultos chatos y redondeados, del mismo tono que la base con variacion propia, en
+            // TODAS las variantes -- rompen la superficie perfectamente lisa del cubo sin tocar
+            // su collider (siguen ahi debajo, el jugador camina sobre el cubo de siempre).
+            BuildGroundBumps(root.transform, mat, cellSize, tint);
+
+            bool isGrassFamily = kind == GroundTileKind.Grass || kind == GroundTileKind.GrassLeaves || kind == GroundTileKind.GrassRockDirt;
+            if (isGrassFamily)
+                BuildGrassTufts(root.transform, cellSize);
+
             switch (kind)
             {
                 case GroundTileKind.GrassLeaves: BuildLeafCards(root.transform, mat, cellSize, count: 3); break;
                 case GroundTileKind.Leaves: BuildLeafCards(root.transform, mat, cellSize, count: 5); break;
                 case GroundTileKind.GrassRockDirt: BuildRockAndDirtPatch(root.transform, mat, cellSize); break;
                 case GroundTileKind.Dirt: BuildPebbles(root.transform, mat, cellSize); BuildCrackedPathLines(root.transform, mat, cellSize); break;
-                default: break; // Grass y Path: solo la base, sin props
+                default: break; // Grass y Path: solo la base (+ relieve/pasto de arriba)
             }
+        }
+
+        // Bultos chatos (esferas aplastadas) esparcidos sobre la base -- el relieve barato de
+        // PS1/bajo-poligono: nunca desplazan la malla de verdad, solo agregan volumen ENCIMA para
+        // que la superficie deje de leerse perfectamente plana. Sin collider: decoracion pura, la
+        // base de abajo sigue siendo la unica superficie de colision.
+        private static void BuildGroundBumps(Transform parent, Material mat, float cellSize, Color baseTint)
+        {
+            int count = Random.Range(3, 5);
+            for (int i = 0; i < count; i++)
+            {
+                var bump = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                bump.name = "GroundBump";
+                bump.transform.SetParent(parent, false);
+                Vector2 off = Random.insideUnitCircle * cellSize * 0.4f;
+                float radius = cellSize * Random.Range(0.09f, 0.16f);
+                float squash = Random.Range(0.28f, 0.45f); // achatado: un bulto, no una pelota
+                bump.transform.localPosition = new Vector3(off.x, radius * squash * 0.5f, off.y);
+                bump.transform.localScale = new Vector3(radius, radius * squash, radius);
+
+                var col = bump.GetComponent<Collider>();
+                if (col != null) Object.Destroy(col);
+
+                float shade = Random.Range(0.85f, 1.2f);
+                Tint(bump, mat, new Color(
+                    Mathf.Clamp01(baseTint.r * shade),
+                    Mathf.Clamp01(baseTint.g * shade),
+                    Mathf.Clamp01(baseTint.b * shade)));
+            }
+        }
+
+        // Matitas de pasto de verdad (no solo el color de la base): 2 cartas cruzadas en X por
+        // mata, el truco clasico de "grass card" de bajo poligono, con el shader Custom/PS1Grass
+        // (ver PS1Grass.shader) que mece la punta con el viento sin animar nada por codigo -- todo
+        // el movimiento vive en el vertex shader.
+        private static void BuildGrassTufts(Transform parent, float cellSize)
+        {
+            var grassMat = GrassMaterial();
+            int count = Random.Range(3, 5);
+            for (int i = 0; i < count; i++)
+            {
+                Vector2 off = Random.insideUnitCircle * cellSize * 0.42f;
+                float height = cellSize * Random.Range(0.14f, 0.24f);
+                float width = cellSize * Random.Range(0.1f, 0.16f);
+                float baseYaw = Random.Range(0f, 360f);
+                float shade = Random.Range(0.8f, 1.25f);
+                Color tint = new Color(0.22f * shade, 0.42f * shade, 0.16f * shade);
+
+                BuildGrassCard(parent, grassMat, off, height, width, baseYaw, tint);
+                BuildGrassCard(parent, grassMat, off, height, width, baseYaw + 90f, tint);
+            }
+        }
+
+        private static void BuildGrassCard(Transform parent, Material mat, Vector2 off, float height, float width, float yaw, Color tint)
+        {
+            var card = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            card.name = "GrassCard";
+            card.transform.SetParent(parent, false);
+            // Base del quad (vertice local y=-0.5) apoyada en el piso: con localPosition.y =
+            // height*0.5 el borde de abajo queda justo en Y=0, igual que el resto de los props.
+            card.transform.localPosition = new Vector3(off.x, height * 0.5f, off.y);
+            card.transform.localRotation = Quaternion.Euler(0f, yaw, 0f);
+            card.transform.localScale = new Vector3(width, height, 1f);
+
+            var col = card.GetComponent<Collider>();
+            if (col != null) Object.Destroy(col);
+
+            Tint(card, mat, tint);
         }
 
         // Cartas planas (un Quad chato tumbado, no una malla de hoja real) -- el truco clasico de
