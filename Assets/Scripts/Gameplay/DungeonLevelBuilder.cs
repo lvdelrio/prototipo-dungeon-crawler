@@ -39,6 +39,14 @@ namespace Gameplay
         [Header("Carteles de madera con los controles, clavados donde arranca la run (ver BuildSpawnSignposts)")]
         public Material signpostWoodMaterial;
         public Material signpostBoardMaterial;
+        [Tooltip("Texto del cartel de movimiento (\\n = salto de linea).")]
+        public string signpostMoveText = "WASD\nMOVERSE";
+        [Tooltip("Texto del cartel del mapa (\\n = salto de linea).")]
+        public string signpostMapText = "M\nMAPA";
+        [Tooltip("Tamano de la letra en el mundo (TextMesh.characterSize) -- mas alto = letras mas grandes.")]
+        public float signpostCharacterSize = 0.13f;
+        [Tooltip("Resolucion de la fuente (TextMesh.fontSize) -- subirlo si el texto se ve pixelado de cerca.")]
+        public int signpostFontSize = 48;
 
         // Restos alrededor del marcador de lore (ver Lore.SceneDressing / BuildLoreSceneDressing).
         // Un solo campo compartido por las 4 variantes -- igual que trapMarkerMaterial cubre tanto
@@ -389,8 +397,8 @@ namespace Gameplay
         private void BuildSpawnSignposts(DungeonFloor floor, float cellSize)
         {
             Vector3 start = CellCenter(floor.StartPos.x, floor.StartPos.y, cellSize);
-            BuildSignpost(start + new Vector3(-cellSize * 0.3f, 0, cellSize * 0.18f), "WASD\nMOVERSE");
-            BuildSignpost(start + new Vector3(cellSize * 0.3f, 0, cellSize * 0.18f), "M\nMAPA");
+            BuildSignpost(start + new Vector3(-cellSize * 0.3f, 0, cellSize * 0.18f), signpostMoveText);
+            BuildSignpost(start + new Vector3(cellSize * 0.3f, 0, cellSize * 0.18f), signpostMapText);
         }
 
         private void BuildSignpost(Vector3 basePos, string text)
@@ -437,8 +445,8 @@ namespace Gameplay
 
             var tm = go.AddComponent<TextMesh>();
             tm.text = text;
-            tm.characterSize = 0.13f;
-            tm.fontSize = 48;
+            tm.characterSize = signpostCharacterSize;
+            tm.fontSize = signpostFontSize;
             tm.anchor = TextAnchor.MiddleCenter;
             tm.alignment = TextAlignment.Center;
             tm.color = new Color(0.95f, 0.9f, 0.75f);
