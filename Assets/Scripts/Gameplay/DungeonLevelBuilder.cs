@@ -1013,10 +1013,15 @@ namespace Gameplay
                 // DungeonSceneBuilder por esto, el color de respaldo alcanza para el brillo frio
                 // que se supone que tiene la grieta recien abierta.
                 case CellType.BiomeGate: color = new Color(0.55f, 0.85f, 1f); shape = PrimitiveType.Sphere; scale = cellSize * 0.35f; break;
+                // Escalera al fondo de la zona aislada (ver DungeonGenerator.PlaceCaveBiomeExit):
+                // violeta, para no confundirse ni con StairsUp/Down (cyan/naranja, van a otro
+                // piso) ni con la Puerta Fria (celeste, mecanismo secreto aparte) -- misma silueta
+                // de escalera, pero un color que se lee como "portal a otro lado", no "otro piso".
+                case CellType.CaveBiomeExit: color = new Color(0.65f, 0.3f, 0.95f); shape = PrimitiveType.Cube; break;
                 default: return;
             }
 
-            bool isStairs = cell.Type == CellType.StairsUp || cell.Type == CellType.StairsDown;
+            bool isStairs = cell.Type == CellType.StairsUp || cell.Type == CellType.StairsDown || cell.Type == CellType.CaveBiomeExit;
             if (isStairs)
             {
                 // Antes: un cubo liso cyan/naranja. Ahora: una silueta de escalera con volumen

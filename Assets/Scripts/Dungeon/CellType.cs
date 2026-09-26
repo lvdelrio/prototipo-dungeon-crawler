@@ -32,6 +32,13 @@ namespace DungeonGen
         // ayudan a saber DONDE buscarla. Al interactuar ya perforada, lleva al Bioma 2.
         BiomeGate,
 
+        // Escalera al fondo de la zona aislada (ver DungeonGenerator.PlaceCaveBiomeExit): a
+        // diferencia de la Puerta Fria (secreta, sellada, necesita el Perforador), esta es una
+        // escalera comun y visible en el punto mas profundo de la "mini cueva" del piso 0 -- se
+        // encuentra caminando, sin lore ni pistas, y lleva directo al Bioma 2 igual que la Puerta
+        // Fria (mismo destino, mecanismo de entrada totalmente distinto).
+        CaveBiomeExit,
+
         Void // celda podada: no es parte de ningun camino, roca solida (no caminable, no se renderiza)
     }
 }

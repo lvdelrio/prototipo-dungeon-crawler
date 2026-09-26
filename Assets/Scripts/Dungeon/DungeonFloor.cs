@@ -120,6 +120,12 @@ namespace DungeonGen
         public (int x, int y)? BiomeGatePos;
         public (int x, int y)? BiomeGateApproachPos;
 
+        // Posicion de la escalera al fondo de la zona aislada (ver
+        // DungeonGenerator.PlaceCaveBiomeExit) -- mecanismo APARTE de la Puerta Fria de arriba,
+        // mismo destino (Bioma 2) pero sin secreto: una escalera comun en el punto mas profundo de
+        // la "mini cueva" del piso 0. Null si este piso no tiene ninguna.
+        public (int x, int y)? CaveBiomeExitPos;
+
         // Solo para TrapKind.ArrowSweep (ver Gameplay/TrapDisparadorController): la maquina real
         // vive montada en la pared de UNO de los dos extremos de TrapArrowPath (TrapDisparadorPos),
         // disparando en TrapDisparadorDir. TrapArrowPath es TrapCells pero YA ORDENADA en el orden

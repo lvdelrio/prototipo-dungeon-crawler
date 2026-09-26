@@ -87,6 +87,14 @@ namespace DungeonGen
                     log.Add(gateAdded
                         ? $"Piso {i}: Puerta Fria sellada en {floor.BiomeGatePos} (perforable desde {floor.BiomeGateApproachPos})."
                         : $"Piso {i}: sin punto muerto libre para la Puerta Fria (mapa demasiado chico/denso).");
+
+                    // Mecanismo APARTE de la Puerta Fria de arriba (mismo destino, Bioma 2, pero sin
+                    // secreto): una escalera comun al fondo de la zona aislada del piso 0 -- ver
+                    // PlaceCaveBiomeExit.
+                    bool caveExitAdded = PlaceCaveBiomeExit(floor);
+                    log.Add(caveExitAdded
+                        ? $"Piso {i}: escalera al Bioma 2 al fondo de la zona aislada en {floor.CaveBiomeExitPos}."
+                        : $"Piso {i}: sin celda libre al fondo de la zona aislada para la escalera al Bioma 2.");
                 }
 
                 for (int lc = 0; lc < loreCorridorFloors.Length; lc++)
@@ -1281,24 +1289,19 @@ namespace DungeonGen
             // La Puerta Fria tiene que ser alcanzable SOLO explorando el piso a pie: nunca detras de
             // un candado+palanca (PlacePacingPillars, que ya corrio y dejo esas puertas cerradas a
             // esta altura -- ver GenerateDungeon), porque eso obligaria a resolver un mecanismo sin
-            // relacion antes de poder usar las pistas de lore, rompiendo esa logica.
-            //
-            // Pedido puntual: "al final de la zona de cueva, un camino al Bioma 2" -- a diferencia
-            // de antes (un callejon al azar en el RESTO del mapa, sin relacion con la zona aislada),
-            // ahora se busca DENTRO de la zona aislada, en el callejon sin salida MAS LEJANO de su
-            // entrada (no uno al azar): asi la puerta queda al fondo de la cueva, no en cualquier
-            // rincon. FarthestCell mide distancia real de camino desde Start; como la UNICA conexion
-            // a la zona aislada es su entrada permanente, ordenar por distancia desde Start es lo
-            // mismo que ordenar por distancia desde esa entrada (la resta es la misma constante para
-            // cualquier celda de adentro).
+            // relacion antes de poder usar las pistas de lore, rompiendo esa logica. Tampoco dentro
+            // de la zona aislada: ya es su propio secreto (el atajo/switch), no hace falta anidar un
+            // segundo secreto adentro del primero. (La escalera de la zona aislada hacia el Bioma 2
+            // es un mecanismo APARTE, ver DungeonGenerator.PlaceCaveBiomeExit -- esta Puerta Fria no
+            // se mueve de aca.)
             var reachableFree = new HashSet<(int, int)>(
-                BfsReachable(floor, floor.StartPos).Where(c => floor.IsInIsolatedZone(c.Item1, c.Item2)));
+                BfsReachable(floor, floor.StartPos).Where(c => !floor.IsInIsolatedZone(c.Item1, c.Item2)));
 
             var candidates = FindLeavesWithin(floor, reachableFree, used);
             if (candidates.Count == 0) return false;
 
-            var candidateSet = new HashSet<(int, int)>(candidates);
-            var (pos, _) = FarthestCell(floor, floor.StartPos, allowed: c => candidateSet.Contains(c));
+            Shuffle(candidates, rng);
+            var pos = candidates[0];
             var cell = floor.Cells[pos.x, pos.y];
 
             Direction openDir = default;
@@ -1318,6 +1321,51 @@ namespace DungeonGen
             cell.Type = CellType.BiomeGate;
             floor.BiomeGatePos = pos;
             floor.BiomeGateApproachPos = approach;
+            return true;
+        }
+
+        // Escalera al fondo de la zona aislada (pedido puntual: "genera una mini dungeon en el
+        // cuadrante de la cueva y al final de esta una escalera al bioma de cuevas") -- mecanismo
+        // APARTE de la Puerta Fria de arriba: mismo destino (Bioma 2), pero sin secreto ni
+        // Perforador. Se busca el punto MAS PROFUNDO de la zona aislada (el callejon sin salida
+        // mas lejano de su entrada, o si no hay ninguno libre, la celda normal mas lejana que sea)
+        // y se lo marca directamente como CaveBiomeExit -- no hay pared que sellar, es una celda
+        // caminable comun, se encuentra explorando la cueva sin pistas de por medio.
+        private bool PlaceCaveBiomeExit(DungeonFloor floor)
+        {
+            var used = new HashSet<(int, int)> { floor.StartPos, floor.EndPos, floor.SecondaryQuestPos };
+            if (floor.BiomeGatePos.HasValue) used.Add(floor.BiomeGatePos.Value);
+            if (floor.BiomeGateApproachPos.HasValue) used.Add(floor.BiomeGateApproachPos.Value);
+            foreach (var gate in floor.Gates)
+            {
+                used.Add((gate.SwitchX, gate.SwitchY));
+                used.Add((gate.LandingX, gate.LandingY));
+            }
+            if (floor.TreasureRoomCells != null)
+                foreach (var c in floor.TreasureRoomCells) used.Add(c);
+
+            var reachableInZone = new HashSet<(int, int)>(
+                BfsReachable(floor, floor.StartPos).Where(c => floor.IsInIsolatedZone(c.Item1, c.Item2)));
+            if (reachableInZone.Count == 0) return false;
+
+            bool Eligible((int x, int y) c) => reachableInZone.Contains(c) && !used.Contains(c)
+                && floor.Cells[c.x, c.y].Type == CellType.Normal;
+
+            // Preferir un callejon sin salida de verdad (grado 1), para que se sienta como el
+            // "fondo" de la cueva; si no queda ninguno libre (zona chica/muy abierta), cualquier
+            // celda normal alcanzable sirve de respaldo -- FarthestCell ya prioriza la mas lejana
+            // entre las permitidas.
+            var leaves = new HashSet<(int, int)>(
+                reachableInZone.Where(c => Eligible(c) && Degree(floor, c.Item1, c.Item2) == 1));
+            Func<(int, int), bool> allowed = leaves.Count > 0
+                ? (Func<(int, int), bool>)(c => leaves.Contains(c))
+                : (c => Eligible(c));
+
+            var (pos, _) = FarthestCell(floor, floor.StartPos, allowed: allowed);
+            if (!Eligible(pos)) return false; // no se encontro ninguna celda valida
+
+            floor.Cells[pos.x, pos.y].Type = CellType.CaveBiomeExit;
+            floor.CaveBiomeExitPos = pos;
             return true;
         }
 

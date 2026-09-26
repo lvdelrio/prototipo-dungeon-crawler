@@ -285,6 +285,7 @@ namespace Gameplay
                 case CellType.Lever: return new Color(0.15f, 0.9f, 0.35f);
                 case CellType.Treasure: return new Color(1f, 0.82f, 0.1f);
                 case CellType.BiomeGate: return new Color(0.55f, 0.85f, 1f);
+                case CellType.CaveBiomeExit: return new Color(0.65f, 0.3f, 0.95f);
                 default: return null;
             }
         }
