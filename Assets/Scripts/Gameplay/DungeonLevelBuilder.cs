@@ -509,6 +509,11 @@ namespace Gameplay
             go.transform.SetParent(parent, false);
             go.transform.localPosition = localPos;
 
+            // TextMesh (a diferencia de lo que uno esperaria) NO agrega un MeshFilter solo --
+            // solo fuerza el MeshRenderer. Sin este AddComponent explicito, GetComponent<MeshFilter>()
+            // mas abajo devuelve null y tira MissingComponentException.
+            var meshFilter = go.AddComponent<MeshFilter>();
+
             var tm = go.AddComponent<TextMesh>();
             tm.text = text;
             tm.characterSize = signpostCharacterSize;
@@ -534,11 +539,14 @@ namespace Gameplay
             // el bounds del MESH (espacio local, no le afecta la rotacion del padre) en vez de
             // renderer.bounds (mundo): el cartel puede estar rotado 90/180/270 en Y segun hacia
             // donde mira, y eso mezclaria los ejes X/Z de un bounds en espacio de mundo.
-            var meshBounds = go.GetComponent<MeshFilter>().sharedMesh.bounds.size;
-            float scaleX = meshBounds.x > 0.0001f ? maxWidth / meshBounds.x : 1f;
-            float scaleY = meshBounds.y > 0.0001f ? maxHeight / meshBounds.y : 1f;
-            float fit = Mathf.Min(1f, scaleX, scaleY); // solo achica si hace falta, nunca agranda de mas
-            go.transform.localScale *= fit;
+            if (meshFilter.sharedMesh != null)
+            {
+                var meshBounds = meshFilter.sharedMesh.bounds.size;
+                float scaleX = meshBounds.x > 0.0001f ? maxWidth / meshBounds.x : 1f;
+                float scaleY = meshBounds.y > 0.0001f ? maxHeight / meshBounds.y : 1f;
+                float fit = Mathf.Min(1f, scaleX, scaleY); // solo achica si hace falta, nunca agranda de mas
+                go.transform.localScale *= fit;
+            }
         }
 
         private static Material _signTextMaterial;
