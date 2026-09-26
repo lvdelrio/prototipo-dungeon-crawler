@@ -87,6 +87,7 @@ namespace Gameplay
         private Light _starLight;
         private Coroutine _shootingStarRoutine;
         private bool _lastInBiome2;
+        private bool _lastSuppressForestAmbience;
         private const float ShootingStarPeakIntensity = 2.2f;
 
         void Awake()
@@ -154,23 +155,25 @@ namespace Gameplay
             main.simulationSpace = ParticleSystemSimulationSpace.World;
             main.loop = true;
             main.playOnAwake = true;
-            main.maxParticles = 10;
+            // Pedido puntual: "agregar o hacer mas notorios los haces de luz en el bosque" -- mas
+            // particulas, mas seguido, mas opacas y un poco mas anchas que antes (10/0.12/0.1).
+            main.maxParticles = 18;
             main.startSpeed = 0f;
             main.gravityModifier = 0f;
-            main.startColor = new Color(LightShaftColor.r, LightShaftColor.g, LightShaftColor.b, 0.1f);
+            main.startColor = new Color(LightShaftColor.r, LightShaftColor.g, LightShaftColor.b, 0.16f);
             main.startLifetime = new ParticleSystem.MinMaxCurve(10f, 16f);
             main.startRotation = 0f;
             main.startSize3D = true;
-            main.startSizeX = new ParticleSystem.MinMaxCurve(0.4f, 0.8f);
-            main.startSizeY = new ParticleSystem.MinMaxCurve(2.6f, 3.4f);
-            main.startSizeZ = new ParticleSystem.MinMaxCurve(0.4f, 0.8f);
+            main.startSizeX = new ParticleSystem.MinMaxCurve(0.5f, 1f);
+            main.startSizeY = new ParticleSystem.MinMaxCurve(2.8f, 3.6f);
+            main.startSizeZ = new ParticleSystem.MinMaxCurve(0.5f, 1f);
 
             var shape = ps.shape;
             shape.shapeType = ParticleSystemShapeType.Box;
             shape.scale = new Vector3(10f, 0.2f, 10f);
 
             var emission = ps.emission;
-            emission.rateOverTime = 0.12f; // muy poco a poco: son columnas grandes, no hace falta que sean muchas
+            emission.rateOverTime = 0.35f; // antes 0.12 -- se notaban muy de vez en cuando
 
             var noise = ps.noise;
             noise.enabled = true;
@@ -204,7 +207,10 @@ namespace Gameplay
             main.startSpeed = 0f;
             main.gravityModifier = 0f;
             main.startSize = new ParticleSystem.MinMaxCurve(0.09f, 0.16f);
-            main.startLifetime = new ParticleSystem.MinMaxCurve(6f, 9f);
+            // Rango angosto (antes 6-9, mucha variacion) para que la caida sea predecible: todas
+            // las hojas tienen que llegar mas o menos al piso ANTES de que la curva de velocidad
+            // las frene (ver vel.y abajo), sin importar que lifetime les toco.
+            main.startLifetime = new ParticleSystem.MinMaxCurve(7f, 8.5f);
             main.startRotation = new ParticleSystem.MinMaxCurve(0f, 360f * Mathf.Deg2Rad);
             main.startColor = new ParticleSystem.MinMaxGradient(LeafColorA, LeafColorB);
 
@@ -215,10 +221,21 @@ namespace Gameplay
             var emission = ps.emission;
             emission.rateOverTime = 3.5f;
 
+            // Pedido puntual: que la hoja se quede en el suelo unos segundos antes de desaparecer,
+            // no que se desvanezca a mitad de caida. La curva de Y cae fuerte el primer 40% del
+            // ciclo de vida (llega al piso, nace ~2.6 arriba del jugador) y frena a 0 hacia el 55%
+            // -- de ahi al 88% (ver colorOverLifetime abajo) la hoja queda quieta en el piso,
+            // visible, antes de recien ahi empezar a desvanecerse.
+            var fallCurve = new AnimationCurve(
+                new Keyframe(0f, 1f),
+                new Keyframe(0.4f, 1f),
+                new Keyframe(0.55f, 0f),
+                new Keyframe(1f, 0f));
+
             var vel = ps.velocityOverLifetime;
             vel.enabled = true;
             vel.x = new ParticleSystem.MinMaxCurve(-0.08f, 0.08f);
-            vel.y = new ParticleSystem.MinMaxCurve(-0.35f, -0.22f); // caida lenta y pareja
+            vel.y = new ParticleSystem.MinMaxCurve(-0.85f, fallCurve);
             vel.z = new ParticleSystem.MinMaxCurve(-0.08f, 0.08f);
 
             var noise = ps.noise;
@@ -236,7 +253,7 @@ namespace Gameplay
             var gradient = new Gradient();
             gradient.SetKeys(
                 new[] { new GradientColorKey(Color.white, 0f), new GradientColorKey(Color.white, 1f) },
-                new[] { new GradientAlphaKey(0f, 0f), new GradientAlphaKey(1f, 0.15f), new GradientAlphaKey(1f, 0.85f), new GradientAlphaKey(0f, 1f) });
+                new[] { new GradientAlphaKey(0f, 0f), new GradientAlphaKey(1f, 0.1f), new GradientAlphaKey(1f, 0.88f), new GradientAlphaKey(0f, 1f) });
             col.color = gradient;
         }
 
@@ -369,14 +386,24 @@ namespace Gameplay
                     _shootingStarRoutine = null;
                     _starLight.intensity = 0f;
                 }
+            }
 
-                // Hojas y rayos de luz SOLO en Bioma 1 (con plantas) -- en la cueva intergalactica
-                // (Bioma 2, cielo estrellado) no pegan tematicamente, se apagan del todo en vez de
-                // seguir cayendo/brillando.
+            // Hojas y rayos de luz SOLO en el bosque de verdad: ni en el Bioma 2 (cueva
+            // intergalactica, cielo estrellado) NI en la zona aislada re-skineada como cueva de
+            // roca (ver DungeonLevelBuilder.BuildRockyFloorTile) -- pedido puntual, hojas cayendo
+            // adentro de una cueva no pega. A diferencia del Bioma 2 (que es fijo por piso entero),
+            // la zona aislada es por CELDA, asi que esto se re-evalua cada frame, no solo cuando
+            // cambia inBiome2.
+            bool inCave = !inBiome2 && floor != null && floor.InBounds(player.CellX, player.CellY)
+                && floor.Cells[player.CellX, player.CellY].IsIsolatedZone;
+            bool suppressForestAmbience = inBiome2 || inCave;
+            if (suppressForestAmbience != _lastSuppressForestAmbience)
+            {
+                _lastSuppressForestAmbience = suppressForestAmbience;
                 var leafEmission = _leaves.emission;
-                leafEmission.enabled = !inBiome2;
+                leafEmission.enabled = !suppressForestAmbience;
                 var shaftEmission = _lightShafts.emission;
-                shaftEmission.enabled = !inBiome2;
+                shaftEmission.enabled = !suppressForestAmbience;
             }
         }
 

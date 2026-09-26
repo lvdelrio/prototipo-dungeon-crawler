@@ -12,6 +12,7 @@ namespace Gameplay
     public class BattleStageController : MonoBehaviour
     {
         public CombatManager combatManager;
+        public DungeonManager dungeonManager;
         public Camera dungeonCamera;
         public AudioListener dungeonAudioListener;
         public Material dissolveMaterial;
@@ -139,9 +140,10 @@ namespace Gameplay
             SpawnEnemyViews();
 
             bool isBoss = combatManager != null && combatManager.IsBossFight;
-            ApplyBattleFog(isBoss);
+            var zone = DetermineZoneTheme();
+            ApplyBattleFog(isBoss, zone);
             if (_battleCamera != null)
-                _ambientParticles = BattleAmbientParticles.Spawn(_battleCamera.transform, isBoss);
+                _ambientParticles = BattleAmbientParticles.Spawn(_battleCamera.transform, isBoss, zone);
 
             // El combate termino MUY rapido (p.ej. Huir justo al arrancar la pelea, o
             // SkipFightForTesting) y CleanupAfterCombat se llamo mientras la escena todavia
@@ -167,14 +169,41 @@ namespace Gameplay
             _fogSnapshotTaken = true;
         }
 
+        // Que tematica de zona esta pisando el jugador AHORA MISMO (justo antes de entrar en
+        // combate) -- pedido puntual: "el fondo del combate tiene que hacer sentido con la zona
+        // que se esta combatiendo", antes siempre era el mismo fondo generico sin importar donde
+        // pasara el encuentro.
+        public enum CombatZoneTheme { Forest, Cave, SpaceCave }
+
+        private CombatZoneTheme DetermineZoneTheme()
+        {
+            if (dungeonManager == null || dungeonManager.CurrentFloor == null) return CombatZoneTheme.Forest;
+            if (dungeonManager.CurrentFloor.Biome != 0) return CombatZoneTheme.SpaceCave;
+            if (dungeonManager.IsPlayerInIsolatedZone) return CombatZoneTheme.Cave;
+            return CombatZoneTheme.Forest;
+        }
+
         // Niebla mas corta y oscura que la de la mazmorra -- el fondo de la arena se pierde en la
-        // penumbra detras de los enemigos (mas marcada todavia en pelea de jefe), como el fondo
-        // atmosferico de un escenario de pelea.
-        private void ApplyBattleFog(bool boss)
+        // penumbra detras de los enemigos (mas marcada todavia en pelea de jefe, eso no cambia con
+        // la zona: el peligro de un jefe se siente igual en cualquier lado). Fuera de jefe, el tono
+        // de la niebla varia segun la zona para que el combate se sienta parte del mismo lugar.
+        private void ApplyBattleFog(bool boss, CombatZoneTheme zone)
         {
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.Linear;
-            RenderSettings.fogColor = boss ? new Color(0.05f, 0.02f, 0.02f) : new Color(0.03f, 0.03f, 0.05f);
+            if (boss)
+            {
+                RenderSettings.fogColor = new Color(0.05f, 0.02f, 0.02f);
+            }
+            else
+            {
+                RenderSettings.fogColor = zone switch
+                {
+                    CombatZoneTheme.Cave => new Color(0.05f, 0.045f, 0.04f),
+                    CombatZoneTheme.SpaceCave => new Color(0.02f, 0.02f, 0.05f),
+                    _ => new Color(0.03f, 0.05f, 0.035f), // Forest: un verde muy oscuro, no el gris neutro de antes
+                };
+            }
             RenderSettings.fogStartDistance = 6f;
             RenderSettings.fogEndDistance = boss ? 20f : 16f;
         }

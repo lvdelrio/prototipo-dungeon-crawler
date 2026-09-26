@@ -280,17 +280,49 @@ namespace Gameplay
             if (dirtCol != null) Object.Destroy(dirtCol);
             Tint(dirt, mat, new Color(0.28f, 0.20f, 0.12f));
 
-            var rock = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            rock.name = "Rock";
-            rock.transform.SetParent(parent, false);
-            Vector2 rockOff = Random.insideUnitCircle * cellSize * 0.28f;
-            float rockH = cellSize * Random.Range(0.12f, 0.2f);
-            rock.transform.localPosition = new Vector3(rockOff.x, rockH * 0.5f, rockOff.y);
-            rock.transform.localRotation = Quaternion.Euler(Random.Range(-10f, 10f), Random.Range(0f, 360f), Random.Range(-10f, 10f));
-            rock.transform.localScale = new Vector3(cellSize * Random.Range(0.16f, 0.24f), rockH, cellSize * Random.Range(0.16f, 0.24f));
-            var rockCol = rock.GetComponent<Collider>();
-            if (rockCol != null) Object.Destroy(rockCol);
-            Tint(rock, mat, new Color(0.33f, 0.33f, 0.34f));
+            BuildDeformedRock(parent, mat, cellSize, Random.insideUnitCircle * cellSize * 0.28f);
+        }
+
+        // Roca "deforme" (pedido puntual: mas irregular que un solo cubo liso): un bloque
+        // principal mas 2-3 bultos mas chicos superpuestos en angulos al azar -- el mismo truco
+        // barato de bajo poligono que un boulder de verdad (una malla esculpida a mano), solo que
+        // con primitivas apiladas en vez de una malla propia.
+        private static void BuildDeformedRock(Transform parent, Material mat, float cellSize, Vector2 rockOff)
+        {
+            float rockH = cellSize * Random.Range(0.14f, 0.24f);
+            Color tint = new Color(0.33f, 0.33f, 0.34f);
+
+            var core = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            core.name = "Rock";
+            core.transform.SetParent(parent, false);
+            core.transform.localPosition = new Vector3(rockOff.x, rockH * 0.5f, rockOff.y);
+            core.transform.localRotation = Quaternion.Euler(Random.Range(-12f, 12f), Random.Range(0f, 360f), Random.Range(-12f, 12f));
+            core.transform.localScale = new Vector3(cellSize * Random.Range(0.16f, 0.24f), rockH, cellSize * Random.Range(0.16f, 0.24f));
+            var coreCol = core.GetComponent<Collider>();
+            if (coreCol != null) Object.Destroy(coreCol);
+            Tint(core, mat, tint);
+
+            int lumps = Random.Range(2, 4);
+            for (int i = 0; i < lumps; i++)
+            {
+                var lump = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                lump.name = "RockLump";
+                lump.transform.SetParent(parent, false);
+                Vector2 lumpOff = rockOff + Random.insideUnitCircle * cellSize * 0.1f;
+                float lumpH = rockH * Random.Range(0.4f, 0.75f);
+                lump.transform.localPosition = new Vector3(lumpOff.x, lumpH * Random.Range(0.3f, 0.7f), lumpOff.y);
+                lump.transform.localRotation = Quaternion.Euler(Random.Range(-25f, 25f), Random.Range(0f, 360f), Random.Range(-25f, 25f));
+                lump.transform.localScale = new Vector3(
+                    cellSize * Random.Range(0.08f, 0.16f),
+                    lumpH,
+                    cellSize * Random.Range(0.08f, 0.16f));
+
+                var lumpCol = lump.GetComponent<Collider>();
+                if (lumpCol != null) Object.Destroy(lumpCol);
+
+                float shade = Random.Range(0.9f, 1.1f);
+                Tint(lump, mat, new Color(tint.r * shade, tint.g * shade, tint.b * shade));
+            }
         }
 
         private static void BuildPebbles(Transform parent, Material mat, float cellSize)

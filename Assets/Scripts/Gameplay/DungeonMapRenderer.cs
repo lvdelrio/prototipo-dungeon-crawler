@@ -35,13 +35,19 @@ namespace Gameplay
         // oscuro -- subido a 0.85 y un poco mas claro para que se note bien).
         public static readonly Color WalkedColor = new Color(0.3f, 0.65f, 1f, 0.85f);
 
+        // Mas colores (pedido puntual: "que hagan sentido a las zonas que se estan pintando") --
+        // antes solo habia 3 (Normal/Peligro/Objetivo), sin forma de distinguir a mano un tramo de
+        // bosque de uno de cueva en el mapa dibujado propio.
         public static readonly Color[] FloorPaintColors =
         {
             PathColor,
-            new Color(0.55f, 0.22f, 0.05f),
-            new Color(1f, 0.82f, 0.1f),
+            new Color(0.55f, 0.22f, 0.05f), // Peligro
+            new Color(1f, 0.82f, 0.1f),     // Objetivo
+            new Color(0.25f, 0.55f, 0.2f),  // Bosque
+            new Color(0.45f, 0.4f, 0.35f),  // Cueva
+            new Color(0.25f, 0.45f, 0.75f), // Agua/misterio
         };
-        public static readonly string[] FloorPaintNames = { "Normal", "Peligro", "Objetivo" };
+        public static readonly string[] FloorPaintNames = { "Normal", "Peligro", "Objetivo", "Bosque", "Cueva", "Agua" };
 
         private static Texture2D _whiteTex;
 
@@ -248,7 +254,9 @@ namespace Gameplay
                 return cell.IsTrapCell ? new Color(0.55f, 0.22f, 0.05f) : new Color(0.4f, 0.28f, 0.12f);
             if (cell.IsPuzzleTile)
                 return cell.IsPuzzleTileSafe ? new Color(0.35f, 0.45f, 0.5f) : new Color(0.5f, 0.28f, 0.1f);
-            return cell.IsIsolatedZone ? new Color(0.30f, 0.20f, 0.35f) : PathColor;
+            // Gris/marron de roca, no morado -- consistente con el reskin de la zona aislada como
+            // cueva (ver DungeonLevelBuilder.BuildRockyFloorTile).
+            return cell.IsIsolatedZone ? new Color(0.32f, 0.28f, 0.24f) : PathColor;
         }
 
         public static Color? MarkerColor(DungeonCell cell)
@@ -320,7 +328,7 @@ namespace Gameplay
             new LegendEntry(new Color(0.5f, 0.16f, 0.16f), "Piso de sala de jefe", "Parte del piso, mas grande, de la sala del jefe."),
             new LegendEntry(new Color(0.55f, 0.22f, 0.05f), "Trampa (celda peligrosa)", "Flechas o picos: pisarla tiene chance de dañar a toda la party."),
             new LegendEntry(new Color(0.4f, 0.28f, 0.12f), "Sala de trampas (resto)", "Parte segura de una sala de trampas -- las peligrosas se ven mas oscuras/rojas."),
-            new LegendEntry(new Color(0.30f, 0.20f, 0.35f), "Zona aislada", "Solo se llega por un desvio largo o por el atajo de teletransporte."),
+            new LegendEntry(new Color(0.32f, 0.28f, 0.24f), "Zona aislada (cueva)", "Solo se llega por un desvio largo o por el atajo de teletransporte."),
             new LegendEntry(VoidColor, "Sin explorar / vacío", "Roca solida real, o una celda que todavia no pisaste (niebla de guerra)."),
         };
 

@@ -12,17 +12,17 @@ namespace Gameplay
         private ParticleSystem _far;
         private Transform _followTarget;
 
-        public static BattleAmbientParticles Spawn(Transform followTarget, bool boss)
+        public static BattleAmbientParticles Spawn(Transform followTarget, bool boss, BattleStageController.CombatZoneTheme zone = BattleStageController.CombatZoneTheme.Forest)
         {
             var go = new GameObject("BattleAmbientParticles");
             var comp = go.AddComponent<BattleAmbientParticles>();
             comp._followTarget = followTarget;
             if (followTarget != null) go.transform.position = followTarget.position;
-            comp.Setup(boss);
+            comp.Setup(boss, zone);
             return comp;
         }
 
-        private void Setup(bool boss)
+        private void Setup(bool boss, BattleStageController.CombatZoneTheme zone)
         {
             _near = ParticleLayerFactory.CreateLayer(transform, "BattleAmbientNear");
             _far = ParticleLayerFactory.CreateLayer(transform, "BattleAmbientFar");
@@ -54,15 +54,24 @@ namespace Gameplay
             }
             else
             {
-                // Polvo suave flotando en el aire de la arena para un combate comun.
-                nearMain.startColor = new Color(0.85f, 0.82f, 0.72f, 0.5f);
+                // Polvo suave flotando en el aire de la arena para un combate comun -- tenido
+                // segun la zona (pedido puntual: "el fondo de combate tiene que hacer sentido con
+                // la zona"), no siempre el mismo gris/beige neutro de antes.
+                var (nearTint, farTint) = zone switch
+                {
+                    BattleStageController.CombatZoneTheme.Cave => (new Color(0.55f, 0.5f, 0.42f, 0.5f), new Color(0.35f, 0.32f, 0.28f, 0.09f)),
+                    BattleStageController.CombatZoneTheme.SpaceCave => (new Color(0.55f, 0.65f, 0.9f, 0.5f), new Color(0.3f, 0.35f, 0.55f, 0.09f)),
+                    _ => (new Color(0.78f, 0.85f, 0.7f, 0.5f), new Color(0.5f, 0.58f, 0.45f, 0.09f)), // Forest: polvo verdoso
+                };
+
+                nearMain.startColor = nearTint;
                 nearMain.startSpeed = new ParticleSystem.MinMaxCurve(0.08f, 0.2f);
                 nearMain.startSize = new ParticleSystem.MinMaxCurve(0.05f, 0.1f);
                 nearMain.startLifetime = new ParticleSystem.MinMaxCurve(4f, 6f);
                 nearMain.gravityModifier = 0f;
                 nearEmission.rateOverTime = 12f;
 
-                farMain.startColor = new Color(0.55f, 0.53f, 0.5f, 0.09f);
+                farMain.startColor = farTint;
                 farMain.startSpeed = new ParticleSystem.MinMaxCurve(0.02f, 0.05f);
                 farMain.startSize = new ParticleSystem.MinMaxCurve(0.8f, 1.4f);
                 farMain.startLifetime = new ParticleSystem.MinMaxCurve(10f, 16f);

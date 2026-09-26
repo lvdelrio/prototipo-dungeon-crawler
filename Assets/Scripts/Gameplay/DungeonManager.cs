@@ -67,6 +67,11 @@ namespace Gameplay
 
         public DungeonFloor CurrentFloor => _floors[_currentFloorIndex];
         public int CurrentFloorIndex => _currentFloorIndex;
+        // Para el fondo de combate (ver Gameplay.BattleStageController): que tematica de zona esta
+        // pisando el jugador ahora mismo, para que el combate se sienta parte del mismo lugar en
+        // vez de siempre el mismo fondo generico.
+        public bool IsPlayerInIsolatedZone => player != null && CurrentFloor.InBounds(player.CellX, player.CellY)
+            && CurrentFloor.Cells[player.CellX, player.CellY].IsIsolatedZone;
         public List<DungeonFloor> Floors => _floors;
         public bool IsCombatActive => combat != null && combat.IsActive;
         public int CurrentWalkingCounter => _walkingCounter;

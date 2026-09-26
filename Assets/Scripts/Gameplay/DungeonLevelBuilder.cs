@@ -135,9 +135,16 @@ namespace Gameplay
 
                         // Telaranas en la cueva (pedido puntual, ver foto de referencia): no en
                         // TODAS las celdas de la zona aislada, si no se ve repetitivo -- 30% de
-                        // chance por celda alcanza para que aparezcan salteadas.
-                        if (isIso && !isBiome2 && Random.value < 0.3f)
-                            BuildCobweb(center, cellSize, wallHeight);
+                        // chance por celda alcanza para que aparezcan salteadas. Ademas, de vez en
+                        // cuando (8%) una GRANDE (pedido puntual: en la foto de referencia las
+                        // telaranas eran mucho mas grandes que lo que habia) y estalactitas
+                        // colgando del techo (25%, independiente de las telaranas).
+                        if (isIso && !isBiome2)
+                        {
+                            if (Random.value < 0.3f) BuildCobweb(center, cellSize, wallHeight, big: false);
+                            if (Random.value < 0.08f) BuildCobweb(center, cellSize, wallHeight, big: true);
+                            if (Random.value < 0.25f) BuildStalactite(center, wallHeight);
+                        }
                     }
 
                     // Pared: se construye una sola vez por borde compartido entre dos celdas reales
@@ -780,43 +787,48 @@ namespace Gameplay
         // mas 2 "anillos" que las cruzan a distintas fracciones del radio -- el mismo patron
         // radial+concentrico de una telarana real, aproximado con primitivas finitas (hebras =
         // cubos finitos y largos, no hay curvas).
-        private void BuildCobweb(Vector3 center, float cellSize, float wallHeight)
+        // big=true: telarana grande (pedido puntual, ver foto de referencia -- las de antes eran
+        // muy chicas comparado con la imagen), radio y cantidad de hebras notablemente mayores,
+        // pero MISMO patron radial+concentrico.
+        private void BuildCobweb(Vector3 center, float cellSize, float wallHeight, bool big)
         {
             float cornerX = (Random.value < 0.5f ? -1f : 1f) * cellSize * 0.48f;
             float cornerZ = (Random.value < 0.5f ? -1f : 1f) * cellSize * 0.48f;
-            Vector3 anchor = center + new Vector3(cornerX, wallHeight * 0.88f, cornerZ);
+            Vector3 anchor = center + new Vector3(cornerX, wallHeight * 0.9f, cornerZ);
 
-            var root = new GameObject("Cobweb");
+            var root = new GameObject(big ? "CobwebBig" : "Cobweb");
             root.transform.SetParent(_root.transform, false);
             root.transform.position = anchor;
 
-            int spokes = Random.Range(5, 7);
-            float spanAngle = 110f;
+            int spokes = big ? Random.Range(8, 11) : Random.Range(5, 7);
+            float spanAngle = big ? 150f : 110f;
             float baseAngle = Random.Range(0f, 360f);
-            float radius = cellSize * Random.Range(0.5f, 0.75f);
+            float radius = big ? cellSize * Random.Range(1.3f, 1.8f) : cellSize * Random.Range(0.5f, 0.75f);
+            float strandThickness = big ? 0.03f : 0.015f;
 
             var tips = new Vector3[spokes];
             for (int i = 0; i < spokes; i++)
             {
                 float t = spokes <= 1 ? 0.5f : (float)i / (spokes - 1);
                 float angle = baseAngle + (t - 0.5f) * spanAngle;
-                float elevation = Mathf.Lerp(-30f, -75f, t); // apunta hacia abajo/afuera, en abanico
+                float elevation = Mathf.Lerp(-25f, -80f, t); // apunta hacia abajo/afuera, en abanico
                 Vector3 dir = Quaternion.Euler(elevation, angle, 0f) * Vector3.forward;
                 tips[i] = dir * radius;
-                BuildCobwebStrand(root.transform, Vector3.zero, tips[i]);
+                BuildCobwebStrand(root.transform, Vector3.zero, tips[i], strandThickness);
             }
 
-            // Anillos: conectan hebras vecinas a mitad y cerca de la punta del radio, como los
-            // hilos concentricos de una telarana real.
-            for (int ring = 0; ring < 2; ring++)
+            // Anillos: conectan hebras vecinas a distintas fracciones del radio, como los hilos
+            // concentricos de una telarana real -- una grande lleva un anillo mas que una chica.
+            int rings = big ? 3 : 2;
+            for (int ring = 0; ring < rings; ring++)
             {
-                float frac = ring == 0 ? 0.45f : 0.8f;
+                float frac = (ring + 1f) / (rings + 1f);
                 for (int i = 0; i < spokes - 1; i++)
-                    BuildCobwebStrand(root.transform, tips[i] * frac, tips[i + 1] * frac);
+                    BuildCobwebStrand(root.transform, tips[i] * frac, tips[i + 1] * frac, strandThickness);
             }
         }
 
-        private void BuildCobwebStrand(Transform parent, Vector3 a, Vector3 b)
+        private void BuildCobwebStrand(Transform parent, Vector3 a, Vector3 b, float thickness)
         {
             var strand = GameObject.CreatePrimitive(PrimitiveType.Cube);
             strand.name = "CobwebStrand";
@@ -826,12 +838,43 @@ namespace Gameplay
             if (length < 0.0001f) return;
             strand.transform.localPosition = (a + b) * 0.5f;
             strand.transform.localRotation = Quaternion.LookRotation(delta);
-            strand.transform.localScale = new Vector3(0.015f, 0.015f, length);
+            strand.transform.localScale = new Vector3(thickness, thickness, length);
 
             var col = strand.GetComponent<Collider>();
             if (col != null) Destroy(col);
 
             ApplyMaterial(strand, null, new Color(0.82f, 0.8f, 0.75f));
+        }
+
+        // Estalactitas colgando del techo de la cueva (pedido puntual, ver foto de referencia):
+        // 3 segmentos apilados que se van achicando hacia la punta -- mismo truco chato de PS1
+        // que el resto (primitivas apiladas, no una malla conica de verdad).
+        private void BuildStalactite(Vector3 center, float wallHeight)
+        {
+            float length = Random.Range(0.5f, 1.1f);
+            const int segments = 3;
+            Vector2 off = Random.insideUnitCircle * 0.9f; // dentro de la celda, lejos de las paredes
+            Vector3 basePos = center + new Vector3(off.x, wallHeight - 0.02f, off.y);
+            float segLen = length / segments;
+            float widthTop = Random.Range(0.16f, 0.24f);
+
+            for (int i = 0; i < segments; i++)
+            {
+                float t = segments <= 1 ? 0f : (float)i / (segments - 1); // 0 arriba, 1 en la punta
+                float width = Mathf.Lerp(widthTop, widthTop * 0.15f, t);
+                var seg = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                seg.name = "Stalactite";
+                seg.transform.SetParent(_root.transform, false);
+                float y = basePos.y - segLen * (i + 0.5f);
+                seg.transform.position = new Vector3(basePos.x, y, basePos.z);
+                seg.transform.localScale = new Vector3(width, segLen * 1.05f, width);
+
+                var col = seg.GetComponent<Collider>();
+                if (col != null) Destroy(col);
+
+                float shade = Random.Range(0.85f, 1.15f);
+                ApplyMaterial(seg, null, new Color(0.3f * shade, 0.28f * shade, 0.25f * shade));
+            }
         }
 
         private void BuildCeilingTile(Vector3 center, float cellSize, float wallHeight, bool isIso, bool isBiome2)
@@ -1029,6 +1072,9 @@ namespace Gameplay
             root.transform.SetParent(_root.transform, false);
             root.transform.position = center;
             root.AddComponent<BillboardY>();
+            // Se pone transparente cuando la camara esta muy cerca (pedido puntual: parado
+            // encima o pegado a la escalera, el icono tapaba toda la pantalla y se veia raro).
+            var fade = root.AddComponent<DistanceFade>();
 
             const int steps = 4;
             float totalW = scale * 1.1f;
@@ -1047,7 +1093,28 @@ namespace Gameplay
                 var col = block.GetComponent<Collider>();
                 if (col != null) Destroy(col);
                 ApplyMaterial(block, mat, color);
+
+                var rend = block.GetComponent<Renderer>();
+                ConfigureForAlphaFade(rend.material); // .material clona el material si era compartido
+                fade.Register(rend, color);
             }
+        }
+
+        // Configura un material (Standard o el fallback de FallbackStandardMaterial) para que
+        // respete el canal alfa del color (modo "Fade" de Standard) -- por defecto un material
+        // Standard es opaco e ignora el alfa del color por completo. SetFloat/SetInt/EnableKeyword
+        // sobre una propiedad que el shader no tiene no hacen nada (no tiran error), asi que esto
+        // es inofensivo aunque el material termine siendo otro shader de respaldo.
+        private static void ConfigureForAlphaFade(Material mat)
+        {
+            mat.SetFloat("_Mode", 3f);
+            mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            mat.SetInt("_ZWrite", 0);
+            mat.DisableKeyword("_ALPHATEST_ON");
+            mat.EnableKeyword("_ALPHABLEND_ON");
+            mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+            mat.renderQueue = 3000;
         }
 
         private static Material _fallbackStandardMaterial;
