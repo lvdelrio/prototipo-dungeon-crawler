@@ -10,6 +10,7 @@ namespace Gameplay
         GrassRockDirt,
         Dirt,
         Leaves,
-        Path
+        Path,
+        Bush
     }
 }

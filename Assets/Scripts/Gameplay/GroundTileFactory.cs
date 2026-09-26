@@ -22,11 +22,12 @@ namespace Gameplay
         // lean como detalle puntual en vez de ruido repetido en cada celda.
         private static readonly (GroundTileKind kind, float weight)[] Weights =
         {
-            (GroundTileKind.Grass, 0.42f),
+            (GroundTileKind.Grass, 0.38f),
             (GroundTileKind.Path, 0.16f),
             (GroundTileKind.Dirt, 0.14f),
-            (GroundTileKind.GrassLeaves, 0.13f),
-            (GroundTileKind.GrassRockDirt, 0.10f),
+            (GroundTileKind.GrassLeaves, 0.12f),
+            (GroundTileKind.GrassRockDirt, 0.09f),
+            (GroundTileKind.Bush, 0.06f),
             (GroundTileKind.Leaves, 0.05f),
         };
 
@@ -53,6 +54,7 @@ namespace Gameplay
             GroundTileKind.Dirt => new Color(0.30f, 0.22f, 0.14f),
             GroundTileKind.Leaves => new Color(0.32f, 0.24f, 0.10f),
             GroundTileKind.Path => new Color(0.24f, 0.28f, 0.20f),
+            GroundTileKind.Bush => new Color(0.15f, 0.25f, 0.13f),
             _ => new Color(0.16f, 0.27f, 0.14f),
         };
 
@@ -149,7 +151,15 @@ namespace Gameplay
             // su collider (siguen ahi debajo, el jugador camina sobre el cubo de siempre).
             BuildGroundBumps(root.transform, mat, cellSize, tint);
 
-            bool isGrassFamily = kind == GroundTileKind.Grass || kind == GroundTileKind.GrassLeaves || kind == GroundTileKind.GrassRockDirt;
+            // Borde no uniforme (pedido puntual, referencia: un piso "zigzagueante" con el borde
+            // irregular, no un cuadrado perfecto): dientes chatos que sobresalen un poco del borde
+            // exacto de la celda, del mismo tono. No hay boolean/CSG con primitivas, asi que esto
+            // es una aproximacion -- no calza perfecto diente con diente contra el vecino, pero
+            // rompe la silueta cuadrada de cada celda.
+            BuildJaggedEdge(root.transform, mat, cellSize, tint);
+
+            bool isGrassFamily = kind == GroundTileKind.Grass || kind == GroundTileKind.GrassLeaves
+                || kind == GroundTileKind.GrassRockDirt || kind == GroundTileKind.Bush;
             if (isGrassFamily)
                 BuildGrassTufts(root.transform, cellSize);
 
@@ -158,7 +168,8 @@ namespace Gameplay
                 case GroundTileKind.GrassLeaves: BuildLeafCards(root.transform, mat, cellSize, count: 3); break;
                 case GroundTileKind.Leaves: BuildLeafCards(root.transform, mat, cellSize, count: 5); break;
                 case GroundTileKind.GrassRockDirt: BuildRockAndDirtPatch(root.transform, mat, cellSize); break;
-                case GroundTileKind.Dirt: BuildPebbles(root.transform, mat, cellSize); BuildCrackedPathLines(root.transform, mat, cellSize); break;
+                case GroundTileKind.Dirt: BuildPebbles(root.transform, mat, cellSize); break;
+                case GroundTileKind.Bush: BuildBushClump(root.transform, mat, cellSize); break;
                 default: break; // Grass y Path: solo la base (+ relieve/pasto de arriba)
             }
         }
@@ -199,12 +210,12 @@ namespace Gameplay
         private static void BuildGrassTufts(Transform parent, float cellSize)
         {
             var grassMat = GrassMaterial();
-            int count = Random.Range(3, 5);
+            int count = Random.Range(4, 7); // mas finitas -- compensar con un poco mas de cantidad
             for (int i = 0; i < count; i++)
             {
                 Vector2 off = Random.insideUnitCircle * cellSize * 0.42f;
-                float height = cellSize * Random.Range(0.14f, 0.24f);
-                float width = cellSize * Random.Range(0.1f, 0.16f);
+                float height = cellSize * Random.Range(0.09f, 0.15f); // "mas fino y pequeno" -- pedido puntual
+                float width = cellSize * Random.Range(0.035f, 0.06f);
                 float baseYaw = Random.Range(0f, 360f);
                 float shade = Random.Range(0.8f, 1.25f);
                 Color tint = new Color(0.22f * shade, 0.42f * shade, 0.16f * shade);
@@ -301,58 +312,76 @@ namespace Gameplay
             }
         }
 
-        // Grietas de tierra seca y curtida ("caminos borrascosos" -- pedido puntual): una red de
-        // segmentos CORTOS que se ramifican desde un centro comun, no un par de lineas largas al
-        // azar cruzando el parche (eso se leia como dos rayones sueltos, no como una textura
-        // agrietada). Cada "grieta principal" tiene chance de tirar una ramita mas corta a mitad
-        // de camino, el mismo patron ramificado de una grieta real de barro seco.
-        private static void BuildCrackedPathLines(Transform parent, Material mat, float cellSize)
+        // Dientes chatos que sobresalen un poco del borde exacto de la celda (pedido puntual: que
+        // el borde del piso no se vea como un cuadrado perfecto). 2-3 dientes por lado, tamano y
+        // cuanto sobresalen al azar -- los 4 lados son siempre ejes X/Z (las celdas son cuadradas
+        // alineadas a los ejes), asi que no hace falta rotar nada, solo elegir que eje es "a lo
+        // largo del lado" y cual es "hacia afuera".
+        private static void BuildJaggedEdge(Transform parent, Material mat, float cellSize, Color tint)
         {
-            Vector2 hub = Random.insideUnitCircle * cellSize * 0.12f;
-            int primaryCount = Random.Range(3, 5);
-            float baseAngle = Random.Range(0f, 360f);
-            for (int i = 0; i < primaryCount; i++)
-            {
-                float angle = baseAngle + i * (360f / primaryCount) + Random.Range(-20f, 20f);
-                float length = cellSize * Random.Range(0.16f, 0.28f);
-                Vector2 dir = new Vector2(Mathf.Cos(angle * Mathf.Deg2Rad), Mathf.Sin(angle * Mathf.Deg2Rad));
-                Vector2 mid = hub + dir * (length * 0.5f);
-                BuildCrackSegment(parent, mat, mid, angle, length, cellSize);
+            BuildEdgeTeeth(parent, mat, cellSize, tint, alongIsX: true, outwardSign: 1f);  // borde +Z
+            BuildEdgeTeeth(parent, mat, cellSize, tint, alongIsX: true, outwardSign: -1f); // borde -Z
+            BuildEdgeTeeth(parent, mat, cellSize, tint, alongIsX: false, outwardSign: 1f); // borde +X
+            BuildEdgeTeeth(parent, mat, cellSize, tint, alongIsX: false, outwardSign: -1f);// borde -X
+        }
 
-                // Ramita corta desde un punto a mitad del segmento principal -- rompe la linea
-                // recta, se lee mas como una grieta real que como un palito.
-                if (Random.value < 0.7f)
-                {
-                    Vector2 branchOrigin = hub + dir * (length * Random.Range(0.4f, 0.8f));
-                    float branchAngle = angle + (Random.value < 0.5f ? 1f : -1f) * Random.Range(35f, 70f);
-                    float branchLength = length * Random.Range(0.35f, 0.6f);
-                    Vector2 branchDir = new Vector2(Mathf.Cos(branchAngle * Mathf.Deg2Rad), Mathf.Sin(branchAngle * Mathf.Deg2Rad));
-                    Vector2 branchMid = branchOrigin + branchDir * (branchLength * 0.5f);
-                    BuildCrackSegment(parent, mat, branchMid, branchAngle, branchLength, cellSize);
-                }
+        private static void BuildEdgeTeeth(Transform parent, Material mat, float cellSize, Color tint, bool alongIsX, float outwardSign)
+        {
+            float half = cellSize * 0.5f;
+            int teeth = Random.Range(2, 4);
+            for (int i = 0; i < teeth; i++)
+            {
+                float along = (Random.value - 0.5f) * cellSize * 0.7f;
+                float alongSize = cellSize * Random.Range(0.14f, 0.24f);
+                float reach = cellSize * Random.Range(0.03f, 0.12f); // cuanto sobresale del borde exacto
+
+                var tooth = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                tooth.name = "EdgeTooth";
+                tooth.transform.SetParent(parent, false);
+
+                float perpCenter = outwardSign * (half + reach * 0.5f);
+                tooth.transform.localPosition = alongIsX
+                    ? new Vector3(along, -0.03f, perpCenter)
+                    : new Vector3(perpCenter, -0.03f, along);
+                tooth.transform.localScale = alongIsX
+                    ? new Vector3(alongSize, 0.06f, reach)
+                    : new Vector3(reach, 0.06f, alongSize);
+
+                var col = tooth.GetComponent<Collider>();
+                if (col != null) Object.Destroy(col);
+
+                float shade = Random.Range(0.9f, 1.1f);
+                Tint(tooth, mat, new Color(
+                    Mathf.Clamp01(tint.r * shade),
+                    Mathf.Clamp01(tint.g * shade),
+                    Mathf.Clamp01(tint.b * shade)));
             }
         }
 
-        // Un segmento de grieta: posXZ es el CENTRO del segmento (en espacio local XZ de la
-        // celda), angleDeg su direccion (misma convencion que Mathf.Cos/Sin usados para ubicarlo).
-        private static void BuildCrackSegment(Transform parent, Material mat, Vector2 posXZ, float angleDeg, float length, float cellSize)
+        // Arbusto: un amontonado de 3-4 bultos superpuestos (esferas achatadas mas grandes y menos
+        // chatas que BuildGroundBumps), como la silueta redondeada de un matorral. Tile propio
+        // (GroundTileKind.Bush), no un prop suelto sobre pasto -- se ve desde lejos como un bulto
+        // solido de follaje en vez de una mancha de color.
+        private static void BuildBushClump(Transform parent, Material mat, float cellSize)
         {
-            var crack = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            crack.name = "DirtCrack";
-            crack.transform.SetParent(parent, false);
-            crack.transform.localPosition = new Vector3(posXZ.x, 0.05f, posXZ.y);
-            // -angleDeg: asi el eje "largo" del quad (su X local) queda alineado con la misma
-            // direccion (cos,sin) que se uso para calcular la posicion -- ver derivacion en el eje
-            // Y despues de la inclinacion de 90 en X.
-            crack.transform.localRotation = Quaternion.Euler(90f, -angleDeg, 0f);
-            float width = cellSize * Random.Range(0.02f, 0.035f);
-            crack.transform.localScale = new Vector3(length, width, 1f);
+            Vector2 hub = Random.insideUnitCircle * cellSize * 0.15f;
+            int lobes = Random.Range(3, 5);
+            for (int i = 0; i < lobes; i++)
+            {
+                var lobe = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                lobe.name = "BushLobe";
+                lobe.transform.SetParent(parent, false);
+                Vector2 off = hub + Random.insideUnitCircle * cellSize * 0.14f;
+                float radius = cellSize * Random.Range(0.18f, 0.26f);
+                lobe.transform.localPosition = new Vector3(off.x, radius * 0.42f, off.y);
+                lobe.transform.localScale = new Vector3(radius, radius * 0.75f, radius);
 
-            var col = crack.GetComponent<Collider>();
-            if (col != null) Object.Destroy(col);
+                var col = lobe.GetComponent<Collider>();
+                if (col != null) Object.Destroy(col);
 
-            float shade = Random.Range(0.5f, 0.7f);
-            Tint(crack, mat, new Color(0.12f * shade, 0.08f * shade, 0.05f * shade));
+                float shade = Random.Range(0.85f, 1.15f);
+                Tint(lobe, mat, new Color(0.13f * shade, 0.24f * shade, 0.1f * shade));
+            }
         }
 
         private static void Tint(GameObject go, Material mat, Color color)

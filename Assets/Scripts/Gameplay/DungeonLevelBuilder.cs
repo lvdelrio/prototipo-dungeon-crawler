@@ -410,9 +410,10 @@ namespace Gameplay
             // Perpendicular a la direccion de avance (rotar 90 grados en el plano XZ), para
             // separar los dos carteles a los costados de la celda de llegada.
             Vector3 side = new Vector3(-oy, 0, ox) * cellSize * 0.28f;
-            // El cartel tiene que MIRAR hacia atras, de vuelta al jugador que viene desde Start --
-            // por eso +180 sobre el yaw de la misma direccion "facing".
-            float signYaw = DirectionYaw(facing) + 180f;
+            // El texto tiene que MIRAR hacia atras, de vuelta al jugador que viene desde Start --
+            // ojo, el yaw que lo lee BIEN (no en espejo) es el mismo yaw de "facing", NO
+            // facing+180 (eso se probo primero y salio con las letras al reves).
+            float signYaw = DirectionYaw(facing);
 
             BuildSignpost(aheadCenter - side, signpostMoveText, signYaw);
             BuildSignpost(aheadCenter + side, signpostMapText, signYaw);
@@ -478,6 +479,36 @@ namespace Gameplay
             tm.anchor = TextAnchor.MiddleCenter;
             tm.alignment = TextAlignment.Center;
             tm.color = new Color(0.95f, 0.9f, 0.75f);
+
+            // El material de fuente por defecto de TextMesh es transparente y no escribe
+            // profundidad -- por eso el texto se veia "flotando" a traves de las paredes en vez de
+            // taparse detras de ellas. Custom/PS1SignText usa la MISMA textura de fuente pero en
+            // la cola AlphaTest (si escribe profundidad), asi vuelve a ocluirse como cualquier
+            // geometria opaca.
+            var renderer = go.GetComponent<MeshRenderer>();
+            var textMat = new Material(SignTextMaterial());
+            textMat.mainTexture = tm.font.material.mainTexture;
+            renderer.material = textMat;
+        }
+
+        private static Material _signTextMaterial;
+
+        private static Material SignTextMaterial()
+        {
+            if (_signTextMaterial == null)
+            {
+                var resourceMat = Resources.Load<Material>("Materials/PS1SignText");
+                if (resourceMat != null)
+                {
+                    _signTextMaterial = new Material(resourceMat);
+                }
+                else
+                {
+                    var shader = Shader.Find("Custom/PS1SignText");
+                    _signTextMaterial = new Material(shader != null ? shader : Shader.Find("Legacy Shaders/Transparent/Cutout/VertexLit"));
+                }
+            }
+            return _signTextMaterial;
         }
 
         // Puesta en escena de la celda de lore (ver Lore.SceneDressing): busca el fragmento
@@ -619,11 +650,28 @@ namespace Gameplay
 
         private void BuildFloorTile(Vector3 center, float cellSize, bool isIso, bool isBiome2, bool forceCleanFloor = false)
         {
-            // Zona normal del bosque (ni zona aislada con su propio tinte, ni Bioma 2 con su piso
-            // estrellado): en vez de un cubo chato de un solo color, el tilemap variado de
-            // GroundTileFactory. La zona aislada y Bioma 2 mantienen su piso propio sin tocar --
-            // mezclar pasto ahi rompería el tinte/identidad visual que ya tienen.
-            if (!isIso && !isBiome2 && useForestGroundTiles)
+            if (isBiome2)
+            {
+                var goBiome2 = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                goBiome2.name = "Floor";
+                goBiome2.transform.SetParent(_root.transform, false);
+                goBiome2.transform.position = center + new Vector3(0, -0.1f, 0);
+                goBiome2.transform.localScale = new Vector3(cellSize, 0.2f, cellSize);
+                ApplyMaterial(goBiome2, biome2FloorMaterial, new Color(0.05f, 0.05f, 0.08f));
+                return;
+            }
+
+            if (isIso)
+            {
+                // Zona aislada = entrada de cueva (pedido puntual: ya no tinte morado parejo,
+                // piso rocoso) -- ver BuildRockyFloorTile.
+                BuildRockyFloorTile(center, cellSize);
+                return;
+            }
+
+            // Zona normal del bosque: en vez de un cubo chato de un solo color, el tilemap
+            // variado de GroundTileFactory.
+            if (useForestGroundTiles)
             {
                 // forceCleanFloor (escaleras): Grass a proposito, sin props -- nunca una roca u
                 // otro prop saliendo debajo del icono pseudo-3D de la escalera.
@@ -637,12 +685,40 @@ namespace Gameplay
             go.transform.SetParent(_root.transform, false);
             go.transform.position = center + new Vector3(0, -0.1f, 0);
             go.transform.localScale = new Vector3(cellSize, 0.2f, cellSize);
-            if (isBiome2)
-                ApplyMaterial(go, biome2FloorMaterial, new Color(0.05f, 0.05f, 0.08f));
-            else
-                ApplyMaterial(go,
-                    isIso ? isoFloorMaterial : floorMaterial,
-                    isIso ? new Color(0.24f, 0.17f, 0.30f) : new Color(0.35f, 0.35f, 0.38f));
+            ApplyMaterial(go, floorMaterial, new Color(0.35f, 0.35f, 0.38f));
+        }
+
+        // Zona aislada = "entrada de cueva" (pedido puntual: antes tenia un tinte morado parejo,
+        // ahora piso rocoso gris/marron): base chata + un par de piedras chatas encima, mismo
+        // lenguaje visual que GroundTileFactory.BuildGroundBumps pero en tonos de roca.
+        private void BuildRockyFloorTile(Vector3 center, float cellSize)
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = "Floor";
+            go.transform.SetParent(_root.transform, false);
+            go.transform.position = center + new Vector3(0, -0.1f, 0);
+            go.transform.localScale = new Vector3(cellSize, 0.2f, cellSize);
+            float jitter = Random.Range(-0.02f, 0.02f);
+            ApplyMaterial(go, isoFloorMaterial, new Color(0.24f + jitter, 0.22f + jitter, 0.20f + jitter));
+
+            int count = Random.Range(2, 4);
+            for (int i = 0; i < count; i++)
+            {
+                var rock = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                rock.name = "CaveRock";
+                rock.transform.SetParent(_root.transform, false);
+                Vector2 off = Random.insideUnitCircle * cellSize * 0.35f;
+                float radius = cellSize * Random.Range(0.1f, 0.18f);
+                float squash = Random.Range(0.3f, 0.5f);
+                rock.transform.position = center + new Vector3(off.x, radius * squash * 0.5f, off.y);
+                rock.transform.localScale = new Vector3(radius, radius * squash, radius);
+
+                var col = rock.GetComponent<Collider>();
+                if (col != null) Destroy(col);
+
+                float shade = Random.Range(0.8f, 1.2f);
+                ApplyMaterial(rock, null, new Color(0.3f * shade, 0.28f * shade, 0.26f * shade));
+            }
         }
 
         private void BuildCeilingTile(Vector3 center, float cellSize, float wallHeight, bool isIso, bool isBiome2)
@@ -657,7 +733,7 @@ namespace Gameplay
             else
                 ApplyMaterial(go,
                     isIso ? isoCeilingMaterial : ceilingMaterial,
-                    isIso ? new Color(0.12f, 0.08f, 0.16f) : new Color(0.15f, 0.15f, 0.17f));
+                    isIso ? new Color(0.08f, 0.07f, 0.06f) : new Color(0.15f, 0.15f, 0.17f));
         }
 
         // Aura sutil de piso alrededor de la escalera (Custom/StairsAura, ver Assets/Shaders): un
@@ -744,7 +820,7 @@ namespace Gameplay
 
             ApplyMaterial(go,
                 isIso ? isoWallMaterial : wallMaterial,
-                isIso ? new Color(0.4f, 0.32f, 0.48f) : new Color(0.5f, 0.45f, 0.4f));
+                isIso ? new Color(0.32f, 0.29f, 0.26f) : new Color(0.5f, 0.45f, 0.4f));
         }
 
         private void BuildMarker(DungeonCell cell, Vector3 center, float cellSize, float wallHeight)
@@ -791,7 +867,7 @@ namespace Gameplay
                 // real (pseudo-3D, no un sprite chato) que gira sobre si misma para mirar siempre
                 // al jugador (ver BillboardY) -- se distingue de cualquier otro bloque de la
                 // mazmorra de un vistazo, no solo por el color.
-                BuildStairsIcon(center, scale * 1.4f, color, mat);
+                BuildStairsIcon(center, scale * 1.4f * 1.5f, color, mat); // +50% de tamano -- pedido puntual
             }
             else
             {
@@ -832,7 +908,8 @@ namespace Gameplay
         // volumen real -- no un sprite chato -- envuelta en BillboardY para que siempre presente
         // esa cara al jugador sin importar desde que pasillo se la mire. El mismo perfil sirve
         // para subir y para bajar: el color (cyan/naranja, igual que antes) sigue siendo lo que
-        // distingue cual es cual, exactamente como cuando ambas eran un cubo liso.
+        // distingue cual es cual, exactamente como cuando ambas eran un cubo liso. Sin inclinacion
+        // (se probo y se revirtio -- pedido puntual) y un 50% mas grande que la version original.
         private void BuildStairsIcon(Vector3 center, float scale, Color color, Material mat)
         {
             var root = new GameObject("StairsIcon");
@@ -840,18 +917,8 @@ namespace Gameplay
             root.transform.position = center;
             root.AddComponent<BillboardY>();
 
-            // Inclinacion fija hacia atras (una sola vez, no cambia frame a frame): BillboardY
-            // solo gira `root` en Y para mirar al jugador, asi que este tilt en un HIJO se queda
-            // fijo relativo al grupo. Sin esto solo se verian las caras frontales de los escalones
-            // (un grafico de barras) -- reclinandolo se alcanza a ver la TAPA de cada escalon, que
-            // es lo que de verdad lo hace leerse como una escalera (el mismo truco de sprite
-            // isometrico viejo: la camara "mira" siempre desde un angulo fijo, nunca de frente pura).
-            var tilt = new GameObject("Tilt");
-            tilt.transform.SetParent(root.transform, false);
-            tilt.transform.localRotation = Quaternion.Euler(30f, 0f, 0f);
-
             const int steps = 4;
-            float totalW = scale * 1.1f; // "ligeramente mas largo, que cubra mas del espacio" -- pedido puntual
+            float totalW = scale * 1.1f;
             float stepW = totalW / steps;
             float depth = scale * 0.3f;
             for (int i = 0; i < steps; i++)
@@ -859,7 +926,7 @@ namespace Gameplay
                 float stepH = scale * (0.2f + i * 0.18f);
                 var block = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 block.name = "StairStep";
-                block.transform.SetParent(tilt.transform, false);
+                block.transform.SetParent(root.transform, false);
                 float x = -totalW * 0.5f + stepW * (i + 0.5f);
                 block.transform.localPosition = new Vector3(x, stepH * 0.5f, 0);
                 block.transform.localScale = new Vector3(stepW, stepH, depth); // sin hueco entre escalones, silueta continua
