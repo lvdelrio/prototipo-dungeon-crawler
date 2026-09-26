@@ -132,6 +132,12 @@ namespace Gameplay
                         bool forceCleanFloor = cell.Type == CellType.StairsUp || cell.Type == CellType.StairsDown;
                         if (!isVisibleVoidHole) BuildFloorTile(center, cellSize, isIso, isBiome2, forceCleanFloor);
                         BuildCeilingTile(center, cellSize, wallHeight, isIso, isBiome2);
+
+                        // Telaranas en la cueva (pedido puntual, ver foto de referencia): no en
+                        // TODAS las celdas de la zona aislada, si no se ve repetitivo -- 30% de
+                        // chance por celda alcanza para que aparezcan salteadas.
+                        if (isIso && !isBiome2 && Random.value < 0.3f)
+                            BuildCobweb(center, cellSize, wallHeight);
                     }
 
                     // Pared: se construye una sola vez por borde compartido entre dos celdas reales
@@ -450,23 +456,54 @@ namespace Gameplay
             if (postCol != null) Destroy(postCol);
             ApplyMaterial(post, signpostWoodMaterial, new Color(0.32f, 0.2f, 0.12f));
 
+            const float boardW = 1.7f;
+            const float boardH = 0.95f;
+            const float boardDepth = 0.1f;
             var board = GameObject.CreatePrimitive(PrimitiveType.Cube);
             board.name = "SignpostBoard";
             board.transform.SetParent(root.transform, false);
             board.transform.localPosition = new Vector3(0, boardY, 0);
-            board.transform.localScale = new Vector3(1.15f, 0.55f, 0.07f);
+            board.transform.localScale = new Vector3(boardW, boardH, boardDepth);
             var boardCol = board.GetComponent<Collider>();
             if (boardCol != null) Destroy(boardCol);
             ApplyMaterial(board, signpostBoardMaterial, new Color(0.42f, 0.27f, 0.15f));
 
+            // Vetas de madera (pedido puntual: "que se parezca mas a madera"): tablones oscuros
+            // finitos superpuestos a la cara del cartel, mismo truco que las grietas de tierra.
+            BuildWoodGrain(root.transform, boardY, boardW, boardH, boardDepth);
+
             // UN solo texto (antes eran dos, uno de cada lado, y sin cull de backface se veian
             // los dos superpuestos/mezclados) -- ahora sabemos con certeza desde que lado lo va a
             // ver el jugador (root ya esta rotado hacia el), asi que alcanza con el lado de
-            // adelante.
-            BuildSignText(root.transform, new Vector3(0, boardY, 0.045f), text);
+            // adelante. Pegado casi a ras de la cara del tablon (mitad del grosor + un pelo), no a
+            // un 0.045 fijo -- y el texto ahora se reescala para entrar siempre en el tablon (ver
+            // BuildSignText): esas dos cosas juntas eran por que "no estaba sobre la superficie".
+            float textZ = boardDepth * 0.5f + 0.01f;
+            BuildSignText(root.transform, new Vector3(0, boardY, textZ), text, boardW * 0.92f, boardH * 0.8f);
         }
 
-        private void BuildSignText(Transform parent, Vector3 localPos, string text)
+        // Tablones finitos y oscuros superpuestos horizontalmente sobre la cara del cartel --
+        // rompe el color plano de un solo cubo marron y lo hace leer como madera de verdad, sin
+        // necesitar una textura importada (este proyecto no tiene ninguna).
+        private void BuildWoodGrain(Transform parent, float boardY, float boardW, float boardH, float boardDepth)
+        {
+            int planks = 3;
+            float plankH = boardH / planks;
+            for (int i = 0; i < planks; i++)
+            {
+                float y = boardY - boardH * 0.5f + plankH * (i + 0.5f);
+                var line = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                line.name = "WoodGrainLine";
+                line.transform.SetParent(parent, false);
+                line.transform.localPosition = new Vector3(0, y - plankH * 0.42f, 0);
+                line.transform.localScale = new Vector3(boardW * 0.98f, plankH * 0.08f, boardDepth * 1.05f);
+                var col = line.GetComponent<Collider>();
+                if (col != null) Destroy(col);
+                ApplyMaterial(line, null, new Color(0.24f, 0.14f, 0.07f));
+            }
+        }
+
+        private void BuildSignText(Transform parent, Vector3 localPos, string text, float maxWidth, float maxHeight)
         {
             var go = new GameObject("SignText");
             go.transform.SetParent(parent, false);
@@ -489,6 +526,19 @@ namespace Gameplay
             var textMat = new Material(SignTextMaterial());
             textMat.mainTexture = tm.font.material.mainTexture;
             renderer.material = textMat;
+
+            // Reescala el objeto entero para que el bloque de texto SIEMPRE entre en el tablon,
+            // sin importar signpostCharacterSize/signpostFontSize elegidos en el Inspector -- con
+            // texto de 2 lineas el bloque generado podia ser mas alto que el propio cartel y
+            // quedaba sobresaliendo por fuera de su superficie en vez de sentado sobre ella. Se usa
+            // el bounds del MESH (espacio local, no le afecta la rotacion del padre) en vez de
+            // renderer.bounds (mundo): el cartel puede estar rotado 90/180/270 en Y segun hacia
+            // donde mira, y eso mezclaria los ejes X/Z de un bounds en espacio de mundo.
+            var meshBounds = go.GetComponent<MeshFilter>().sharedMesh.bounds.size;
+            float scaleX = meshBounds.x > 0.0001f ? maxWidth / meshBounds.x : 1f;
+            float scaleY = meshBounds.y > 0.0001f ? maxHeight / meshBounds.y : 1f;
+            float fit = Mathf.Min(1f, scaleX, scaleY); // solo achica si hace falta, nunca agranda de mas
+            go.transform.localScale *= fit;
         }
 
         private static Material _signTextMaterial;
@@ -719,6 +769,65 @@ namespace Gameplay
                 float shade = Random.Range(0.8f, 1.2f);
                 ApplyMaterial(rock, null, new Color(0.3f * shade, 0.28f * shade, 0.26f * shade));
             }
+        }
+
+        // Telarana en una esquina de la cueva (pedido puntual, ver foto de referencia): un abanico
+        // de hebras que radian desde un punto de anclaje arriba (donde se juntarian pared y techo)
+        // mas 2 "anillos" que las cruzan a distintas fracciones del radio -- el mismo patron
+        // radial+concentrico de una telarana real, aproximado con primitivas finitas (hebras =
+        // cubos finitos y largos, no hay curvas).
+        private void BuildCobweb(Vector3 center, float cellSize, float wallHeight)
+        {
+            float cornerX = (Random.value < 0.5f ? -1f : 1f) * cellSize * 0.48f;
+            float cornerZ = (Random.value < 0.5f ? -1f : 1f) * cellSize * 0.48f;
+            Vector3 anchor = center + new Vector3(cornerX, wallHeight * 0.88f, cornerZ);
+
+            var root = new GameObject("Cobweb");
+            root.transform.SetParent(_root.transform, false);
+            root.transform.position = anchor;
+
+            int spokes = Random.Range(5, 7);
+            float spanAngle = 110f;
+            float baseAngle = Random.Range(0f, 360f);
+            float radius = cellSize * Random.Range(0.5f, 0.75f);
+
+            var tips = new Vector3[spokes];
+            for (int i = 0; i < spokes; i++)
+            {
+                float t = spokes <= 1 ? 0.5f : (float)i / (spokes - 1);
+                float angle = baseAngle + (t - 0.5f) * spanAngle;
+                float elevation = Mathf.Lerp(-30f, -75f, t); // apunta hacia abajo/afuera, en abanico
+                Vector3 dir = Quaternion.Euler(elevation, angle, 0f) * Vector3.forward;
+                tips[i] = dir * radius;
+                BuildCobwebStrand(root.transform, Vector3.zero, tips[i]);
+            }
+
+            // Anillos: conectan hebras vecinas a mitad y cerca de la punta del radio, como los
+            // hilos concentricos de una telarana real.
+            for (int ring = 0; ring < 2; ring++)
+            {
+                float frac = ring == 0 ? 0.45f : 0.8f;
+                for (int i = 0; i < spokes - 1; i++)
+                    BuildCobwebStrand(root.transform, tips[i] * frac, tips[i + 1] * frac);
+            }
+        }
+
+        private void BuildCobwebStrand(Transform parent, Vector3 a, Vector3 b)
+        {
+            var strand = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            strand.name = "CobwebStrand";
+            strand.transform.SetParent(parent, false);
+            Vector3 delta = b - a;
+            float length = delta.magnitude;
+            if (length < 0.0001f) return;
+            strand.transform.localPosition = (a + b) * 0.5f;
+            strand.transform.localRotation = Quaternion.LookRotation(delta);
+            strand.transform.localScale = new Vector3(0.015f, 0.015f, length);
+
+            var col = strand.GetComponent<Collider>();
+            if (col != null) Destroy(col);
+
+            ApplyMaterial(strand, null, new Color(0.82f, 0.8f, 0.75f));
         }
 
         private void BuildCeilingTile(Vector3 center, float cellSize, float wallHeight, bool isIso, bool isBiome2)

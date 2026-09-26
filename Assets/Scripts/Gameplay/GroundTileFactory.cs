@@ -328,12 +328,14 @@ namespace Gameplay
         private static void BuildEdgeTeeth(Transform parent, Material mat, float cellSize, Color tint, bool alongIsX, float outwardSign)
         {
             float half = cellSize * 0.5f;
-            int teeth = Random.Range(2, 4);
+            int teeth = Random.Range(3, 5);
             for (int i = 0; i < teeth; i++)
             {
-                float along = (Random.value - 0.5f) * cellSize * 0.7f;
-                float alongSize = cellSize * Random.Range(0.14f, 0.24f);
-                float reach = cellSize * Random.Range(0.03f, 0.12f); // cuanto sobresale del borde exacto
+                float along = (Random.value - 0.5f) * cellSize * 0.8f;
+                float alongSize = cellSize * Random.Range(0.16f, 0.3f);
+                // Mordidas bien marcadas (pedido puntual: el borde tiene que leerse zigzagueante
+                // de un vistazo, no una textura sutil) -- antes llegaba a 0.12, muy poco notorio.
+                float reach = cellSize * Random.Range(0.08f, 0.3f); // cuanto sobresale del borde exacto
 
                 var tooth = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 tooth.name = "EdgeTooth";
