@@ -232,11 +232,21 @@ namespace Gameplay
                 new Keyframe(0.55f, 0f),
                 new Keyframe(1f, 0f));
 
+            // Los 3 ejes de velocityOverLifetime tienen que estar en el MISMO modo de curva --
+            // mezclar TwoConstants (x/z) con Curve (y, para la caida que frena) tira "Particle
+            // Velocity curves must all be in the same mode". Se usa TwoCurves en los 3: para x/z
+            // (deriva lateral al azar) las dos curvas son planas en -1/+1, multiplicadas por
+            // 0.08 -- funcionalmente igual al TwoConstants(-0.08, 0.08) de antes. Para y, min=max=
+            // fallCurve (mismo valor de los dos lados => sin aleatoriedad extra, se comporta como
+            // Curve puro).
+            var flatMin = AnimationCurve.Constant(0f, 1f, -1f);
+            var flatMax = AnimationCurve.Constant(0f, 1f, 1f);
+
             var vel = ps.velocityOverLifetime;
             vel.enabled = true;
-            vel.x = new ParticleSystem.MinMaxCurve(-0.08f, 0.08f);
-            vel.y = new ParticleSystem.MinMaxCurve(-0.85f, fallCurve);
-            vel.z = new ParticleSystem.MinMaxCurve(-0.08f, 0.08f);
+            vel.x = new ParticleSystem.MinMaxCurve(0.08f, flatMin, flatMax);
+            vel.y = new ParticleSystem.MinMaxCurve(-0.85f, fallCurve, fallCurve);
+            vel.z = new ParticleSystem.MinMaxCurve(0.08f, flatMin, flatMax);
 
             var noise = ps.noise;
             noise.enabled = true;
