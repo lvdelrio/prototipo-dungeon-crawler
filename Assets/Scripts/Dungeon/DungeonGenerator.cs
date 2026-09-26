@@ -628,6 +628,19 @@ namespace DungeonGen
             // sellada de los DOS lados y ya no hay forma de encontrarla ni con el Perforador.
             if (floor.BiomeGateApproachPos.HasValue) protectedCells.Add(floor.BiomeGateApproachPos.Value);
 
+            // Pedido puntual: la zona aislada del piso que aloja la escalera al Bioma de Cuevas
+            // (ver PlaceCaveBiomeExit) tiene que sentirse como una mini-cueva COMPLETA que ocupa
+            // todo su cuadrante -- no un laberinto ralo con agujeros de roca solida como el resto
+            // del piso. Se protege ENTERA de la poda (nunca se conviernte en Void), a diferencia
+            // de la zona aislada "comun" (sin escalera, en cualquier otro piso), que sigue
+            // podandose igual que siempre.
+            if (floor.CaveBiomeExitPos.HasValue)
+            {
+                for (int x = floor.IsoMinX; x <= floor.IsoMaxX; x++)
+                    for (int y = floor.IsoMinY; y <= floor.IsoMaxY; y++)
+                        protectedCells.Add((x, y));
+            }
+
             int totalNormal = 0;
             for (int x = 0; x < floor.Width; x++)
                 for (int y = 0; y < floor.Height; y++)
