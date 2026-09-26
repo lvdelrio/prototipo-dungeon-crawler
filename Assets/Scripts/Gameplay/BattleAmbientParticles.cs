@@ -61,6 +61,9 @@ namespace Gameplay
                 {
                     BattleStageController.CombatZoneTheme.Cave => (new Color(0.55f, 0.5f, 0.42f, 0.5f), new Color(0.35f, 0.32f, 0.28f, 0.09f)),
                     BattleStageController.CombatZoneTheme.SpaceCave => (new Color(0.55f, 0.65f, 0.9f, 0.5f), new Color(0.3f, 0.35f, 0.55f, 0.09f)),
+                    // Bioma de Cuevas: polvo de piedra mas claro/tierra que la cueva chica del
+                    // bosque (Cave arriba), sin el tinte azulado del espacio.
+                    BattleStageController.CombatZoneTheme.RockCave => (new Color(0.6f, 0.55f, 0.48f, 0.5f), new Color(0.4f, 0.37f, 0.32f, 0.09f)),
                     _ => (new Color(0.78f, 0.85f, 0.7f, 0.5f), new Color(0.5f, 0.58f, 0.45f, 0.09f)), // Forest: polvo verdoso
                 };
 

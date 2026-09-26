@@ -239,5 +239,98 @@ namespace Combat
             }
             return list;
         }
+
+        // ---------- Bioma de Cuevas ----------
+        // Tercera zona, alcanzable por la escalera al fondo de la zona aislada de CUALQUIER piso
+        // del bioma raiz (ver Dungeon/DungeonGenerator.PlaceCaveBiomeExit y Gameplay/
+        // DungeonManager.EnterCaveBiomeExit): una cueva de roca comun, sin nada sobrenatural de por
+        // medio -- la debilidad dominante es Hielo+Contundente (sangre fria o de piedra, un golpe
+        // seco o el frio calan mejor que el filo o el rayo), salvo la excepcion deliberada de
+        // CreateRockGolem (mismo patron pedagogico que CommonWeaknesses/CaveWeaknesses arriba). Las
+        // 3 zonas cubren entre las 3 los 6 elementos sin pisarse: Bosque Fuego+Corte, Bioma 2
+        // Rayo+Perforante, Cuevas Hielo+Contundente.
+        private static readonly Element[] RockCaveWeaknesses = { Element.Ice, Element.Strike };
+
+        public static EnemyStats CreateCaveBat(int suffix, int floorIndex = 0)
+        {
+            return new EnemyStats
+            {
+                Name = $"Murciélago Cavernario {suffix}", MaxHP = 38, HP = 38,
+                Attack = ScaledAttack(13, floorIndex), Defense = 2, Speed = 8,
+                AttackElement = Element.Slash,
+                Weaknesses = RockCaveWeaknesses, Resistance = Element.Volt,
+                MaxPoise = 26, Poise = 26,
+            };
+        }
+
+        public static EnemyStats CreateCaveSpider(int suffix, int floorIndex = 0)
+        {
+            return new EnemyStats
+            {
+                Name = $"Araña de las Grietas {suffix}", MaxHP = 46, HP = 46,
+                Attack = ScaledAttack(12, floorIndex), Defense = 3, Speed = 6,
+                AttackElement = Element.Pierce,
+                Weaknesses = RockCaveWeaknesses, Resistance = Element.Fire,
+                MaxPoise = 30, Poise = 30,
+            };
+        }
+
+        // Excepcion deliberada (mismo rol que CreateBeetle/CreateQuartzCrab): la piedra que lo
+        // forma no le teme ni al frio ni a un golpe contundente (total, ya ES piedra), pero
+        // perforarlo justo en una grieta lo raja.
+        public static EnemyStats CreateRockGolem(int suffix, int floorIndex = 0)
+        {
+            return new EnemyStats
+            {
+                Name = $"Gólem de Roca {suffix}", MaxHP = 65, HP = 65,
+                Attack = ScaledAttack(11, floorIndex), Defense = 8, Speed = 2,
+                AttackElement = Element.Strike,
+                Weaknesses = new[] { Element.Pierce }, Resistance = Element.Ice,
+                MaxPoise = 55, Poise = 55,
+            };
+        }
+
+        public static EnemyStats CreateBlindMole(int suffix, int floorIndex = 0)
+        {
+            return new EnemyStats
+            {
+                Name = $"Topo Ciego {suffix}", MaxHP = 50, HP = 50,
+                Attack = ScaledAttack(14, floorIndex), Defense = 4, Speed = 5,
+                AttackElement = Element.Strike,
+                Weaknesses = RockCaveWeaknesses, Resistance = Element.Pierce,
+                MaxPoise = 34, Poise = 34,
+            };
+        }
+
+        // Gorlok sigue el mismo patron que CreateBoss/CreateKadulu (confirma la debilidad
+        // dominante de SU zona -- Hielo -- en vez de una sorpresa nueva) con HP/ataque en la misma
+        // escala que los otros 2 jefes.
+        public static EnemyStats CreateCaveBoss(int floorIndex = 0)
+        {
+            return new EnemyStats
+            {
+                Name = "Gorlok, Corazón de la Montaña", MaxHP = 240, HP = 240,
+                Attack = ScaledAttack(20, floorIndex), Defense = 9, Speed = 3,
+                AttackElement = Element.Strike,
+                Weaknesses = new[] { Element.Ice }, Resistance = Element.Strike,
+                MaxPoise = 95, Poise = 95,
+                PoiseWeaknessResistance = 1.3f,
+            };
+        }
+
+        public static List<EnemyStats> CreateRockCaveEncounter(Random rng, int floorIndex = 0)
+        {
+            int count = RollEncounterSize(rng, floorIndex);
+            var list = new List<EnemyStats>();
+            for (int i = 0; i < count; i++)
+            {
+                int roll = rng.Next(4);
+                if (roll == 0) list.Add(CreateCaveBat(i + 1, floorIndex));
+                else if (roll == 1) list.Add(CreateCaveSpider(i + 1, floorIndex));
+                else if (roll == 2) list.Add(CreateRockGolem(i + 1, floorIndex));
+                else list.Add(CreateBlindMole(i + 1, floorIndex));
+            }
+            return list;
+        }
     }
 }

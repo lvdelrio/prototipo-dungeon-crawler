@@ -22,9 +22,16 @@ namespace DungeonGen
             var floors = new List<DungeonFloor>();
             int[] loreCorridorFloors = biome == 0 ? PickLoreCorridorFloors(floorCount) : Array.Empty<int>();
 
+            // Pedido puntual: la mini-cueva (zona aislada de tamano de cuadrante + la escalera al
+            // Bioma de cuevas, ver PlaceCaveBiomeExit) ya no esta clavada siempre en el piso 0 --
+            // se sortea UNA vez por run que piso del bioma raiz la aloja (nunca mas de un piso a la
+            // vez). La Puerta Fria (PlaceBiomeGate, mas abajo) NO se mueve de aca: sigue siendo
+            // siempre el piso 0, es un mecanismo aparte que el jugador pidio no tocar.
+            int caveExitFloorIndex = biome == 0 ? rng.Next(floorCount) : -1;
+
             for (int i = 0; i < floorCount; i++)
             {
-                var floor = GenerateFloor(width, height, indexOffset + i, rng);
+                var floor = GenerateFloor(width, height, indexOffset + i, rng, isCaveExitFloor: i == caveExitFloorIndex);
                 floor.Biome = biome;
 
                 // Tiene que ir ANTES de cualquier sala especial (jefe/trampas/candado/cofre/lore):
@@ -87,14 +94,18 @@ namespace DungeonGen
                     log.Add(gateAdded
                         ? $"Piso {i}: Puerta Fria sellada en {floor.BiomeGatePos} (perforable desde {floor.BiomeGateApproachPos})."
                         : $"Piso {i}: sin punto muerto libre para la Puerta Fria (mapa demasiado chico/denso).");
+                }
 
-                    // Mecanismo APARTE de la Puerta Fria de arriba (mismo destino, Bioma 2, pero sin
-                    // secreto): una escalera comun al fondo de la zona aislada del piso 0 -- ver
-                    // PlaceCaveBiomeExit.
+                // Mecanismo APARTE de la Puerta Fria de arriba (mismo espiritu, otro bioma de
+                // destino -- el Bioma de Cuevas -- pero sin secreto): una escalera comun al fondo
+                // de la zona aislada. Independiente del piso 0: puede tocarle a cualquier piso del
+                // bioma raiz (ver caveExitFloorIndex, sorteado arriba una sola vez por run).
+                if (i == caveExitFloorIndex && biome == 0)
+                {
                     bool caveExitAdded = PlaceCaveBiomeExit(floor);
                     log.Add(caveExitAdded
-                        ? $"Piso {i}: escalera al Bioma 2 al fondo de la zona aislada en {floor.CaveBiomeExitPos}."
-                        : $"Piso {i}: sin celda libre al fondo de la zona aislada para la escalera al Bioma 2.");
+                        ? $"Piso {i}: escalera al Bioma de Cuevas al fondo de la zona aislada en {floor.CaveBiomeExitPos}."
+                        : $"Piso {i}: sin celda libre al fondo de la zona aislada para la escalera al Bioma de Cuevas.");
                 }
 
                 for (int lc = 0; lc < loreCorridorFloors.Length; lc++)
@@ -172,15 +183,18 @@ namespace DungeonGen
 
         // ---------- Single floor generation ----------
 
-        public DungeonFloor GenerateFloor(int width, int height, int index, Random rng)
+        public DungeonFloor GenerateFloor(int width, int height, int index, Random rng, bool isCaveExitFloor = false)
         {
             var floor = new DungeonFloor(width, height, index);
 
             // 1. Pick isolated zone rectangle (~20-32% of area), anchored at a random corner.
-            // Piso 0 (pedido puntual: "que se divida en 4 cuadrantes y uno sea la zona de cueva"):
-            // rango angosto a ~1/4 del area en vez del 20-32% variable de siempre, para que sea un
-            // cuadrante de verdad. El resto de los pisos no cambia.
-            float frac = index == 0
+            // isCaveExitFloor (pedido puntual: "que se divida en 4 cuadrantes y uno sea la zona de
+            // cueva", despues corregido a "que pueda ser cualquier piso, no solo el 0"): rango
+            // angosto a ~1/4 del area en vez del 20-32% variable de siempre, para que sea un
+            // cuadrante de verdad -- solo en el piso que le toco alojar la escalera al Bioma de
+            // Cuevas esta run (ver caveExitFloorIndex en GenerateDungeon). El resto de los pisos no
+            // cambia.
+            float frac = isCaveExitFloor
                 ? 0.23f + (float)rng.NextDouble() * 0.04f
                 : 0.20f + (float)rng.NextDouble() * 0.12f;
             int zoneW = Math.Max(2, (int)Math.Round(width * Math.Sqrt(frac)));

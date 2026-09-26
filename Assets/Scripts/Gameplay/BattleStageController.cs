@@ -173,12 +173,14 @@ namespace Gameplay
         // combate) -- pedido puntual: "el fondo del combate tiene que hacer sentido con la zona
         // que se esta combatiendo", antes siempre era el mismo fondo generico sin importar donde
         // pasara el encuentro.
-        public enum CombatZoneTheme { Forest, Cave, SpaceCave }
+        public enum CombatZoneTheme { Forest, Cave, SpaceCave, RockCave }
 
         private CombatZoneTheme DetermineZoneTheme()
         {
             if (dungeonManager == null || dungeonManager.CurrentFloor == null) return CombatZoneTheme.Forest;
-            if (dungeonManager.CurrentFloor.Biome != 0) return CombatZoneTheme.SpaceCave;
+            int biome = dungeonManager.CurrentFloor.Biome;
+            if (biome == 1) return CombatZoneTheme.SpaceCave;
+            if (biome == 2) return CombatZoneTheme.RockCave;
             if (dungeonManager.IsPlayerInIsolatedZone) return CombatZoneTheme.Cave;
             return CombatZoneTheme.Forest;
         }
@@ -201,6 +203,7 @@ namespace Gameplay
                 {
                     CombatZoneTheme.Cave => new Color(0.05f, 0.045f, 0.04f),
                     CombatZoneTheme.SpaceCave => new Color(0.02f, 0.02f, 0.05f),
+                    CombatZoneTheme.RockCave => new Color(0.06f, 0.05f, 0.045f), // roca comun: un poco mas clara/tierra que la cueva chica del bosque
                     _ => new Color(0.03f, 0.05f, 0.035f), // Forest: un verde muy oscuro, no el gris neutro de antes
                 };
             }

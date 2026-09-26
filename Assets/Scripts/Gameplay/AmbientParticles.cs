@@ -380,13 +380,15 @@ namespace Gameplay
                 }
             }
 
-            // Estrella fugaz: activa en CUALQUIER piso del Bioma 2 (todo el bioma comparte el techo
-            // Custom/StarrySky), no solo cerca de algo puntual como la tormenta de la sala de jefe.
-            bool inBiome2 = floor != null && floor.Biome != 0;
-            if (inBiome2 != _lastInBiome2)
+            // Estrella fugaz: activa en CUALQUIER piso del Bioma 2 espacial (Biome==1, todo el
+            // bioma comparte el techo Custom/StarrySky), no solo cerca de algo puntual como la
+            // tormenta de la sala de jefe. El Bioma de Cuevas (Biome==2, roca comun, sin cielo) NO
+            // la activa -- son biomas distintos con biome!=0 en comun, no el mismo caso.
+            bool inSpaceBiome = floor != null && floor.Biome == 1;
+            if (inSpaceBiome != _lastInBiome2)
             {
-                _lastInBiome2 = inBiome2;
-                if (inBiome2)
+                _lastInBiome2 = inSpaceBiome;
+                if (inSpaceBiome)
                 {
                     if (_shootingStarRoutine == null) _shootingStarRoutine = StartCoroutine(ShootingStarRoutine());
                 }
@@ -398,15 +400,16 @@ namespace Gameplay
                 }
             }
 
-            // Hojas y rayos de luz SOLO en el bosque de verdad: ni en el Bioma 2 (cueva
-            // intergalactica, cielo estrellado) NI en la zona aislada re-skineada como cueva de
-            // roca (ver DungeonLevelBuilder.BuildRockyFloorTile) -- pedido puntual, hojas cayendo
-            // adentro de una cueva no pega. A diferencia del Bioma 2 (que es fijo por piso entero),
-            // la zona aislada es por CELDA, asi que esto se re-evalua cada frame, no solo cuando
-            // cambia inBiome2.
-            bool inCave = !inBiome2 && floor != null && floor.InBounds(player.CellX, player.CellY)
+            // Hojas y rayos de luz SOLO en el bosque de verdad: ni en el Bioma 2 espacial (cielo
+            // estrellado) NI en el Bioma de Cuevas (roca comun, un piso entero) NI en la zona
+            // aislada del bosque re-skineada como cueva (ver DungeonLevelBuilder.
+            // BuildRockyFloorTile) -- pedido puntual, hojas cayendo adentro de una cueva no pega. A
+            // diferencia de los biomas (fijos por piso entero), la zona aislada es por CELDA, asi
+            // que esto se re-evalua cada frame, no solo cuando cambia de bioma.
+            bool inRockCaveBiome = floor != null && floor.Biome == 2;
+            bool inCave = !inSpaceBiome && !inRockCaveBiome && floor != null && floor.InBounds(player.CellX, player.CellY)
                 && floor.Cells[player.CellX, player.CellY].IsIsolatedZone;
-            bool suppressForestAmbience = inBiome2 || inCave;
+            bool suppressForestAmbience = inSpaceBiome || inRockCaveBiome || inCave;
             if (suppressForestAmbience != _lastSuppressForestAmbience)
             {
                 _lastSuppressForestAmbience = suppressForestAmbience;

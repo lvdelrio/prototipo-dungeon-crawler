@@ -62,11 +62,13 @@ namespace Gameplay
         public Material isoCeilingMaterial;
         public Material isoWallMaterial;
 
-        // Bioma 2 (Cueva Intergalactica, DungeonFloor.Biome != 0): techo de cielo estrellado
-        // (Custom/StarrySky) y piso con el reflejo tenue de esas mismas estrellas (Custom/
-        // StarlitFloor, ver el shader para el porque comparten el mismo campo de estrellas). Pisa
-        // por encima del tinte de zona aislada: un piso de Bioma 2 siempre se ve como Bioma 2, sea
-        // o no ademas zona aislada.
+        // Bioma 2 (Cueva Intergalactica, DungeonFloor.Biome == 1 especificamente -- el Bioma de
+        // Cuevas nuevo, Biome == 2, reusa isoFloorMaterial/isoCeilingMaterial/isoWallMaterial de
+        // arriba en vez de un cuarto set de campos, ver BuildFloorTile/BuildCeilingTile/
+        // BuildBossRoomSlab): techo de cielo estrellado (Custom/StarrySky) y piso con el reflejo
+        // tenue de esas mismas estrellas (Custom/StarlitFloor, ver el shader para el porque
+        // comparten el mismo campo de estrellas). Pisa por encima del tinte de zona aislada: un
+        // piso de Bioma 2 siempre se ve como Bioma 2, sea o no ademas zona aislada.
         public Material biome2CeilingMaterial;
         public Material biome2FloorMaterial;
 
@@ -119,7 +121,14 @@ namespace Gameplay
                     }
 
                     bool isIso = cell.IsIsolatedZone;
-                    bool isBiome2 = floor.Biome != 0;
+                    bool isRockCaveBiome = floor.Biome == 2;
+                    // El Bioma de Cuevas (nuevo) reusa TAL CUAL el look rocoso ya construido para
+                    // la zona aislada (piso/techo/pared, telaranas, estalactitas) en vez de armar
+                    // un tercer set de materiales desde cero -- toda celda de ese bioma se trata
+                    // como si fuera zona aislada a efectos puramente visuales (esto NO toca
+                    // cell.IsIsolatedZone, que sigue siendo el flag real de generacion).
+                    bool useCaveLook = isIso || isRockCaveBiome;
+                    bool isBiome2 = floor.Biome == 1; // de aca en mas, especificamente "espacial" (antes "!= 0" tambien agarraba el bioma nuevo)
                     // Goteras falso (ver DungeonManager.OnPlayerEnterCell): ahi de verdad no hay
                     // piso -- pisarlo te hace caer al piso de abajo, asi que tiene que VERSE como un
                     // hueco real, no como piso normal con una trampa escondida debajo.
@@ -130,16 +139,15 @@ namespace Gameplay
                         // GrassRockDirt saliendo justo debajo del icono pseudo-3D de la escalera
                         // (ver BuildStairsIcon) se veia amontonado con el.
                         bool forceCleanFloor = cell.Type == CellType.StairsUp || cell.Type == CellType.StairsDown;
-                        if (!isVisibleVoidHole) BuildFloorTile(center, cellSize, isIso, isBiome2, forceCleanFloor);
-                        BuildCeilingTile(center, cellSize, wallHeight, isIso, isBiome2);
+                        if (!isVisibleVoidHole) BuildFloorTile(center, cellSize, useCaveLook, isBiome2, forceCleanFloor);
+                        BuildCeilingTile(center, cellSize, wallHeight, useCaveLook, isBiome2);
 
-                        // Telaranas en la cueva (pedido puntual, ver foto de referencia): no en
-                        // TODAS las celdas de la zona aislada, si no se ve repetitivo -- 30% de
-                        // chance por celda alcanza para que aparezcan salteadas. Ademas, de vez en
-                        // cuando (8%) una GRANDE (pedido puntual: en la foto de referencia las
-                        // telaranas eran mucho mas grandes que lo que habia) y estalactitas
-                        // colgando del techo (25%, independiente de las telaranas).
-                        if (isIso && !isBiome2)
+                        // Telaranas y estalactitas (pedido puntual, ver foto de referencia): en toda
+                        // celda con look de cueva (zona aislada del bosque O el Bioma de Cuevas
+                        // entero) -- 30% de chance de una chica, 8% de una GRANDE ademas (en la foto
+                        // de referencia eran mucho mas grandes que lo que habia), 25% de estalactita
+                        // colgando del techo, todo independiente entre si.
+                        if (useCaveLook && !isBiome2)
                         {
                             if (Random.value < 0.3f) BuildCobweb(center, cellSize, wallHeight, big: false);
                             if (Random.value < 0.08f) BuildCobweb(center, cellSize, wallHeight, big: true);
@@ -159,14 +167,14 @@ namespace Gameplay
                         bool outOfBounds = !floor.InBounds(nx, ny);
                         if (outOfBounds)
                         {
-                            BuildWall(center, dir, cellSize, wallHeight, wallThickness, isIso);
+                            BuildWall(center, dir, cellSize, wallHeight, wallThickness, useCaveLook);
                             continue;
                         }
                         if (floor.Cells[nx, ny].Type == CellType.Void) continue;
 
                         bool isPrimaryDir = dir == Direction.North || dir == Direction.East;
                         if (isPrimaryDir)
-                            BuildWall(center, dir, cellSize, wallHeight, wallThickness, isIso);
+                            BuildWall(center, dir, cellSize, wallHeight, wallThickness, useCaveLook);
                     }
 
                     BuildMarker(cell, center, cellSize, wallHeight);
@@ -931,15 +939,18 @@ namespace Gameplay
             float sizeZ = (maxCenter.z - minCenter.z) + cellSize;
             Vector3 roomCenter = new Vector3((minCenter.x + maxCenter.x) / 2f, 0f, (minCenter.z + maxCenter.z) / 2f);
 
-            bool isBiome2 = floor.Biome != 0;
+            bool isSpaceBiome = floor.Biome == 1;
+            bool isRockCaveBiome = floor.Biome == 2;
 
             var floorGo = GameObject.CreatePrimitive(PrimitiveType.Cube);
             floorGo.name = "BossRoomFloor";
             floorGo.transform.SetParent(_root.transform, false);
             floorGo.transform.position = roomCenter + new Vector3(0, -0.1f, 0);
             floorGo.transform.localScale = new Vector3(sizeX, 0.2f, sizeZ);
-            if (isBiome2)
+            if (isSpaceBiome)
                 ApplyMaterial(floorGo, biome2FloorMaterial, new Color(0.05f, 0.05f, 0.08f));
+            else if (isRockCaveBiome)
+                ApplyMaterial(floorGo, isoFloorMaterial, new Color(0.24f, 0.22f, 0.20f));
             else
                 ApplyMaterial(floorGo, bossRoomFloorMaterial, new Color(0.45f, 0.14f, 0.14f));
 
@@ -948,8 +959,10 @@ namespace Gameplay
             ceilGo.transform.SetParent(_root.transform, false);
             ceilGo.transform.position = roomCenter + new Vector3(0, wallHeight + 0.1f, 0);
             ceilGo.transform.localScale = new Vector3(sizeX, 0.2f, sizeZ);
-            if (isBiome2)
+            if (isSpaceBiome)
                 ApplyMaterial(ceilGo, biome2CeilingMaterial, new Color(0.02f, 0.02f, 0.07f));
+            else if (isRockCaveBiome)
+                ApplyMaterial(ceilGo, isoCeilingMaterial, new Color(0.08f, 0.07f, 0.06f));
             else
                 ApplyMaterial(ceilGo, bossRoomCeilingMaterial, new Color(0.2f, 0.08f, 0.08f));
         }

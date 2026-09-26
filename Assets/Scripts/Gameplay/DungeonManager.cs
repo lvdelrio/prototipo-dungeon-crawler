@@ -54,10 +54,11 @@ namespace Gameplay
         private TrapDisparadorController _activeTrapDisparador;
         private int _activeTrapDisparadorFloorIndex = -1;
 
-        // Indice en _floors del PRIMER piso del Bioma 2 (Cueva Intergaláctica, ver
-        // GenerateAndEnterDungeon -- el bioma tiene varios pisos propios, este es solo el punto de
-        // entrada/salida), -1 si todavia no se genero ninguno para esta run.
-        private int _biomeGateFloorIndex = -1;
+        // Indice en _floors del PRIMER piso de cada bioma secundario (clave = DungeonFloor.Biome:
+        // 1 = Bioma 2/Cueva Intergalactica, 2 = Bioma de Cuevas, ver GenerateAndEnterDungeon --
+        // cada uno tiene varios pisos propios, esto es solo el punto de entrada/salida). Generico
+        // por diseño: agregar un cuarto bioma no pisa el estado de los anteriores.
+        private readonly Dictionary<int, int> _biomeEntryFloorIndex = new Dictionary<int, int>();
 
         private MetaProgress _meta;
         private int _deepestFloorReachedThisRun;
@@ -147,6 +148,10 @@ namespace Gameplay
         // Bioma 2 es siempre este mismo tamano, no algo que se ajuste por partida.
         private const int Biome2FloorCount = 2;
 
+        // Mismo criterio para el Bioma de Cuevas (Biome id 2 -- ver CombatManager.StartEncounter y
+        // DungeonLevelBuilder para el resto de las diferencias visuales/de fauna).
+        private const int CaveBiomeFloorCount = 2;
+
         private void GenerateAndEnterDungeon(int seed)
         {
             _floors = _generator.GenerateDungeon(
@@ -183,7 +188,28 @@ namespace Gameplay
             foreach (var line in biomeLog) Debug.Log(line);
 
             _floors.AddRange(biomeFloors);
-            _biomeGateFloorIndex = biomeFloors[0].Index;
+            _biomeEntryFloorIndex.Clear();
+            _biomeEntryFloorIndex[1] = biomeFloors[0].Index;
+
+            // Bioma de Cuevas (Biome id 2): mismo patron que el Bioma 2 de arriba -- una mazmorra
+            // COMPLETA aparte, mismo motor, apendiada a _floors. Se llega desde CUALQUIER piso del
+            // Bioma 1 (ver DungeonGenerator.PlaceCaveBiomeExit / CellType.CaveBiomeExit), nunca por
+            // escalera normal.
+            var caveBiomeFloors = _generator.GenerateDungeon(
+                CaveBiomeFloorCount, settings.size, settings.size, seed ^ 0xCAFE5EED, out var caveBiomeLog,
+                stairPairsPerFloor: settings.stairPairsPerFloor,
+                bossFloorStart: CaveBiomeFloorCount - 1,
+                bossFloorInterval: 1,
+                voidFraction: settings.voidFraction,
+                dangerValueMin: settings.dangerValueMin,
+                dangerValueMax: settings.dangerValueMax,
+                loreIdPool: BuildLorePool(),
+                indexOffset: _floors.Count,
+                biome: 2);
+            foreach (var line in caveBiomeLog) Debug.Log(line);
+
+            _floors.AddRange(caveBiomeFloors);
+            _biomeEntryFloorIndex[2] = caveBiomeFloors[0].Index;
 
             _bossDefeatedFloors.Clear();
             _deepestFloorReachedThisRun = 0;
@@ -447,12 +473,15 @@ namespace Gameplay
                     message = "Una escalera de piedra baja hacia la oscuridad. Presiona Espacio para descender.";
                     break;
                 case CellType.Start:
-                    // Solo el Start del PRIMER piso del Bioma 2 es la vuelta a la Puerta Fria -- el
-                    // resto de sus pisos (ahora el bioma tiene varios, ver GenerateAndEnterDungeon)
-                    // tambien tienen su propio Start (todo piso lo tiene, es de donde arrancarias si
-                    // entraras por ahi), pero ese es solo un marcador normal, no una salida.
-                    if (CurrentFloor.Biome != 0 && _currentFloorIndex == _biomeGateFloorIndex)
-                        message = "La Puerta Fría, del otro lado. Presiona Espacio para volver.";
+                    // Solo el Start del PRIMER piso de CADA bioma secundario es la vuelta a su
+                    // entrada -- el resto de sus pisos (todo bioma tiene varios, ver
+                    // GenerateAndEnterDungeon) tambien tienen su propio Start (todo piso lo tiene,
+                    // es de donde arrancarias si entraras por ahi), pero ese es solo un marcador
+                    // normal, no una salida.
+                    if (CurrentFloor.Biome != 0 && IsBiomeEntryFloor(_currentFloorIndex, CurrentFloor.Biome))
+                        message = CurrentFloor.Biome == 1
+                            ? "La Puerta Fría, del otro lado. Presiona Espacio para volver."
+                            : "La escalera de piedra, del otro lado. Presiona Espacio para volver.";
                     break;
             }
             if (message != null && hud != null) hud.SetLastMessage(message);
@@ -840,66 +869,78 @@ namespace Gameplay
             {
                 EnterCaveBiomeExit();
             }
-            else if (cell.Type == CellType.Start && CurrentFloor.Biome != 0 && _currentFloorIndex == _biomeGateFloorIndex)
+            else if (cell.Type == CellType.Start && CurrentFloor.Biome != 0 && IsBiomeEntryFloor(_currentFloorIndex, CurrentFloor.Biome))
             {
-                ReturnFromBiome2();
+                ReturnFromSecondaryBiome();
             }
         }
 
-        // Dos entradas DISTINTAS al mismo Bioma 2 (ver DungeonGenerator.PlaceBiomeGate y
-        // PlaceCaveBiomeExit): la Puerta Fria (secreta, sellada, perforada) y la escalera al fondo
-        // de la zona aislada (comun, sin secreto). Comparten la mazmorra de destino, asi que se
-        // guarda por CUAL se entro (_biome2ReturnPos) para que la vuelta te deje exactamente en esa
-        // misma celda del piso 0, sea cual sea la que uses.
-        private (int x, int y)? _biome2ReturnPos;
+        // true si floorIndex es el PRIMER piso (el punto de entrada/salida) del bioma secundario
+        // dado -- generico para cualquier cantidad de biomas ademas del raiz (0).
+        private bool IsBiomeEntryFloor(int floorIndex, int biome) =>
+            _biomeEntryFloorIndex.TryGetValue(biome, out var idx) && idx == floorIndex;
+
+        // Dos entradas DISTINTAS al Bioma 2 (Puerta Fria, siempre piso 0) y al Bioma de Cuevas
+        // (escalera al fondo de la zona aislada, ver DungeonGenerator.PlaceBiomeGate/
+        // PlaceCaveBiomeExit) -- ahora que la escalera de la cueva puede tocarle a CUALQUIER piso
+        // del bioma raiz (no solo el 0), la vuelta tiene que recordar de que PISO Y celda exactos
+        // se entro, no solo la celda: _biomeReturnPoint guarda ambos, por biome id (1 o 2), para
+        // que la vuelta te deje exactamente ahi sea cual sea la entrada que uses.
+        private readonly Dictionary<int, (int floorIndex, int x, int y)> _biomeReturnPoint = new Dictionary<int, (int, int, int)>();
 
         // Cruzar la Puerta Fria hacia el PRIMER piso del Bioma 2 (ver GenerateAndEnterDungeon):
         // solo llega hasta aca quien ya la encontro y la perforo (TryUseDrill generico), asi que
         // no hay ningun chequeo extra -- la pared ya era la unica barrera real.
         private void EnterBiomeGateFloor()
         {
-            if (_biomeGateFloorIndex < 0) return;
-            _biome2ReturnPos = CurrentFloor.BiomeGatePos;
-            var target = _floors[_biomeGateFloorIndex].StartPos;
-            ChangeFloor(_biomeGateFloorIndex, target.x, target.y);
+            if (!_biomeEntryFloorIndex.TryGetValue(1, out var entryFloorIndex)) return;
+            var gatePos = CurrentFloor.BiomeGatePos;
+            if (gatePos.HasValue) _biomeReturnPoint[1] = (_currentFloorIndex, gatePos.Value.x, gatePos.Value.y);
+            var target = _floors[entryFloorIndex].StartPos;
+            ChangeFloor(entryFloorIndex, target.x, target.y);
             if (hud != null) hud.SetLastMessage("Cruzás la Puerta Fría. El aire cambia por completo.");
         }
 
         // Bajar por la escalera al fondo de la zona aislada (ver
-        // DungeonGenerator.PlaceCaveBiomeExit): mismo destino que la Puerta Fria (el Bioma 2), pero
-        // sin secreto -- una escalera comun que se encuentra caminando la mazmorra.
+        // DungeonGenerator.PlaceCaveBiomeExit): mismo espiritu que la Puerta Fria, pero sin secreto
+        // y hacia el Bioma de Cuevas (Biome id 2, no el Bioma 2/espacial) -- puede tocarle a
+        // cualquier piso del bioma raiz esta run, CurrentFloor ya es ese piso cuando se interactua.
         private void EnterCaveBiomeExit()
         {
-            if (_biomeGateFloorIndex < 0) return;
-            _biome2ReturnPos = CurrentFloor.CaveBiomeExitPos;
-            var target = _floors[_biomeGateFloorIndex].StartPos;
-            ChangeFloor(_biomeGateFloorIndex, target.x, target.y);
+            if (!_biomeEntryFloorIndex.TryGetValue(2, out var entryFloorIndex)) return;
+            var exitPos = CurrentFloor.CaveBiomeExitPos;
+            if (exitPos.HasValue) _biomeReturnPoint[2] = (_currentFloorIndex, exitPos.Value.x, exitPos.Value.y);
+            var target = _floors[entryFloorIndex].StartPos;
+            ChangeFloor(entryFloorIndex, target.x, target.y);
             if (hud != null) hud.SetLastMessage("Bajás por la escalera de la cueva. El aire cambia por completo.");
         }
 
-        // Vuelta al piso 0 desde el Bioma 2: se para sobre Start (que ahi no tiene otro uso, ya
-        // que a este piso nunca se entra por escalera) y aparece de vuelta EXACTAMENTE sobre la
-        // entrada que uso para llegar (_biome2ReturnPos, seteado en EnterBiomeGateFloor o
-        // EnterCaveBiomeExit segun cual haya sido) -- no un paso mas atras, que dejaba al jugador
-        // del otro lado en vez de encima de ella. Es seguro: cruzar de vuelta exige interactuar
-        // (TryInteract), aparecer parado ahi no dispara nada solo por pisarlo (ver
-        // OnPlayerEnterCell).
-        private void ReturnFromBiome2()
+        // Vuelta al bioma raiz desde CUALQUIER bioma secundario: se para sobre Start (que ahi no
+        // tiene otro uso, ya que a ese piso nunca se entra por escalera) y aparece de vuelta
+        // EXACTAMENTE sobre la entrada que uso para llegar -- piso Y celda (_biomeReturnPoint,
+        // seteado en EnterBiomeGateFloor o EnterCaveBiomeExit segun cual haya sido), no siempre el
+        // piso 0 (la escalera de la cueva puede estar en cualquier piso del bioma raiz). Es seguro:
+        // cruzar de vuelta exige interactuar (TryInteract), aparecer parado ahi no dispara nada
+        // solo por pisarlo (ver OnPlayerEnterCell).
+        private void ReturnFromSecondaryBiome()
         {
-            if (!_biome2ReturnPos.HasValue) return;
-            ChangeFloor(0, _biome2ReturnPos.Value.x, _biome2ReturnPos.Value.y);
-            if (hud != null) hud.SetLastMessage("Volvés al Bioma 1.");
+            int biome = CurrentFloor.Biome;
+            if (!_biomeReturnPoint.TryGetValue(biome, out var back)) return;
+            ChangeFloor(back.floorIndex, back.x, back.y);
+            if (hud != null) hud.SetLastMessage(biome == 1 ? "Volvés a través de la Puerta Fría." : "Volvés a través de la escalera de la cueva.");
         }
 
-        // Etiqueta de piso para UI (minimapa/menu de pausa): el Bioma 2 tiene su PROPIA numeracion
-        // de piso (1, 2, ...) aunque internamente floorIndex siga la secuencia global de _floors
-        // (necesaria para que StairTargetFloor funcione) -- sin esto, el Bioma 2 se leia como "Piso
-        // 3" (continuando la numeracion del Bioma 1) en vez de la mazmorra propia que es.
+        // Etiqueta de piso para UI (minimapa/menu de pausa): cada bioma secundario tiene su PROPIA
+        // numeracion de piso (1, 2, ...) aunque internamente floorIndex siga la secuencia global de
+        // _floors (necesaria para que StairTargetFloor funcione) -- sin esto, se leia como
+        // continuacion de la numeracion del bioma raiz en vez de la mazmorra propia que es.
         public string FloorLabel(int floorIndex)
         {
             if (floorIndex < 0 || floorIndex >= _floors.Count) return $"Piso {floorIndex}";
-            if (_floors[floorIndex].Biome == 0 || _biomeGateFloorIndex < 0) return $"Piso {floorIndex}";
-            return $"Bioma 2 - Piso {floorIndex - _biomeGateFloorIndex + 1}";
+            int biome = _floors[floorIndex].Biome;
+            if (biome == 0 || !_biomeEntryFloorIndex.TryGetValue(biome, out var entryIdx)) return $"Piso {floorIndex}";
+            string biomeName = biome == 1 ? "Bioma 2" : "Bioma de Cuevas";
+            return $"{biomeName} - Piso {floorIndex - entryIdx + 1}";
         }
 
         public void ChangeFloor(int floorIndex, int spawnX, int spawnY)
