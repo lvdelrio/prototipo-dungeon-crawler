@@ -169,7 +169,12 @@ namespace DungeonGen
             var floor = new DungeonFloor(width, height, index);
 
             // 1. Pick isolated zone rectangle (~20-32% of area), anchored at a random corner.
-            float frac = 0.20f + (float)rng.NextDouble() * 0.12f;
+            // Piso 0 (pedido puntual: "que se divida en 4 cuadrantes y uno sea la zona de cueva"):
+            // rango angosto a ~1/4 del area en vez del 20-32% variable de siempre, para que sea un
+            // cuadrante de verdad. El resto de los pisos no cambia.
+            float frac = index == 0
+                ? 0.23f + (float)rng.NextDouble() * 0.04f
+                : 0.20f + (float)rng.NextDouble() * 0.12f;
             int zoneW = Math.Max(2, (int)Math.Round(width * Math.Sqrt(frac)));
             int zoneH = Math.Max(2, (int)Math.Round(height * Math.Sqrt(frac)));
             zoneW = Math.Min(zoneW, width - 2);
@@ -1276,17 +1281,24 @@ namespace DungeonGen
             // La Puerta Fria tiene que ser alcanzable SOLO explorando el piso a pie: nunca detras de
             // un candado+palanca (PlacePacingPillars, que ya corrio y dejo esas puertas cerradas a
             // esta altura -- ver GenerateDungeon), porque eso obligaria a resolver un mecanismo sin
-            // relacion antes de poder usar las pistas de lore, rompiendo esa logica. Tampoco dentro
-            // de la zona aislada: ya es su propio secreto (el atajo/switch), no hace falta anidar un
-            // segundo secreto adentro del primero.
+            // relacion antes de poder usar las pistas de lore, rompiendo esa logica.
+            //
+            // Pedido puntual: "al final de la zona de cueva, un camino al Bioma 2" -- a diferencia
+            // de antes (un callejon al azar en el RESTO del mapa, sin relacion con la zona aislada),
+            // ahora se busca DENTRO de la zona aislada, en el callejon sin salida MAS LEJANO de su
+            // entrada (no uno al azar): asi la puerta queda al fondo de la cueva, no en cualquier
+            // rincon. FarthestCell mide distancia real de camino desde Start; como la UNICA conexion
+            // a la zona aislada es su entrada permanente, ordenar por distancia desde Start es lo
+            // mismo que ordenar por distancia desde esa entrada (la resta es la misma constante para
+            // cualquier celda de adentro).
             var reachableFree = new HashSet<(int, int)>(
-                BfsReachable(floor, floor.StartPos).Where(c => !floor.IsInIsolatedZone(c.Item1, c.Item2)));
+                BfsReachable(floor, floor.StartPos).Where(c => floor.IsInIsolatedZone(c.Item1, c.Item2)));
 
             var candidates = FindLeavesWithin(floor, reachableFree, used);
             if (candidates.Count == 0) return false;
 
-            Shuffle(candidates, rng);
-            var pos = candidates[0];
+            var candidateSet = new HashSet<(int, int)>(candidates);
+            var (pos, _) = FarthestCell(floor, floor.StartPos, allowed: c => candidateSet.Contains(c));
             var cell = floor.Cells[pos.x, pos.y];
 
             Direction openDir = default;
