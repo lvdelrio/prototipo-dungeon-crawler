@@ -200,7 +200,7 @@ namespace Gameplay
             // Bioma 1 (ver DungeonGenerator.PlaceCaveBiomeExit / CellType.CaveBiomeExit), nunca por
             // escalera normal.
             var caveBiomeFloors = _generator.GenerateDungeon(
-                CaveBiomeFloorCount, settings.size, settings.size, seed ^ 0xCAFE5EED, out var caveBiomeLog,
+                CaveBiomeFloorCount, settings.size, settings.size, seed ^ unchecked((int)0xCAFE5EED), out var caveBiomeLog,
                 stairPairsPerFloor: settings.stairPairsPerFloor,
                 bossFloorStart: CaveBiomeFloorCount - 1,
                 bossFloorInterval: 1,
