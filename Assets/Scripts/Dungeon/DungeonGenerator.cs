@@ -1085,14 +1085,20 @@ namespace DungeonGen
         }
 
         // Excluye celdas de sala de jefe: ahi nunca deben caer escaleras "genericas" (las de la
-        // sala de jefe se fuerzan aparte, via restrictLowerTo), ni lore/tesoro/etc.
+        // sala de jefe se fuerzan aparte, via restrictLowerTo), ni lore/tesoro/etc. Tambien excluye
+        // la zona aislada -- BUG encontrado por el usuario: sin este chequeo, un par de escaleras
+        // "extra" (PlaceStairsBetween, el remaining despues del par principal EndPos/StartPos)
+        // podia caer por puro azar DENTRO de la zona aislada, incluida la que aloja la escalera al
+        // Bioma de Cuevas (ver PlaceCaveBiomeExit) -- eso es lo que el usuario piso pensando que
+        // era la escalera nueva: una StairsUp comun (te sube de piso) que por casualidad quedo
+        // adentro de la cueva, tapando/confundiendo con la escalera de verdad.
         private List<(int, int)> FreeNormalCells(DungeonFloor floor)
         {
             var list = new List<(int, int)>();
             for (int x = 0; x < floor.Width; x++)
                 for (int y = 0; y < floor.Height; y++)
                     if (floor.Cells[x, y].Type == CellType.Normal && !floor.Cells[x, y].IsBossRoom && !floor.Cells[x, y].IsTreasureRoom
-                        && !floor.Cells[x, y].IsTrapRoom && !floor.Cells[x, y].IsPuzzleTile)
+                        && !floor.Cells[x, y].IsTrapRoom && !floor.Cells[x, y].IsPuzzleTile && !floor.Cells[x, y].IsIsolatedZone)
                         list.Add((x, y));
             return list;
         }
