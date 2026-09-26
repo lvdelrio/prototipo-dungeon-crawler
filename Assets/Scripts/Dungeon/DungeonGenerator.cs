@@ -22,12 +22,13 @@ namespace DungeonGen
             var floors = new List<DungeonFloor>();
             int[] loreCorridorFloors = biome == 0 ? PickLoreCorridorFloors(floorCount) : Array.Empty<int>();
 
-            // Pedido puntual: la mini-cueva (zona aislada de tamano de cuadrante + la escalera al
-            // Bioma de cuevas, ver PlaceCaveBiomeExit) ya no esta clavada siempre en el piso 0 --
-            // se sortea UNA vez por run que piso del bioma raiz la aloja (nunca mas de un piso a la
-            // vez). La Puerta Fria (PlaceBiomeGate, mas abajo) NO se mueve de aca: sigue siendo
-            // siempre el piso 0, es un mecanismo aparte que el jugador pidio no tocar.
-            int caveExitFloorIndex = biome == 0 ? rng.Next(floorCount) : -1;
+            // Correccion de un pedido anterior: la mini-cueva (zona aislada de tamano de cuadrante
+            // + la escalera al Bioma de Cuevas, ver PlaceCaveBiomeExit) NO se sortea por piso --
+            // vive UNICA y EXCLUSIVAMENTE en el piso 0 del bioma raiz, pedido puntual y explicito.
+            // (Se probo sortearla en cualquier piso en un commit anterior; esto revierte ESA parte
+            // nada mas.) La Puerta Fria (PlaceBiomeGate, mas abajo) tampoco se mueve de aca: sigue
+            // siendo siempre el piso 0, es un mecanismo aparte.
+            int caveExitFloorIndex = biome == 0 ? 0 : -1;
 
             for (int i = 0; i < floorCount; i++)
             {
