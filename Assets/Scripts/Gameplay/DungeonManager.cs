@@ -115,6 +115,10 @@ namespace Gameplay
             }
             // La party y la mazmorra YA NO se generan aca: MainMenuHUD llama a ContinueRun() o
             // BeginBrandNewGame() segun lo que elija el jugador en el menu inicial.
+
+            // Ciclo de dia y noche (pedido puntual): se agrega solo aca, no hace falta cablearlo a
+            // mano en la escena -- ver DayNightCycle.
+            if (GetComponent<DayNightCycle>() == null) gameObject.AddComponent<DayNightCycle>();
         }
 
         // "Continuar": misma party/progreso ya guardados (meta.PartyClasses, si el jugador ya habia
