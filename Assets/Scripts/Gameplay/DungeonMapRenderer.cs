@@ -193,7 +193,14 @@ namespace Gameplay
                     if (markerColor.HasValue)
                     {
                         float m = cellPixelSize * 0.4f;
-                        drawRect(new Rect(px + (cellPixelSize - m) / 2f, py + (cellPixelSize - m) / 2f, m, m), markerColor.Value);
+                        var markerRect = new Rect(px + (cellPixelSize - m) / 2f, py + (cellPixelSize - m) / 2f, m, m);
+                        // Pedido puntual: las escaleras en el mapa de debug se dibujan con un
+                        // icono de escalera (3 escalones ascendentes), no un cuadrado solido igual
+                        // a cualquier otro marcador -- mismo lenguaje visual que el icono pseudo-3D
+                        // del mundo real (ver DungeonLevelBuilder.BuildStairsIcon).
+                        bool isStairsMarker = cell.Type == CellType.StairsUp || cell.Type == CellType.StairsDown || cell.Type == CellType.CaveBiomeExit;
+                        if (isStairsMarker) DrawStairsIcon(drawRect, markerRect, markerColor.Value);
+                        else drawRect(markerRect, markerColor.Value);
                     }
                 }
             }
@@ -257,6 +264,23 @@ namespace Gameplay
             // Gris/marron de roca, no morado -- consistente con el reskin de la zona aislada como
             // cueva (ver DungeonLevelBuilder.BuildRockyFloorTile).
             return cell.IsIsolatedZone ? new Color(0.32f, 0.28f, 0.24f) : PathColor;
+        }
+
+        // Icono de escalera para el mapa de debug (pedido puntual): 3 escalones que suben de
+        // izquierda a derecha dentro de "bounds" -- mismo lenguaje visual que el icono pseudo-3D
+        // del mundo real (DungeonLevelBuilder.BuildStairsIcon), asi se reconoce "esto es una
+        // escalera" de un vistazo en vez de un cuadrado solido identico a cualquier otro marcador.
+        private static void DrawStairsIcon(Action<Rect, Color> drawRect, Rect bounds, Color color)
+        {
+            const int steps = 3;
+            float stepW = bounds.width / steps;
+            for (int i = 0; i < steps; i++)
+            {
+                float stepH = bounds.height * (0.4f + i * 0.25f);
+                float x = bounds.x + stepW * i;
+                float y = bounds.y + (bounds.height - stepH);
+                drawRect(new Rect(x, y, stepW, stepH), color);
+            }
         }
 
         public static Color? MarkerColor(DungeonCell cell)
