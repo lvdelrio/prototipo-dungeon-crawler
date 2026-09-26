@@ -168,13 +168,20 @@ namespace Gameplay
                         if (outOfBounds)
                         {
                             BuildWall(center, dir, cellSize, wallHeight, wallThickness, useCaveLook);
+                            // Antorchas SOLO en el Bioma de Cuevas de verdad (pedido puntual: "que
+                            // vayan iluminando el camino a lo largo") -- no en la zona aislada del
+                            // bosque, esa sigue siendo una cueva natural sin nada construido.
+                            if (isRockCaveBiome && Random.value < 0.3f) BuildTorch(center, dir, cellSize, wallHeight);
                             continue;
                         }
                         if (floor.Cells[nx, ny].Type == CellType.Void) continue;
 
                         bool isPrimaryDir = dir == Direction.North || dir == Direction.East;
                         if (isPrimaryDir)
+                        {
                             BuildWall(center, dir, cellSize, wallHeight, wallThickness, useCaveLook);
+                            if (isRockCaveBiome && Random.value < 0.3f) BuildTorch(center, dir, cellSize, wallHeight);
+                        }
                     }
 
                     BuildMarker(cell, center, cellSize, wallHeight);
@@ -883,6 +890,50 @@ namespace Gameplay
                 float shade = Random.Range(0.85f, 1.15f);
                 ApplyMaterial(seg, null, new Color(0.3f * shade, 0.28f * shade, 0.25f * shade));
             }
+        }
+
+        // Antorcha de pared en el Bioma de Cuevas (pedido puntual: "que vayan iluminando el camino
+        // a lo largo") -- soporte + llama (primitivas, mismo estilo que el resto) mas una Light de
+        // verdad (sin sombras, alcance corto) para que ilumine el pasillo de verdad, no solo
+        // decore. cellCenter/dir son la MISMA pared que ya construyo BuildWall justo antes -- se
+        // clava del lado de ADENTRO de esa pared, mirando hacia el centro de la celda.
+        private void BuildTorch(Vector3 cellCenter, Direction dir, float cellSize, float wallHeight)
+        {
+            var (ox, oy) = dir.Offset();
+            Vector3 wallPos = cellCenter + new Vector3(ox, 0, oy) * (cellSize / 2f);
+            Vector3 pos = wallPos - new Vector3(ox, 0, oy) * 0.15f + new Vector3(0, wallHeight * 0.55f, 0);
+
+            var root = new GameObject("Torch");
+            root.transform.SetParent(_root.transform, false);
+            root.transform.position = pos;
+
+            var bracket = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            bracket.name = "TorchBracket";
+            bracket.transform.SetParent(root.transform, false);
+            bracket.transform.localPosition = new Vector3(0, -0.05f, 0);
+            bracket.transform.localScale = new Vector3(0.06f, 0.35f, 0.06f);
+            var bracketCol = bracket.GetComponent<Collider>();
+            if (bracketCol != null) Destroy(bracketCol);
+            ApplyMaterial(bracket, null, new Color(0.2f, 0.13f, 0.08f));
+
+            var flame = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            flame.name = "TorchFlame";
+            flame.transform.SetParent(root.transform, false);
+            flame.transform.localPosition = new Vector3(0, 0.2f, 0);
+            flame.transform.localScale = new Vector3(0.16f, 0.24f, 0.16f);
+            var flameCol = flame.GetComponent<Collider>();
+            if (flameCol != null) Destroy(flameCol);
+            ApplyMaterial(flame, null, new Color(1f, 0.55f, 0.1f));
+
+            var lightGo = new GameObject("TorchLight");
+            lightGo.transform.SetParent(root.transform, false);
+            lightGo.transform.localPosition = new Vector3(0, 0.2f, 0);
+            var light = lightGo.AddComponent<Light>();
+            light.type = LightType.Point;
+            light.color = new Color(1f, 0.6f, 0.25f);
+            light.intensity = 1.3f;
+            light.range = cellSize * 1.4f;
+            light.shadows = LightShadows.None; // muchas antorchas por piso -- sombras las harian carisimas
         }
 
         private void BuildCeilingTile(Vector3 center, float cellSize, float wallHeight, bool isIso, bool isBiome2)
