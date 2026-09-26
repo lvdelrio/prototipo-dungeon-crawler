@@ -509,11 +509,6 @@ namespace Gameplay
             go.transform.SetParent(parent, false);
             go.transform.localPosition = localPos;
 
-            // TextMesh (a diferencia de lo que uno esperaria) NO agrega un MeshFilter solo --
-            // solo fuerza el MeshRenderer. Sin este AddComponent explicito, GetComponent<MeshFilter>()
-            // mas abajo devuelve null y tira MissingComponentException.
-            var meshFilter = go.AddComponent<MeshFilter>();
-
             var tm = go.AddComponent<TextMesh>();
             tm.text = text;
             tm.characterSize = signpostCharacterSize;
@@ -535,18 +530,19 @@ namespace Gameplay
             // Reescala el objeto entero para que el bloque de texto SIEMPRE entre en el tablon,
             // sin importar signpostCharacterSize/signpostFontSize elegidos en el Inspector -- con
             // texto de 2 lineas el bloque generado podia ser mas alto que el propio cartel y
-            // quedaba sobresaliendo por fuera de su superficie en vez de sentado sobre ella. Se usa
-            // el bounds del MESH (espacio local, no le afecta la rotacion del padre) en vez de
-            // renderer.bounds (mundo): el cartel puede estar rotado 90/180/270 en Y segun hacia
-            // donde mira, y eso mezclaria los ejes X/Z de un bounds en espacio de mundo.
-            if (meshFilter.sharedMesh != null)
-            {
-                var meshBounds = meshFilter.sharedMesh.bounds.size;
-                float scaleX = meshBounds.x > 0.0001f ? maxWidth / meshBounds.x : 1f;
-                float scaleY = meshBounds.y > 0.0001f ? maxHeight / meshBounds.y : 1f;
-                float fit = Mathf.Min(1f, scaleX, scaleY); // solo achica si hace falta, nunca agranda de mas
-                go.transform.localScale *= fit;
-            }
+            // quedaba sobresaliendo por fuera de su superficie en vez de sentado sobre ella.
+            // TextMesh NO tiene MeshFilter (agregarle uno a mano tira "conflicts with TextMesh",
+            // Unity los trata como mutuamente excluyentes) asi que el bounds hay que leerlo del
+            // MeshRenderer, que es en espacio de MUNDO. El cartel solo rota en Y de a multiplos de
+            // 90 grados (ver BuildSpawnSignposts), asi que la altura (eje Y) nunca se mezcla con el
+            // ancho -- el ancho real queda repartido entre bounds.x y bounds.z segun el yaw exacto,
+            // por eso se usa el mayor de los dos (el otro queda ~0).
+            float worldWidth = Mathf.Max(renderer.bounds.size.x, renderer.bounds.size.z);
+            float worldHeight = renderer.bounds.size.y;
+            float scaleX = worldWidth > 0.0001f ? maxWidth / worldWidth : 1f;
+            float scaleY = worldHeight > 0.0001f ? maxHeight / worldHeight : 1f;
+            float fit = Mathf.Min(1f, scaleX, scaleY); // solo achica si hace falta, nunca agranda de mas
+            go.transform.localScale *= fit;
         }
 
         private static Material _signTextMaterial;
