@@ -642,7 +642,7 @@ namespace Gameplay
             for (int i = 0; i < Party.Count; i++)
             {
                 int dmg = partyHpBefore[i] - Party[i].HP;
-                if (dmg > 0) feedback?.OnPartyHit(dmg);
+                if (dmg > 0) feedback?.OnPartyHit(dmg, hitIntensity);
                 else if (dmg < 0) feedback?.OnHeal(-dmg);
             }
 
@@ -655,7 +655,7 @@ namespace Gameplay
                 int dmg = enemyHpBefore[i] - Enemies[i].HP;
                 if (dmg <= 0) continue;
 
-                feedback?.OnEnemyHit(dmg);
+                feedback?.OnEnemyHit(dmg, hitIntensity);
                 if (hitElement != Element.None) feedback?.OnElementalHit(hitElement);
                 OnEnemyDamaged?.Invoke(i);
                 OnEnemyElementalHit?.Invoke(i, hitElement, hitIntensity);
