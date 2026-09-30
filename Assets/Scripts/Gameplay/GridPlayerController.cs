@@ -20,11 +20,17 @@ namespace Gameplay
         public float bobHeight = 0.05f;
         public int bobCyclesPerStep = 1;
 
+        [Header("Antorcha del jugador (R para sacarla/guardarla)")]
+        [Tooltip("Radio de iluminacion en CELDAS (se multiplica por settings.cellSize al armar la luz).")]
+        public float torchRadiusCells = 5f;
+
         private int _x, _y;
         private Direction _facing = Direction.North;
         private bool _busy;
         private float _cameraBaseY;
         private bool _cameraBaseCaptured;
+        private Light _torchLight;
+        private bool _torchLit;
 
         public int CellX => _x;
         public int CellY => _y;
@@ -50,9 +56,42 @@ namespace Gameplay
             }
         }
 
+        // Antorcha del jugador (pedido puntual): una Light de verdad (no solo decoracion) colgada
+        // de la camara, radio en celdas (torchRadiusCells * settings.cellSize) -- se crea recien al
+        // primer R (nunca hace falta si el jugador no la usa nunca) y despues solo se prende/apaga.
+        private void EnsureTorchLight()
+        {
+            if (_torchLight != null) return;
+            CaptureCameraBaseIfNeeded();
+            var parent = cameraBobTarget != null ? cameraBobTarget : transform;
+
+            var go = new GameObject("PlayerTorchLight");
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = Vector3.zero;
+            _torchLight = go.AddComponent<Light>();
+            _torchLight.type = LightType.Point;
+            _torchLight.color = new Color(1f, 0.75f, 0.45f);
+            _torchLight.intensity = 1.8f;
+            float cellSize = dungeonManager != null && dungeonManager.settings != null ? dungeonManager.settings.cellSize : 4f;
+            _torchLight.range = torchRadiusCells * cellSize;
+            _torchLight.shadows = LightShadows.None;
+            _torchLight.renderMode = LightRenderMode.ForcePixel;
+            _torchLight.enabled = false;
+        }
+
+        private void TogglePlayerTorch()
+        {
+            EnsureTorchLight();
+            _torchLit = !_torchLit;
+            _torchLight.enabled = _torchLit;
+            if (dungeonManager != null && dungeonManager.hud != null)
+                dungeonManager.hud.SetLastMessage(_torchLit ? "Antorcha encendida." : "Antorcha guardada.");
+        }
+
         void Update()
         {
             if (_busy || dungeonManager == null || !dungeonManager.IsReady) return; // IsReady en false = todavia esta el menu inicial (Continuar/Nueva Partida)
+            if (dungeonManager.IsPlayerFalling) return; // bloquea input durante la transicion de caida al piso inferior
             if (dungeonManager.IsCombatActive || dungeonManager.IsGameOverShopActive) return; // congelado en combate o en la tienda post-derrota
             if (controlsTutorial != null && controlsTutorial.IsOpen) return; // congelado hasta cerrar el cartel de controles (solo la primera vez)
             if (dialogueManager != null && dialogueManager.IsActive)
@@ -84,6 +123,13 @@ namespace Gameplay
             if (Input.GetKeyDown(KeyCode.L)) { dungeonManager.TryUseMap(); return; }
             if (Input.GetKeyDown(KeyCode.P)) { dungeonManager.TryUseDrill(_x, _y, _facing); return; }
             if (Input.GetKeyDown(KeyCode.N)) { dungeonManager.TryUseIncense(); return; }
+
+            // Antorcha del jugador (pedido puntual, pensada para el Bioma de Cuevas -- ver el
+            // cartel de su entrada, DungeonLevelBuilder.BuildCaveEntranceSignposts): R la saca/guarda,
+            // sin carga ni limite (a diferencia del Mapa/Perforador/Incienso de arriba, que SI
+            // consumen del inventario meta). Funciona en cualquier piso, no solo en la cueva -- no
+            // hace falta restringirla, en el resto de los biomas ya hay luz de sobra.
+            if (Input.GetKeyDown(KeyCode.R)) { TogglePlayerTorch(); return; }
 
             // DEMO del sistema de dialogo (tecla T): reemplazar este trigger por uno real (un NPC,
             // una celda de taberna, etc.) cuando se construya el bazar/taberna de verdad.

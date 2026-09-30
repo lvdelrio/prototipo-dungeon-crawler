@@ -1,4 +1,5 @@
 using UnityEngine;
+using System.Collections.Generic;
 
 namespace Gameplay
 {
@@ -35,26 +36,103 @@ namespace Gameplay
         public float sunDayIntensity = 1f;
         public float sunNightIntensity = 0.05f;
 
+        [Header("Respuesta visible del bosque")]
+        public Color dayFogColor = new Color(0.13f, 0.18f, 0.12f);
+        public Color nightFogColor = new Color(0.012f, 0.022f, 0.065f);
+
+        [Header("Iluminacion de cuevas")]
+        public Color caveDayAmbient = new Color(0.12f, 0.13f, 0.14f);
+        public Color caveNightAmbient = new Color(0.025f, 0.035f, 0.06f);
+        public Color caveDayFog = new Color(0.045f, 0.052f, 0.06f);
+        public Color caveNightFog = new Color(0.012f, 0.018f, 0.032f);
+        public float caveFogEndDistance = 18f;
+
+        private const string NightShaderParameter = "_WorldNightAmount";
+        private float _cycleStartTime;
+        private Light[] _directionalLights;
+        private float[] _dayLightIntensities;
+        private Color[] _dayLightColors;
+        private Camera _mainCamera;
+        private DungeonManager _dungeonManager;
+        private float _defaultFogStartDistance;
+        private float _defaultFogEndDistance;
+        private bool _caveEnvironment;
+
         // 0 = dia pleno, 1 = noche plena -- publico por si otro sistema (particulas, shaders)
         // quiere reaccionar al momento del dia mas adelante.
         public float NightAmount { get; private set; }
 
+        public void SetCaveEnvironment(bool inCave) => _caveEnvironment = inCave;
+
+        void Awake()
+        {
+            _cycleStartTime = Time.time;
+            _mainCamera = Camera.main;
+            _dungeonManager = GetComponent<DungeonManager>();
+            _defaultFogStartDistance = RenderSettings.fogStartDistance;
+            _defaultFogEndDistance = RenderSettings.fogEndDistance;
+            var lights = new List<Light>();
+            foreach (var light in FindObjectsOfType<Light>())
+            {
+                if (light.type == LightType.Directional && light.gameObject.scene == gameObject.scene && light != sunLight)
+                    lights.Add(light);
+            }
+            _directionalLights = lights.ToArray();
+            _dayLightIntensities = new float[_directionalLights.Length];
+            _dayLightColors = new Color[_directionalLights.Length];
+            for (int i = 0; i < _directionalLights.Length; i++)
+            {
+                _dayLightIntensities[i] = _directionalLights[i].intensity;
+                _dayLightColors[i] = _directionalLights[i].color;
+            }
+        }
+
         void Update()
         {
-            NightAmount = Mathf.PingPong(Time.time / Mathf.Max(1f, transitionSeconds), 1f);
+            NightAmount = Mathf.PingPong((Time.time - _cycleStartTime) / Mathf.Max(1f, transitionSeconds), 1f);
+            Shader.SetGlobalFloat(NightShaderParameter, NightAmount);
 
             RenderSettings.ambientSkyColor = Color.Lerp(daySkyColor, nightSkyColor, NightAmount);
             RenderSettings.ambientEquatorColor = Color.Lerp(dayEquatorColor, nightEquatorColor, NightAmount);
             RenderSettings.ambientGroundColor = Color.Lerp(dayGroundColor, nightGroundColor, NightAmount);
-            RenderSettings.ambientIntensity = Mathf.Lerp(dayAmbientIntensity, nightAmbientIntensity, NightAmount);
+            RenderSettings.ambientIntensity = Mathf.Lerp(dayAmbientIntensity, nightAmbientIntensity, NightAmount) * (_caveEnvironment ? 0.45f : 1f);
+            // La escena usa AmbientMode.Flat: sky/equator/ground no se consultan en ese modo.
+            // Cambiar ambientLight y las direccionales hace que Standard y los shaders propios
+            // respondan de verdad, en vez de dejar el ciclo guardado en valores que nadie lee.
+            Color forestAmbient = Color.Lerp(new Color(0.5f, 0.5f, 0.55f), new Color(0.045f, 0.065f, 0.14f), NightAmount);
+            RenderSettings.ambientLight = _caveEnvironment
+                ? Color.Lerp(caveDayAmbient, caveNightAmbient, NightAmount)
+                : forestAmbient;
+            Shader.SetGlobalFloat("_WorldCaveAmount", _caveEnvironment ? 1f : 0f);
+            if (_dungeonManager == null || !_dungeonManager.IsCombatActive)
+            {
+                RenderSettings.fogColor = _caveEnvironment
+                    ? Color.Lerp(caveDayFog, caveNightFog, NightAmount)
+                    : Color.Lerp(dayFogColor, nightFogColor, NightAmount);
+                RenderSettings.fogStartDistance = _caveEnvironment ? 0f : _defaultFogStartDistance;
+                RenderSettings.fogEndDistance = _caveEnvironment ? caveFogEndDistance : _defaultFogEndDistance;
+                if (_mainCamera != null) _mainCamera.backgroundColor = RenderSettings.fogColor;
+            }
+
+            for (int i = 0; i < _directionalLights.Length; i++)
+            {
+                var light = _directionalLights[i];
+                if (light == null) continue;
+                float caveLightScale = _caveEnvironment ? 0.18f : 1f;
+                light.intensity = _dayLightIntensities[i] * Mathf.Lerp(1f, 0.16f, NightAmount) * caveLightScale;
+                // Neutraliza luces de escena demasiado amarillas durante el dia y las lleva
+                // gradualmente a azul lunar por la noche.
+                Color daylight = Color.Lerp(_dayLightColors[i], new Color(0.82f, 0.9f, 1f), 0.55f);
+                light.color = Color.Lerp(daylight, new Color(0.35f, 0.48f, 0.9f), NightAmount * 0.82f);
+            }
 
             if (sunLight != null)
             {
-                sunLight.intensity = Mathf.Lerp(sunDayIntensity, sunNightIntensity, NightAmount);
+                sunLight.intensity = Mathf.Lerp(sunDayIntensity, sunNightIntensity, NightAmount) * (_caveEnvironment ? 0.18f : 1f);
                 // Cruza el cielo de este a oeste durante el dia y sigue de largo por debajo del
                 // horizonte durante la noche -- un ciclo completo (dia+noche) de 360 grados cada
                 // 2 * transitionSeconds, sincronizado con el mismo PingPong de arriba.
-                float fullCycle = Time.time / (2f * transitionSeconds);
+                float fullCycle = (Time.time - _cycleStartTime) / (2f * transitionSeconds);
                 float angle = (fullCycle % 1f) * 360f;
                 sunLight.transform.rotation = Quaternion.Euler(angle - 90f, 170f, 0f);
             }
