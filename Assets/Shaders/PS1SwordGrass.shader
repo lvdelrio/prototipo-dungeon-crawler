@@ -1,23 +1,25 @@
-// Pasto con vaiven de viento (ver Gameplay/GroundTileFactory.BuildGrassTufts): mismo lenguaje
-// visual que Custom/PS1Ground (mate, sin especular, sombreado plano por normal, niebla de
-// escena) pero con un desplazamiento de vertices en X que crece desde la base del pastito (peso
-// 0, vertice local y=-0.5 de un Quad comun) hasta la punta (peso 1, y=+0.5) -- asi la base queda
-// plantada en el piso y solo la mitad de arriba se mece, sin animar huesos ni depender de Shader
-// Graph (no esta instalado en este proyecto, pipeline built-in).
-Shader "Custom/PS1Grass"
+// Pasto chico estilo Zelda ("hojas de espada", ver Gameplay/GroundTileFactory.BuildSwordGrass):
+// mismo vaiven de viento que Custom/PS1Grass (base plantada, la mitad de arriba se mece, fase por
+// posicion de mundo para que no se muevan todas igual) pero en vez de un Quad rectangular liso,
+// esto recorta la carta con clip() en el fragment shader para que se vea como una hoja angosta que
+// termina en punta -- ancha en la base, afilada arriba, como una espadita saliendo del pasto -- en
+// vez de agregar un mesh nuevo (este proyecto no tiene ninguno, todo Quad/Cube + shader).
+Shader "Custom/PS1SwordGrass"
 {
     Properties
     {
-        _Color ("Color base", Color) = (0.22, 0.42, 0.16, 1)
-        _WindStrength ("Fuerza del viento", Float) = 0.06
-        _WindSpeed ("Velocidad", Float) = 2.2
-        _WindScale ("Escala espacial (mundo)", Float) = 0.6
+        _Color ("Color base", Color) = (0.24, 0.46, 0.18, 1)
+        _TipColor ("Color de la punta", Color) = (0.4, 0.62, 0.22, 1)
+        _WindStrength ("Fuerza del viento", Float) = 0.05
+        _WindSpeed ("Velocidad", Float) = 2.6
+        _WindScale ("Escala espacial (mundo)", Float) = 0.9
+        _BaseWidth ("Ancho en la base (0-0.5)", Float) = 0.22
     }
     SubShader
     {
         Tags { "RenderType"="Opaque" }
         LOD 100
-        Cull Off // quads finitos, no un volumen cerrado -- tiene que verse desde los dos lados
+        Cull Off // carta finita, no un volumen cerrado -- tiene que verse desde los dos lados
 
         Pass
         {
@@ -28,16 +30,15 @@ Shader "Custom/PS1Grass"
             #pragma multi_compile_instancing
             #include "UnityCG.cginc"
 
+            fixed4 _TipColor;
             float _WindStrength;
             float _WindSpeed;
             float _WindScale;
+            float _BaseWidth;
             float4 _GrassInteractor;
             float _WorldNightAmount;
 
-            // _Color pasa a ser una propiedad POR INSTANCIA (ver FoliageManager.cs): cuando el
-            // pasto se dibuja con Graphics.DrawMeshInstanced, cada mata de un mismo lote (mismo
-            // mesh+material) puede tener su propio tinte via MaterialPropertyBlock.SetVectorArray,
-            // en vez de un solo _Color compartido por todo el draw call.
+            // _Color por instancia -- mismo patron que PS1Grass (ver FoliageManager.cs).
             UNITY_INSTANCING_BUFFER_START(Props)
                 UNITY_DEFINE_INSTANCED_PROP(fixed4, _Color)
             UNITY_INSTANCING_BUFFER_END(Props)
@@ -46,11 +47,13 @@ Shader "Custom/PS1Grass"
             {
                 float4 vertex : POSITION;
                 float3 normal : NORMAL;
+                float2 uv : TEXCOORD0;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
             struct v2f
             {
                 float4 vertex : SV_POSITION;
+                float2 uv : TEXCOORD0;
                 fixed3 shade : COLOR0;
                 UNITY_FOG_COORDS(1)
                 UNITY_VERTEX_INPUT_INSTANCE_ID
@@ -61,11 +64,11 @@ Shader "Custom/PS1Grass"
                 v2f o;
                 UNITY_SETUP_INSTANCE_ID(v);
                 UNITY_TRANSFER_INSTANCE_ID(v, o);
+                o.uv = v.uv;
                 float3 worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
 
-                // Peso 0 en la base (y local -0.5), 1 en la punta (y local +0.5) -- la base se
-                // queda plantada, la mitad de arriba se mece. Fase por posicion de mundo (no por
-                // instancia) para que pastitos vecinos no se muevan todos exactamente igual.
+                // Peso 0 en la base (y local -0.5 = uv.y 0), 1 en la punta (y local +0.5 = uv.y 1)
+                // -- identico criterio que PS1Grass. Fase por posicion de mundo, no por instancia.
                 float weight = saturate(v.vertex.y + 0.5);
                 float phase = (worldPos.x + worldPos.z) * _WindScale;
                 float sway = sin(_Time.y * _WindSpeed + phase) * _WindStrength * weight;
@@ -89,11 +92,20 @@ Shader "Custom/PS1Grass"
             fixed4 frag (v2f i) : SV_Target
             {
                 UNITY_SETUP_INSTANCE_ID(i);
+
+                // Silueta de hoja de espada: ancho maximo (_BaseWidth) en uv.y=0, se angosta
+                // linealmente hasta 0 en uv.y=1 -- clip() descarta todo pixel fuera de ese
+                // triangulo, dejando solo la forma afilada visible (el resto del Quad es
+                // transparente de verdad, no solo pintado del color de fondo).
+                float halfWidth = _BaseWidth * (1.0 - i.uv.y);
+                clip(halfWidth - abs(i.uv.x - 0.5));
+
                 fixed4 color = UNITY_ACCESS_INSTANCED_PROP(Props, _Color);
-                fixed4 col = fixed4(color.rgb * i.shade, 1.0);
+                fixed3 tint = lerp(color.rgb, _TipColor.rgb, i.uv.y);
                 float night = saturate(_WorldNightAmount);
-                col.rgb *= lerp(1.0, 0.5, night);
-                col.rgb = lerp(col.rgb, col.rgb * fixed3(0.48, 0.62, 0.95), night * 0.58);
+                tint *= lerp(1.0, 0.5, night);
+                tint = lerp(tint, tint * fixed3(0.48, 0.62, 0.95), night * 0.58);
+                fixed4 col = fixed4(tint * i.shade, 1.0);
                 UNITY_APPLY_FOG(i.fogCoord, col);
                 return col;
             }
