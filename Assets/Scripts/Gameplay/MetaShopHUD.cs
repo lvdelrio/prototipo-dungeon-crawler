@@ -113,7 +113,9 @@ namespace Gameplay
             };
             titleStyle.normal.textColor = Color.white;
             GUI.Label(new Rect(x, bannerY, w, bannerH),
-                dungeonManager.LastRunWasVictory ? "¡RUN COMPLETADA! DERROTASTE AL JEFE" : "RUN TERMINADA",
+                dungeonManager.LastRunReturnedToHub
+                    ? "REFUGIO DEL EXPLORADOR"
+                    : dungeonManager.LastRunWasVictory ? "¡RUN COMPLETADA! DERROTASTE AL JEFE" : "RUN TERMINADA",
                 titleStyle);
 
             float y = bannerY + bannerH + 14f;

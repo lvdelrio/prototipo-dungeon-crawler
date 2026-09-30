@@ -1,4 +1,5 @@
 using UnityEngine;
+using System.Collections.Generic;
 
 namespace Gameplay
 {
@@ -16,6 +17,8 @@ namespace Gameplay
         private static readonly Color Red = new Color(0.82f, 0.08f, 0.1f);
         private static readonly Color HoverRed = new Color(1f, 0.35f, 0.3f);
         private static Texture2D _whiteTex;
+        private struct ClickSpark { public Vector2 Origin, Direction; public float Start; public Color Color; }
+        private static readonly List<ClickSpark> _forestSparks = new List<ClickSpark>();
 
         // accentColor: para bananas especiales (p.ej. el aviso pulsante del Ataque en Conjunto)
         // que quieren su propio color de acento en vez del rojo estandar, sin perder la misma
@@ -48,6 +51,56 @@ namespace Gameplay
             GUI.Label(r, label, style);
 
             return clicked;
+        }
+
+        public static bool DrawForest(Rect rect, string label, bool enabled = true, Color? accentColor = null, int fontSize = 0)
+        {
+            bool hover = enabled && Event.current != null && rect.Contains(Event.current.mousePosition);
+            bool down = hover && Event.current.type == EventType.MouseDown && Event.current.button == 0;
+            float lift = hover ? -2f : 0f;
+            if (down) lift = 1f;
+            var r = new Rect(rect.x, rect.y + lift, rect.width, rect.height);
+            Color accent = accentColor ?? new Color(0.43f, 0.74f, 0.43f);
+            DrawRect(new Rect(r.x + 2, r.y + 3, r.width, r.height), new Color(0.02f, 0.06f, 0.04f, 0.62f));
+            DrawRect(new Rect(r.x, r.y, r.width, r.height), enabled ? new Color(0.72f, 0.79f, 0.58f) : new Color(0.36f, 0.4f, 0.34f));
+            DrawRect(new Rect(r.x + 2, r.y + 2, r.width - 4, r.height - 4), hover ? new Color(0.12f, 0.25f, 0.18f) : new Color(0.08f, 0.17f, 0.13f));
+            DrawRect(new Rect(r.x + 5, r.y + 4, 3, r.height - 8), enabled ? accent : new Color(0.34f, 0.37f, 0.33f));
+            bool clicked = enabled && GUI.Button(r, "", GUIStyle.none);
+            var style = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontStyle = FontStyle.Bold,
+                fontSize = fontSize > 0 ? fontSize : (int)Mathf.Clamp(rect.height * 0.48f, 11f, 17f),
+                wordWrap = false,
+            };
+            style.normal.textColor = enabled ? new Color(0.91f, 0.92f, 0.79f) : new Color(0.54f, 0.58f, 0.51f);
+            GUI.Label(r, label, style);
+            if (clicked) AddForestSparks(rect.center, accent);
+            return clicked;
+        }
+
+        public static void DrawForestEffects()
+        {
+            if (Event.current == null || Event.current.type != EventType.Repaint) return;
+            float now = Time.unscaledTime;
+            for (int i = _forestSparks.Count - 1; i >= 0; i--)
+            {
+                var spark = _forestSparks[i];
+                float t = (now - spark.Start) / 0.32f;
+                if (t >= 1f) { _forestSparks.RemoveAt(i); continue; }
+                float alpha = 1f - t;
+                Vector2 p = spark.Origin + spark.Direction * (12f * t);
+                DrawRect(new Rect(p.x - 1.5f, p.y - 1.5f, 3f, 3f), new Color(spark.Color.r, spark.Color.g, spark.Color.b, alpha));
+            }
+        }
+
+        private static void AddForestSparks(Vector2 origin, Color color)
+        {
+            for (int i = 0; i < 7; i++)
+            {
+                float angle = (i / 7f) * Mathf.PI * 2f + Random.Range(-0.18f, 0.18f);
+                _forestSparks.Add(new ClickSpark { Origin = origin, Direction = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)), Start = Time.unscaledTime, Color = color });
+            }
         }
 
         private static void DrawRect(Rect rect, Color color)

@@ -34,14 +34,18 @@ namespace Gameplay
                 var view = battleStage.GetEnemyView(i);
                 if (view == null) continue;
 
-                Vector3 screenPos = cam.WorldToScreenPoint(view.TopAnchor);
+                // Stable (no WorldToScreenPoint a secas): evita que la barra salte con cada
+                // muestra al azar del temblor de camara -- ver CombatFeedback.WorldToScreenPointStable.
+                Vector3 screenPos = CombatFeedback.WorldToScreenPointStable(cam, view.TopAnchor);
                 if (screenPos.z <= 0f) continue; // detras de la camara
 
                 float x = screenPos.x - BarWidth / 2f;
                 float y = Screen.height - screenPos.y;
 
-                float hpFrac = enemy.MaxHP > 0 ? (float)enemy.HP / enemy.MaxHP : 0f;
-                DrawBar(x, y, hpFrac, HpColor(hpFrac));
+                // Barra con textura + relleno "liquido" + trail de dano (ver
+                // Gameplay/HealthBarWidget) -- a proposito SIN el numero exacto encima, esto sigue
+                // siendo la lectura rapida "en el mundo" (ver comentario de clase).
+                HealthBarWidget.Draw(new Rect(x, y, BarWidth, HpBarHeight), (enemy, BarKind.Hp), enemy.HP, enemy.MaxHP, BarKind.Hp);
 
                 if (enemy.MaxPoise > 0)
                 {
@@ -71,15 +75,6 @@ namespace Gameplay
             var style = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold };
             style.normal.textColor = color;
             GUI.Label(new Rect(barX - 10f, y, BarWidth + 20f, 14f), text, style);
-        }
-
-        // Verde por encima de la mitad, amarillo en la mitad baja, rojo cerca de morir -- sin
-        // mostrar el numero, para que la barra "encima del enemigo" sea puramente visual.
-        private static Color HpColor(float frac)
-        {
-            if (frac > 0.5f) return new Color(0.3f, 0.85f, 0.35f);
-            if (frac > 0.25f) return new Color(0.95f, 0.85f, 0.25f);
-            return new Color(0.9f, 0.25f, 0.2f);
         }
 
         // Cian normal; se pone blanco brillante cuando esta a punto de romperse, para avisar que

@@ -65,9 +65,22 @@ namespace Meta
         public List<EquipmentInstance> Inventory = new List<EquipmentInstance>();
         public List<EquipmentSlot> EquippedItems = new List<EquipmentSlot>();
 
+        // Pasivas equipadas (ver Combat.PassiveCatalog/PassiveAbility, Meta.PassiveSlot): a
+        // diferencia del equipamiento de arriba, NO son instancias fisicas -- cualquier id del
+        // catalogo se puede poner en cualquiera de los PassiveCatalog.SlotsPerCharacter slots de
+        // cualquier personaje, sin limite de cuantas veces se repite entre personajes distintos.
+        public List<PassiveSlot> EquippedPassives = new List<PassiveSlot>();
+
         // Codex: ids de Lore.LoreCatalog ya descubiertos explorando la mazmorra (ver
         // DungeonGen.CellType.Lore); tambien es lo que exige ShortcutGate.RequiredLoreId.
         public List<string> UnlockedLoreIds = new List<string>();
+
+        // Codex de formas de sala (ver DungeonGen.RoomTemplate/RoomTemplateLibrary): a diferencia
+        // del lore, esto NO se descubre solo con pisar la sala -- el jugador tiene que "guardarla"
+        // a mano desde la pestaña Mapa del menu de pausa (pedido puntual: "reconocer formas que se
+        // repitan entre runs"), asi que sobrevive entre partidas igual que el resto de MetaProgress
+        // aunque la mazmorra se regenere entera la proxima run.
+        public List<string> RecognizedRoomTemplateNames = new List<string>();
 
         public const int PointsPerFloorReached = 15;
         public const int PointsPerEnemyDefeated = 5;
@@ -284,6 +297,44 @@ namespace Meta
             return result;
         }
 
+        // Slot vacio = "" (nunca null) en el PassiveSlot ya creado, o directamente ningun
+        // PassiveSlot todavia para ese (clase, indice) -- ambos casos devuelven null aca.
+        public string GetEquippedPassiveId(CharacterClass cls, int slotIndex) =>
+            EquippedPassives.Find(p => p.Class == cls && p.SlotIndex == slotIndex)?.PassiveId;
+
+        public PassiveAbility GetEquippedPassive(CharacterClass cls, int slotIndex)
+        {
+            string id = GetEquippedPassiveId(cls, slotIndex);
+            return string.IsNullOrEmpty(id) ? null : PassiveCatalog.Find(id);
+        }
+
+        // passiveId vacio/null desequipa ese slot. Sin restricciones (a diferencia de
+        // SetEquippedInstance): cualquier pasiva del catalogo entra en cualquier slot de
+        // cualquier clase, no hay nada fisico que validar.
+        public void SetEquippedPassive(CharacterClass cls, int slotIndex, string passiveId)
+        {
+            var existing = EquippedPassives.Find(p => p.Class == cls && p.SlotIndex == slotIndex);
+            if (existing == null)
+            {
+                existing = new PassiveSlot { Class = cls, SlotIndex = slotIndex };
+                EquippedPassives.Add(existing);
+            }
+            existing.PassiveId = passiveId ?? "";
+        }
+
+        // Las hasta PassiveCatalog.SlotsPerCharacter pasivas equipadas por esta clase, resueltas y
+        // sin nulls -- para sumar sus bonuses (ver ApplyUpgradesToParty) o mostrarlas en la UI.
+        public List<PassiveAbility> GetEquippedPassives(CharacterClass cls)
+        {
+            var result = new List<PassiveAbility>();
+            for (int i = 0; i < PassiveCatalog.SlotsPerCharacter; i++)
+            {
+                var passive = GetEquippedPassive(cls, i);
+                if (passive != null) result.Add(passive);
+            }
+            return result;
+        }
+
         public bool IsLoreUnlocked(string loreId) => !string.IsNullOrEmpty(loreId) && UnlockedLoreIds.Contains(loreId);
 
         // Devuelve true solo la PRIMERA vez que se desbloquea este id (para poder mostrar un
@@ -292,6 +343,18 @@ namespace Meta
         {
             if (string.IsNullOrEmpty(loreId) || UnlockedLoreIds.Contains(loreId)) return false;
             UnlockedLoreIds.Add(loreId);
+            return true;
+        }
+
+        public bool IsRoomTemplateRecognized(string templateName) =>
+            !string.IsNullOrEmpty(templateName) && RecognizedRoomTemplateNames.Contains(templateName);
+
+        // Igual patron que UnlockLore: true solo la PRIMERA vez (para el aviso de "nuevo"), false
+        // si ya estaba guardada.
+        public bool RecognizeRoomTemplate(string templateName)
+        {
+            if (string.IsNullOrEmpty(templateName) || RecognizedRoomTemplateNames.Contains(templateName)) return false;
+            RecognizedRoomTemplateNames.Add(templateName);
             return true;
         }
 
@@ -328,6 +391,21 @@ namespace Meta
                 character.OnHitStatusChancePercent = totals.OnHitWeapon?.OnHitStatusChancePercent ?? 0;
                 character.OnHitStatusDamagePercent = totals.OnHitWeapon?.OnHitStatusDamagePercent ?? 0;
                 character.OnHitStatusRounds = totals.OnHitWeapon?.OnHitStatusRounds ?? 0;
+
+                // Pasivas equipadas (ver GetEquippedPassives/PassiveCatalog): mismo criterio que
+                // el equipamiento de arriba, bonus fijos sobre las stats base.
+                foreach (var passive in GetEquippedPassives(character.Class))
+                {
+                    character.Attack += passive.AttackBonus;
+                    character.MagicAttack += passive.MagicAttackBonus;
+                    character.Defense += passive.DefenseBonus;
+                    character.Speed += passive.SpeedBonus;
+                    character.Evasion += passive.EvasionBonus;
+                    character.Luck += passive.LuckBonus;
+                    character.MaxHP += passive.MaxHpBonus;
+                    character.MaxTP += passive.MaxTpBonus;
+                    character.ThornsReflectPercent += passive.ThornsReflectPercent;
+                }
 
                 // Balas extra compradas (ver TryPurchaseBullets): no hacen nada si este personaje
                 // no es Gunner (los demas ni miran estos campos), asi que sumarlas siempre es seguro.
