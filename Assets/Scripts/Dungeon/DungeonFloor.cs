@@ -67,6 +67,12 @@ namespace DungeonGen
         public List<(int, int)> TreasurePositions;
         public List<(int, int)> TreasureRoomCells;
 
+        // Tumbas del Bioma de Cuevas (pedido puntual, ver DungeonGenerator.AddTombs): el tesoro
+        // garantizado de ESE bioma en vez de TreasurePositions de arriba (nunca se usan los dos a
+        // la vez en el mismo piso). Cada posicion es la celda INTERACTIVA (CellType.Tomb); la mitad
+        // decorativa vecina de cada una vive en DungeonCell.IsTombDecor, no aca.
+        public List<(int, int)> TombPositions;
+
         public (int x, int y) StartPos;
         public (int x, int y) EndPos;
         public (int x, int y) SecondaryQuestPos;
@@ -108,11 +114,18 @@ namespace DungeonGen
         public TrapKind TrapKind;
         public bool HasTrapRoom => TrapRoomCells != null && TrapRoomCells.Count > 0;
 
-        // A que bioma pertenece este piso (0 = el original). Los pisos con Biome != 0 son su propia
-        // mazmorra aparte (ver Gameplay/DungeonManager.GenerateAndEnterDungeon), con su propia
-        // secuencia de escaleras ENTRE ELLOS -- pero nunca conectada por escalera a los pisos de
-        // Biome 0: al primero de ellos solo se llega vía CellType.BiomeGate.
+        // A que bioma pertenece este piso (0 = bosque principal, 1 = espacial, 2 = cuevas,
+        // 3 = patio exterior del castillo, 4 = interior del castillo). Los biomas secundarios
+        // tienen su propia secuencia de escaleras y se conectan por accesos geograficos.
         public int Biome;
+
+        // Orden de este piso dentro de su secuencia de bioma (independiente del indice global).
+        // Permite distribuir salas tematicas antes de que DungeonManager conecte las regiones.
+        public int BiomeFloorIndex;
+
+        // Subzona geografica: en biome 3, 0 patio frontal, 1 lateral, 2 trasero; en biome 4,
+        // 0 salon, 1-2 torre y 3-4 sotanos.
+        public int CastleRegion = -1;
 
         // Posicion de la celda BiomeGate ("Puerta Fria") de este piso, si tiene una, y de la
         // celda desde la que se la perfora (para protegerla de PruneToSparseMaze -- ver
@@ -125,6 +138,19 @@ namespace DungeonGen
         // mismo destino (Bioma 2) pero sin secreto: una escalera comun en el punto mas profundo de
         // la "mini cueva" del piso 0. Null si este piso no tiene ninguna.
         public (int x, int y)? CaveBiomeExitPos;
+
+        // Entrada secundaria al castillo en el cuadrante aislado del piso 2 del bosque.
+        public (int x, int y)? CastleGatePos;
+
+        // Portal al hub, creado en runtime al vencer al jefe del bosque.
+        public (int x, int y)? HubPortalPos;
+
+        // Boveda de cascada de este piso (ver DungeonGenerator.AddWaterfallVault): null si este
+        // piso no tiene una. WaterfallVaultTriggered se pone en true la primera vez que se entra en
+        // combate contra el guardian (ver Gameplay/DungeonManager.OnPlayerEnterCell), para que
+        // volver a pisar la celda despues no dispare la pelea de nuevo.
+        public (int x, int y)? WaterfallVaultPos;
+        public bool WaterfallVaultTriggered;
 
         // Solo para TrapKind.ArrowSweep (ver Gameplay/TrapDisparadorController): la maquina real
         // vive montada en la pared de UNO de los dos extremos de TrapArrowPath (TrapDisparadorPos),
@@ -145,6 +171,41 @@ namespace DungeonGen
         public List<(int, int)> LoreCorridorRoomCells;
         public PuzzleKind LoreCorridorKind;
         public bool HasLoreCorridor => LoreCorridorRoomCells != null && LoreCorridorRoomCells.Count > 0;
+
+        // 3 peligros exclusivos de la "mini cueva" (zona aislada del piso 0, ver
+        // DungeonGenerator.PlaceCaveBiomeExit) -- pedido puntual: la mini cueva completa se sentia
+        // vacia comparada con el resto del piso (candado/palanca, sala de trampas, sala de pistas),
+        // esto le da su propio contenido de riesgo. Los 3 son opcionales/best-effort: si no hay
+        // lugar libre para alguno en el cuadrante, se lo salta sin romper nada (ver GenerateDungeon).
+
+        // Roca que persigue (ver Gameplay/BoulderTrapController): un tramo recto YA carveado por el
+        // laberinto (no una sala nueva) se marca como corredor de la trampa. BoulderTrapPath queda
+        // en el orden real de persecucion (desde donde arranca hacia el otro extremo, que SIEMPRE
+        // tiene una salida real -- ver DungeonGenerator.AddBoulderTrap). Pisar BoulderTrapStartPos
+        // dispara la roca; se puede volver a disparar cada vez que se re-entra (no es de un solo uso).
+        public List<(int x, int y)> BoulderTrapPath;
+        public (int x, int y) BoulderTrapStartPos;
+        public bool HasBoulderTrap => BoulderTrapPath != null && BoulderTrapPath.Count > 0;
+
+        // Sala que colapsa (ver DungeonGenerator.AddCollapsingRushRoom / Gameplay/DungeonManager.
+        // CollapseRoomRoutine): sala grande con conexion real en DOS lados (para que cruzarla tenga
+        // sentido, no solo entrar y volver). Al pisar CollapseEntryPos arranca una ola de colapso en
+        // CollapseOrder (BFS desde la entrada, la salida en CollapseExitPos nunca colapsa) -- cada
+        // celda que le toca el turno queda IsCollapseFallen (ver DungeonCell), y pisarla te hace caer
+        // al piso de abajo igual que Goteras. Una sola vez por run (CollapseTriggered).
+        public List<(int, int)> CollapseRoomCells;
+        public List<(int x, int y)> CollapseOrder;
+        public (int x, int y) CollapseEntryPos;
+        public (int x, int y) CollapseExitPos;
+        public bool CollapseTriggered;
+        public bool HasCollapseRoom => CollapseRoomCells != null && CollapseRoomCells.Count > 0;
+
+        // Sala de emboscada (ver DungeonGenerator.AddAmbushRoom): pisar CUALQUIER celda de la sala
+        // dispara un combate sorpresa (Gameplay/DungeonManager.OnPlayerEnterCell), una sola vez por
+        // run (AmbushTriggered) -- despues la sala queda "limpia", se puede cruzar tranquilo.
+        public List<(int, int)> AmbushRoomCells;
+        public bool AmbushTriggered;
+        public bool HasAmbushRoom => AmbushRoomCells != null && AmbushRoomCells.Count > 0;
 
         public DungeonFloor(int width, int height, int index)
         {

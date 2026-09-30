@@ -25,6 +25,11 @@ namespace DungeonGen
         [Range(0f, 0.7f)]
         public float voidFraction = 0.4f;
 
+        [Header("Fusion ocasional de celdas (camaras mas grandes e irregulares)")]
+        [Tooltip("Chance (por pared elegible entre 2 celdas Normal ya conectadas al resto por otro lado) de abrirla igual, fusionando esa celda con su vecina en un espacio mas grande. Nunca toca un punto muerto real (el cofre/la Puerta Fria/la palanca del candado lo necesitan), asi que subir esto no reduce el contenido garantizado del piso -- solo lo hace sentir menos parejo. 0 = laberinto de corredores angostos, como antes.")]
+        [Range(0f, 0.3f)]
+        public float extraOpeningChance = 0.12f;
+
         [Header("Piso de jefe (sala grande obligatoria con jefe + escalera)")]
         [Tooltip("Primer piso (indice, empezando en 0) que tiene sala de jefe.")]
         public int bossFloorStart = 2;
@@ -39,7 +44,7 @@ namespace DungeonGen
         [Range(0, 5)]
         public int dangerValueMax = 5;
         [Tooltip("Minimo del limite oculto: cuando el contador de pasos supera este limite (elegido al azar tras cada combate o al entrar a un piso nuevo), aparece un encuentro y el contador se reinicia.")]
-        public int encounterThresholdMin = 16;
+        public int encounterThresholdMin = 34;
         [Tooltip("Maximo del limite oculto de pasos.")]
         public int encounterThresholdMax = 64;
     }

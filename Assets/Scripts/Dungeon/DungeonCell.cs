@@ -20,12 +20,67 @@ namespace DungeonGen
         public bool IsTrapRoom;
         public bool IsTrapCell;
 
+        // Celda de una sala de autor con forma prediseñada (ver DungeonGenerator.
+        // PlacePredefinedRooms/RoomTemplate): sus paredes internas y puertas se estampan del
+        // molde, no las decide Carve(). Protegida de PruneToSparseMaze y excluida de cualquier
+        // busqueda de punto libre (cofre/mision secundaria/Puerta Fria/etc.) para que la forma de
+        // autor quede intacta y "limpia", sin contenido de otro sistema apilado encima.
+        public bool IsPredefinedRoom;
+
+        // Nombre del RoomTemplate del que salio esta celda (ver DungeonGenerator.TryStampRoomAt),
+        // null si IsPredefinedRoom es false. Sirve para el "codex de formas" (ver MetaProgress.
+        // RecognizedRoomTemplateNames / PauseMenuHUD): el jugador puede guardar a mano, desde la
+        // pestaña Mapa, que ya reconoce esta forma -- asi la reconoce entre runs aunque la
+        // mazmorra entera cambie.
+        public string PredefinedRoomTemplateName;
+
+        // Celda peligrosa DENTRO de una sala de autor (ver RoomTemplate, caracter '^'): lastima al
+        // pisarla igual que una trampa de picos, pero es personalidad de esa sala especifica, NO el
+        // sistema de DungeonFloor.TrapKind/AddTrapRoom (que sigue siendo el unico dueño de esos
+        // campos) -- por eso es un flag totalmente aparte. A proposito nunca tiene una forma de
+        // desactivarse: la unica manera de lidiar con ella es esquivarla, a diferencia de la trampa
+        // de flechas que si se puede destruir con el Perforador.
+        public bool IsPredefinedRoomHazard;
+
         // Sala de pistas (ver DungeonGenerator.AddLoreCorridorRoom): grilla de piso "trampa" donde
         // solo un tell visual (particulas, ver DungeonLevelBuilder.BuildPuzzleTile) distingue las
         // celdas reales (IsPuzzleTileSafe true) de las que ceden. IsPuzzleTile marca cualquier
         // celda de la grilla, sea segura o no.
         public bool IsPuzzleTile;
         public bool IsPuzzleTileSafe;
+
+        // Peligros de la mini cueva del piso 0 (ver DungeonFloor.BoulderTrapPath/CollapseRoomCells/
+        // AmbushRoomCells para el detalle de cada mecanismo -- estos 3 flags solo marcan que celda
+        // pertenece a cual).
+        public bool IsBoulderTrapCell;
+        public bool IsCollapseRoom;
+        // Runtime: esta celda de la sala que colapsa ya cayo (ver Gameplay/DungeonManager.
+        // CollapseRoomRoutine) -- pisarla hace caer al piso de abajo, igual que Goteras.
+        public bool IsCollapseFallen;
+        public bool IsAmbushRoom;
+
+        // Boveda de cascada (pedido puntual, ver DungeonGenerator.AddWaterfallVault): un guardian
+        // fuerte con un tesoro garantizado, al fondo de un callejon sin salida detras de una
+        // cascada. IsWaterfallRoom marca la celda de ADELANTE (la cascada real + la fuente de agua
+        // que la alimenta, solo decorativo); IsWaterfallVaultRoom marca la celda de la boveda en si
+        // (su unica conexion real es esa cascada) -- pisarla dispara el combate contra el guardian,
+        // ver Gameplay/DungeonManager.OnPlayerEnterCell.
+        public bool IsWaterfallRoom;
+        public bool IsWaterfallVaultRoom;
+
+        // Trampa de goblins del Bioma de Cuevas (pedido puntual, ver DungeonGenerator.AddGoblinTraps):
+        // celda de piso normal SIN ningun tell visual (a proposito -- son goblins emboscando, no un
+        // mecanismo que se pueda desactivar como la sala de trampas comun). Pisarla dispara UN
+        // combate, una sola vez -- GoblinTrapTriggered es POR CELDA (a diferencia de
+        // DungeonFloor.AmbushTriggered, que es una unica bandera por piso) porque puede haber varias
+        // trampas de estas en el mismo piso, cada una independiente.
+        public bool IsGoblinTrap;
+        public bool GoblinTrapTriggered;
+
+        // Otra mitad puramente decorativa de una tumba vecina (ver CellType.Tomb / DungeonGenerator.
+        // AddTombs): esta celda sigue siendo Normal y caminable, IsTombDecor solo le agrega el resto
+        // del sarcofago encima en DungeonLevelBuilder.BuildTombDecor.
+        public bool IsTombDecor;
 
         public bool EventConsumed;
         public bool Discovered; // runtime: revelado en el minimapa del jugador al pisarlo
@@ -49,7 +104,7 @@ namespace DungeonGen
         // Populated when Type == Lore: el id de la entrada de Codex que se desbloquea al pisarla.
         public string AssignedLoreId;
 
-        // Populated when Type == StairsUp / StairsDown
+        // Populated when Type == StairsUp / StairsDown or one of the castle entrance doors.
         public int StairTargetFloor = -1;
         public int StairTargetX = -1;
         public int StairTargetY = -1;
