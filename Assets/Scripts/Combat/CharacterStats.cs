@@ -2,6 +2,18 @@ using System.Collections.Generic;
 
 namespace Combat
 {
+    // Gunner (ver CombatEngine.ResolveClassAwareHit): Rifle pega colateral en cruz (fila+columna)
+    // con descuento por objetivo extra; Shotgun no pega colateral pero el unico objetivo recibe
+    // mas dano. Aplica igual al ataque basico Y a la habilidad -- la bala elemental cargada no
+    // depende de esto para nada, son ejes independientes (que arma + que elemento).
+    public enum GunnerWeaponMode { Rifle, Shotgun }
+
+    // Ranger: mismo mecanismo que GunnerWeaponMode/LoadedBulletElement de arriba pero para
+    // estados en vez de elementos (ver CharacterStats.PoisonArrows/etc. y LoadedArrowType mas
+    // abajo, y CombatEngine.ApplyLoadedArrowStatus). None = flechas normales, sin chance de
+    // estado.
+    public enum RangerArrowType { None, Poison, Paralysis, Bleed }
+
     public class CharacterStats
     {
         public string Name = "";
@@ -46,6 +58,12 @@ namespace Combat
         // AoeDamageMultiplier para el descuento de dano por objetivo que lo compensa).
         public bool SkillIsAoe;
 
+        // Ranger, "Ataque Cruzado": su HABILIDAD (nunca el basico) pega a TODOS los enemigos VIVOS
+        // de la fila delantera (fila 0 de la grilla logica, ver CombatEngine.GridRowCol) a la vez,
+        // sin importar cual haya elegido el jugador como objetivo -- mismo descuento por objetivo
+        // que el Alquimista (AoeDamageMultiplier), solo que acotado a esa fila en vez de a todos.
+        public bool SkillHitsEnemyFrontRow;
+
         // Berserker: la habilidad es una POSTURA propia (sin objetivo) que se activa/desactiva --
         // mientras IsEnraged este activo, EffectiveAttack sube y EffectiveDefense baja (ver
         // CombatEngine.EnrageAttackBonus/EnrageDefensePenalty).
@@ -76,6 +94,29 @@ namespace Combat
         public int IceBullets;
         public int VoltBullets;
         public Element LoadedBulletElement = Element.None;
+
+        // Que arma tiene puesta el Gunner (ver GunnerWeaponMode arriba y CombatEngine.
+        // ResolveClassAwareHit) -- irrelevante para cualquier otra clase.
+        public GunnerWeaponMode WeaponMode = GunnerWeaponMode.Rifle;
+
+        // Ranger: flechas de estado (arranca con 3 de cada una, ver PartyFactory) -- mismo
+        // mecanismo de carga+stock que las balas elementales del Gunner de arriba, pero en vez de
+        // cambiar el elemento del golpe, mientras LoadedArrowType no sea None Y quede stock de ese
+        // tipo, CUALQUIER golpe que conecte (ataque basico o habilidad) tiene chance de aplicarle
+        // ese estado al objetivo (ver CombatEngine.ApplyLoadedArrowStatus; se gasta 1 flecha por
+        // golpe usado, igual que ConsumeLoadedBullet).
+        public int PoisonArrows;
+        public int ParalysisArrows;
+        public int BleedArrows;
+        public RangerArrowType LoadedArrowType = RangerArrowType.None;
+
+        // Dano sostenido recibido (veneno de un enemigo, ver EnemyStats.OnHitStatus* / Babosa en
+        // EnemyFactory): mismo mecanismo que EnemyStats.DotRoundsLeft/DotDamagePerRound/DotLabel
+        // pero en la direccion enemigo-a-party -- tickea en CombatEngine.BuildTurnOrder igual que
+        // el del enemigo.
+        public int DotRoundsLeft;
+        public int DotDamagePerRound;
+        public string DotLabel;
 
         // Las 2 secuencias fijas de 3 teclas del QTE para la habilidad de este personaje. Al usar
         // la habilidad se elige una de las dos al azar para presentarle al jugador.

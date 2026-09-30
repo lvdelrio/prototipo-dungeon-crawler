@@ -29,7 +29,36 @@ namespace Gameplay
         // empuje hacia atras -- le da tiempo real de sacarle distancia.
         private const int FleeStunSteps = 2;
 
-        private static readonly Color CalmColor = Color.white;
+        // Pedido puntual: en persecucion de verdad (StepToward, no la patrulla), cada
+        // ChaseRestInterval pasos el FOE se queda quieto UNO, dandole al jugador una ventana real
+        // para reaccionar (curarse, doblar una esquina, etc.) en vez de una persecucion sin
+        // respiro. Se reinicia cada vez que arranca una persecucion nueva (ver AdvanceStep).
+        private const int ChaseRestInterval = 3;
+
+        // Radio de exclusion alrededor de CUALQUIER escalera del piso (ver DungeonGenerator.
+        // FoeStairsExclusionRadius -- misma constante, un solo punto de verdad): StepToward/BfsNextStep
+        // jamas planea un camino que entre ahi, ni siquiera si el jugador esta parado adentro (en ese
+        // caso el BFS no encuentra camino y el FOE se queda quieto, ver BfsNextStep). Las escaleras
+        // son zona seguras de verdad, no solo "dificiles de alcanzar".
+
+        // ---------- Comportamiento de dia/noche en la rutina BASICA (patrulla, no persecucion) ----------
+        // Pedido puntual: "al menos 3 comportamientos, tanto de dia como de noche". Los 3 viven en
+        // StepAlongRoute/CanSeePlayer, atados a Gameplay.DayNightCycle.NightAmount (0 = dia pleno,
+        // 1 = noche plena -- ver ese archivo). Se usa un umbral (>=0.5) en vez del valor continuo
+        // para que el cambio de comportamiento sea binario y facil de probar/observar, aunque el
+        // color (mas abajo) si interpola parejo con el valor real.
+        //  1) Vision: de noche ve mas lejos (NightVisionBonus) -- mas peligroso, mas dificil de evadir.
+        //  2) Tempo: de noche, cada paso de patrulla tiene chance de sumar un paso extra de una
+        //     (mas inquieto/agresivo); de dia siempre es un paso por llamada, como antes.
+        //  3) Descanso: de dia, al llegar a una punta de su ruta y dar la vuelta, se queda quieto
+        //     unos pasos antes de retomar (tranquilo a la luz); de noche da la vuelta de inmediato.
+        private const float NightThreshold = 0.5f;
+        private const int NightVisionBonus = 3;
+        private const float NightExtraStepChance = 0.4f;
+        private const int DayRestStepsAtTurn = 2;
+
+        private static readonly Color CalmColorDay = Color.white;
+        private static readonly Color CalmColorNight = new Color(0.55f, 0.35f, 0.78f);
         private static readonly Color ChaseColor = new Color(0.85f, 0.12f, 0.1f);
 
         // Altura fija (por encima del piso de la celda) a la que flota la esfera -- mas o menos a
@@ -39,9 +68,13 @@ namespace Gameplay
         private DungeonFloor _floor;
         private System.Func<int, int, Direction, bool> _canMove;
         private System.Func<int, int, Vector3> _cellToWorld;
+        private DayNightCycle _dayNight;
         private int _routeIndex;
         private int _routeDir = 1;
         private int _stunnedSteps;
+        private int _restSteps;
+        private int _chaseStepCounter;
+        private List<(int x, int y)> _stairs;
         private Renderer _renderer;
         private int _hp;
         private int _maxHp;
@@ -50,13 +83,24 @@ namespace Gameplay
         public int Y { get; private set; }
         public bool IsChasing { get; private set; }
 
+        // >= NightThreshold en vez del valor continuo: los 3 comportamientos de abajo cambian de
+        // golpe entre "modo dia" y "modo noche", no se van atenuando a mitad de camino.
+        private bool IsNight => _dayNight != null && _dayNight.NightAmount >= NightThreshold;
+
         public void Initialize(DungeonFloor floor, System.Func<int, int, Direction, bool> canMove,
-            System.Func<int, int, Vector3> cellToWorld, float cellSize, int maxHp)
+            System.Func<int, int, Vector3> cellToWorld, float cellSize, int maxHp, DayNightCycle dayNight = null)
         {
             _floor = floor;
             _canMove = canMove;
             _cellToWorld = cellToWorld;
             _maxHp = maxHp;
+            _dayNight = dayNight;
+
+            _stairs = new List<(int x, int y)>();
+            for (int x = 0; x < floor.Width; x++)
+                for (int y = 0; y < floor.Height; y++)
+                    if (floor.Cells[x, y].Type == CellType.StairsUp || floor.Cells[x, y].Type == CellType.StairsDown)
+                        _stairs.Add((x, y));
 
             if (floor.FoeSavedX >= 0)
             {
@@ -70,10 +114,15 @@ namespace Gameplay
             }
             else
             {
-                _routeIndex = 0;
-                _routeDir = 1;
+                // Pedido puntual: arranca del lado OPUESTO a la escalera por la que el jugador sube
+                // a este piso -- el ULTIMO indice de la ruta es el extremo mas cerca de floor.EndPos
+                // (ver DungeonGenerator.PlaceFoeRoute), nunca del lado de floor.StartPos/la escalera
+                // real de entrada. _routeDir=-1 porque desde ahi lo natural es empezar caminando
+                // hacia atras (indices decrecientes), de vuelta hacia el otro extremo.
+                _routeIndex = floor.FoePatrolRoute.Count - 1;
+                _routeDir = -1;
                 _hp = maxHp;
-                (X, Y) = floor.FoePatrolRoute[0];
+                (X, Y) = floor.FoePatrolRoute[_routeIndex];
             }
 
             var visual = GameObject.CreatePrimitive(PrimitiveType.Sphere);
@@ -83,10 +132,15 @@ namespace Gameplay
             if (col != null) Destroy(col);
             visual.transform.localScale = Vector3.one * (cellSize * 0.55f);
             _renderer = visual.GetComponent<Renderer>();
-            _renderer.material.color = IsChasing ? ChaseColor : CalmColor;
+            _renderer.material.color = IsChasing ? ChaseColor : CurrentCalmColor;
 
             transform.position = cellToWorld(X, Y) + Vector3.up * FloatHeight;
         }
+
+        // Cuarto detalle (cosmetico, no cuenta como uno de los 3 comportamientos de arriba): tinte
+        // mas ominoso de noche mientras patrulla tranquilo, interpolado parejo con el NightAmount
+        // real (no con el umbral binario de IsNight) para que la transicion se vea suave.
+        private Color CurrentCalmColor => Color.Lerp(CalmColorDay, CalmColorNight, _dayNight != null ? _dayNight.NightAmount : 0f);
 
         // Se llama 1 vez por cada paso que da el jugador. Devuelve true si el FOE quedo en la
         // MISMA celda que el jugador (colision) -- quien llama es responsable de arrancar el combate.
@@ -102,6 +156,7 @@ namespace Gameplay
             if (!IsChasing && canSee)
             {
                 IsChasing = true;
+                _chaseStepCounter = 0; // persecucion nueva: arranca la cuenta de pasos de cero
             }
             else if (IsChasing && !canSee)
             {
@@ -109,37 +164,54 @@ namespace Gameplay
                 if (distFromRoute > LoseRouteDistance) IsChasing = false;
             }
 
-            if (IsChasing) StepToward(playerX, playerY);
-            else StepAlongRoute();
+            if (IsChasing)
+            {
+                // Pedido puntual: cada ChaseRestInterval pasos de persecucion de verdad, se queda
+                // quieto UNO -- le da al jugador una ventana real para reaccionar en vez de una
+                // persecucion sin respiro. La colision (return de mas abajo) se sigue chequeando
+                // igual aunque no se haya movido: si el jugador camina hacia el FOE quieto, choca.
+                _chaseStepCounter++;
+                if (_chaseStepCounter >= ChaseRestInterval) _chaseStepCounter = 0;
+                else StepToward(playerX, playerY);
+            }
+            else
+            {
+                StepAlongRoute();
+            }
 
             transform.position = _cellToWorld(X, Y) + Vector3.up * FloatHeight;
-            _renderer.material.color = IsChasing ? ChaseColor : CalmColor;
+            _renderer.material.color = IsChasing ? ChaseColor : CurrentCalmColor;
 
             return X == playerX && Y == playerY;
         }
 
         // Vision en linea recta (mismo criterio que un FOE de Etrian Odyssey): solo detecta si el
         // jugador comparte fila o columna Y no hay ninguna pared cerrada entre medio, hasta
-        // VisionRange casillas. Reusa el mismo _canMove que ya usa el jugador para moverse, asi
-        // que respeta paredes/Void real del piso sin duplicar esa logica.
+        // EffectiveVisionRange casillas. Reusa el mismo _canMove que ya usa el jugador para
+        // moverse, asi que respeta paredes/Void real del piso sin duplicar esa logica.
         private bool CanSeePlayer(int playerX, int playerY)
         {
             if (X == playerX && Y == playerY) return true;
 
+            int visionRange = EffectiveVisionRange;
             if (Y == playerY)
             {
                 int dist = Mathf.Abs(playerX - X);
-                if (dist > VisionRange) return false;
+                if (dist > visionRange) return false;
                 return IsClearLine(playerX > X ? Direction.East : Direction.West, dist);
             }
             if (X == playerX)
             {
                 int dist = Mathf.Abs(playerY - Y);
-                if (dist > VisionRange) return false;
+                if (dist > visionRange) return false;
                 return IsClearLine(playerY > Y ? Direction.North : Direction.South, dist);
             }
             return false;
         }
+
+        // Comportamiento 1 (noche): ve mas lejos en la oscuridad -- mas peligroso, mas dificil de
+        // evadir por un pasillo largo. De dia se queda en el VisionRange base de siempre.
+        private int EffectiveVisionRange => IsNight ? VisionRange + NightVisionBonus : VisionRange;
 
         private bool IsClearLine(Direction dir, int dist)
         {
@@ -156,15 +228,31 @@ namespace Gameplay
 
         private void StepAlongRoute()
         {
+            // Comportamiento 3 (dia): descansando en una punta de la ruta -- no se mueve este
+            // paso, solo cuenta la cuenta regresiva. De noche esto nunca llega a activarse (ver
+            // mas abajo), asi que siempre sigue de largo.
+            if (_restSteps > 0) { _restSteps--; return; }
+
             var route = _floor.FoePatrolRoute;
             int next = _routeIndex + _routeDir;
-            if (next < 0 || next >= route.Count)
+            bool reachedEnd = next < 0 || next >= route.Count;
+            if (reachedEnd)
             {
                 _routeDir = -_routeDir;
                 next = _routeIndex + _routeDir;
+                if (!IsNight) _restSteps = DayRestStepsAtTurn;
             }
             _routeIndex = Mathf.Clamp(next, 0, route.Count - 1);
             (X, Y) = route[_routeIndex];
+
+            // Comportamiento 2 (noche): inquieto/agresivo -- chance de sumar un paso extra de una
+            // (sin esperar el proximo paso del jugador). Nunca en el mismo llamado en que recien
+            // dio la vuelta, para no pisarse con el comportamiento 3 de arriba.
+            if (IsNight && !reachedEnd && Random.value < NightExtraStepChance)
+            {
+                _routeIndex = Mathf.Clamp(_routeIndex + _routeDir, 0, route.Count - 1);
+                (X, Y) = route[_routeIndex];
+            }
         }
 
         // Persecucion real via BFS (equivalente a Dijkstra en una grilla sin costos por arista,
@@ -205,12 +293,24 @@ namespace Gameplay
                     var (ox, oy) = dir.Offset();
                     var next = (cur.Item1 + ox, cur.Item2 + oy);
                     if (visited.Contains(next)) continue;
+                    // Pedido puntual: las escaleras son zona segura de VERDAD -- el FOE ni siquiera
+                    // planea un camino que entre ahi. Si el objetivo (el jugador) esta parado
+                    // adentro, esto hace que el BFS nunca lo alcance y devuelva null mas abajo (se
+                    // queda quieto ese paso), en vez de acercarse hasta el borde.
+                    if (IsWithinStairsExclusionZone(next.Item1, next.Item2)) continue;
                     visited.Add(next);
                     cameFrom[next] = cur;
                     queue.Enqueue(next);
                 }
             }
             return null;
+        }
+
+        private bool IsWithinStairsExclusionZone(int x, int y)
+        {
+            foreach (var s in _stairs)
+                if (Chebyshev(x, y, s.x, s.y) < DungeonGenerator.FoeStairsExclusionRadius) return true;
+            return false;
         }
 
         // Huida exitosa (ver CombatManager.StartFoeEncounter): retrocede a la celda de SU ruta mas
@@ -231,7 +331,7 @@ namespace Gameplay
             IsChasing = false;
             _stunnedSteps = FleeStunSteps;
             transform.position = _cellToWorld(X, Y) + Vector3.up * FloatHeight;
-            _renderer.material.color = CalmColor;
+            _renderer.material.color = CurrentCalmColor;
         }
 
         // Dano de una trampa (picos o flecha, ver DungeonManager.HandleFoeSteppedOnTrap /

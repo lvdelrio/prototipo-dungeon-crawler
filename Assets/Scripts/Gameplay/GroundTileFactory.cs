@@ -28,6 +28,8 @@ namespace Gameplay
             (GroundTileKind.GrassLeaves, 0.12f),
             (GroundTileKind.GrassRockDirt, 0.09f),
             (GroundTileKind.Bush, 0.06f),
+            (GroundTileKind.FlowerBush, 0.035f),
+            (GroundTileKind.FlowerPatch, 0.045f),
             (GroundTileKind.Leaves, 0.05f),
         };
 
@@ -55,6 +57,8 @@ namespace Gameplay
             GroundTileKind.Leaves => new Color(0.32f, 0.24f, 0.10f),
             GroundTileKind.Path => new Color(0.24f, 0.28f, 0.20f),
             GroundTileKind.Bush => new Color(0.15f, 0.25f, 0.13f),
+            GroundTileKind.FlowerBush => new Color(0.15f, 0.25f, 0.13f),
+            GroundTileKind.FlowerPatch => new Color(0.17f, 0.27f, 0.13f),
             _ => new Color(0.16f, 0.27f, 0.14f),
         };
 
@@ -91,9 +95,27 @@ namespace Gameplay
             return _sharedMaterial;
         }
 
+        private static Material _grassGroundMaterial;
+
+        // Mismo Custom/PS1Ground que SharedMaterial, pero con la textura pintada de verdad
+        // asignada (ver Assets/Resources/Materials/PS1GroundGrass.mat -> Assets/Sprites/Ground/
+        // PineForestFloor.png) -- SOLO para las variantes de pasto (isGrassFamily en BuildTile).
+        // Mismo patron Resources-primero que SharedMaterial/GrassMaterial/SwordGrassMaterial: si el
+        // asset no esta (por ej. corriendo sin haber wireado el material en el Editor), cae de
+        // nuevo al shader sin textura -- se ve como el pasto de siempre, no rompe nada.
+        private static Material GrassGroundMaterial()
+        {
+            if (_grassGroundMaterial == null)
+            {
+                var resourceMat = Resources.Load<Material>("Materials/PS1GroundGrass");
+                _grassGroundMaterial = resourceMat != null ? new Material(resourceMat) : SharedMaterial(null);
+            }
+            return _grassGroundMaterial;
+        }
+
         // Mismo patron que SharedMaterial de arriba (Resources primero, Shader.Find como ultimo
         // recurso) para Custom/PS1Grass -- ver Assets/Resources/Materials/PS1Grass.mat.
-        private static Material GrassMaterial()
+        public static Material GrassMaterial()
         {
             if (_grassMaterial == null)
             {
@@ -116,17 +138,55 @@ namespace Gameplay
             return _grassMaterial;
         }
 
+        private static Material _swordGrassMaterial;
+
+        // Mismo patron que GrassMaterial de arriba, para Custom/PS1SwordGrass (ver
+        // Assets/Shaders/PS1SwordGrass.shader) -- el pasto chico estilo Zelda.
+        private static Material SwordGrassMaterial()
+        {
+            if (_swordGrassMaterial == null)
+            {
+                var resourceMat = Resources.Load<Material>("Materials/PS1SwordGrass");
+                if (resourceMat != null)
+                {
+                    _swordGrassMaterial = new Material(resourceMat);
+                }
+                else
+                {
+                    var shader = Shader.Find("Custom/PS1SwordGrass");
+                    _swordGrassMaterial = new Material(shader != null ? shader : Shader.Find("Standard"));
+                    if (shader == null)
+                    {
+                        _swordGrassMaterial.SetFloat("_Metallic", 0f);
+                        _swordGrassMaterial.SetFloat("_Glossiness", 0f);
+                    }
+                }
+            }
+            return _swordGrassMaterial;
+        }
+
         // Construye una celda de piso completa: la base (mismo tamano/posicion que el cubo chato
         // anterior, top en Y=0 igual que antes -- el jugador y los marcadores asumen esa altura) mas
         // los props de la variante elegida, todo bajo un unico GameObject rotado al azar en pasos de
         // 90 grados para que celdas vecinas con la misma variante no se vean idénticas.
-        public static void BuildTile(Transform parent, Vector3 center, float cellSize, Material overrideMaterial, GroundTileKind? forcedKind = null)
+        public static GroundTileKind BuildTile(Transform parent, Vector3 center, float cellSize, Material overrideMaterial, int floorIndex, int cellX, int cellY, GroundTileKind? forcedKind = null)
         {
             var kind = forcedKind ?? PickRandomKind();
             var root = new GameObject($"Ground_{kind}");
             root.transform.SetParent(parent, false);
             root.transform.position = center;
             root.transform.rotation = Quaternion.Euler(0f, 90f * Random.Range(0, 4), 0f);
+
+            // Pedido puntual, correccion: la primera pasada pintaba TODA la celda (base + bultos +
+            // dientes de borde + rocas/arbustos) con la textura real, pareja y entera -- "no pintar
+            // todo de un solo material entero... se ve extraño", y ademas se colaba en props que
+            // no son piso (rocas, arbustos). El piso vuelve al color plano PS1 de siempre para
+            // todo (base, bultos, dientes, props); la textura real de Assets/Sprites/Ground/
+            // PineForestFloor.png ahora es EXCLUSIVA del piso, y en pedacitos chicos sueltos
+            // encima (ver BuildGroundTexturePatches mas abajo), no una sabana continua.
+            bool isGrassFamily = kind == GroundTileKind.Grass || kind == GroundTileKind.GrassLeaves
+                || kind == GroundTileKind.GrassRockDirt || kind == GroundTileKind.Bush
+                || kind == GroundTileKind.FlowerBush || kind == GroundTileKind.FlowerPatch;
 
             var mat = SharedMaterial(overrideMaterial);
             Color tint = BaseColor(kind);
@@ -143,25 +203,30 @@ namespace Gameplay
             baseTile.transform.SetParent(root.transform, false);
             baseTile.transform.localPosition = new Vector3(0, -0.1f, 0);
             baseTile.transform.localScale = new Vector3(cellSize, 0.2f, cellSize);
+            baseTile.isStatic = true; // nunca se mueve ni cambia de material -- que el static batching lo agrupe
             Tint(baseTile, mat, tint);
 
-            // Relieve general (pedido puntual: "que no sean tan planos y lisos"): unos pocos
-            // bultos chatos y redondeados, del mismo tono que la base con variacion propia, en
-            // TODAS las variantes -- rompen la superficie perfectamente lisa del cubo sin tocar
-            // su collider (siguen ahi debajo, el jugador camina sobre el cubo de siempre).
-            BuildGroundBumps(root.transform, mat, cellSize, tint);
+            // Relieve mas ancho y legible en claros de tierra/pasto. Los caminos quedan despejados;
+            // asi el borde de cada celda no se llena de dientes repetidos ni parece cuadriculado.
+            if (kind != GroundTileKind.Path && kind != GroundTileKind.Leaves)
+                BuildGroundBumps(root.transform, mat, cellSize, tint);
 
-            // Borde no uniforme (pedido puntual, referencia: un piso "zigzagueante" con el borde
-            // irregular, no un cuadrado perfecto): dientes chatos que sobresalen un poco del borde
-            // exacto de la celda, del mismo tono. No hay boolean/CSG con primitivas, asi que esto
-            // es una aproximacion -- no calza perfecto diente con diente contra el vecino, pero
-            // rompe la silueta cuadrada de cada celda.
-            BuildJaggedEdge(root.transform, mat, cellSize, tint);
-
-            bool isGrassFamily = kind == GroundTileKind.Grass || kind == GroundTileKind.GrassLeaves
-                || kind == GroundTileKind.GrassRockDirt || kind == GroundTileKind.Bush;
             if (isGrassFamily)
-                BuildGrassTufts(root.transform, cellSize);
+            {
+                // Pedacitos sueltos de la textura pintada real (ver comentario de arriba) --
+                // ENCIMA del piso de color plano, tapando solo una fraccion chica de la celda cada
+                // uno, nunca la celda entera.
+                BuildGroundTexturePatches(root.transform, cellSize);
+                if (kind != GroundTileKind.Bush && kind != GroundTileKind.FlowerBush)
+                {
+                    if (kind == GroundTileKind.FlowerPatch)
+                        FoliageManager.Instance.AddGrassTufts(center, cellSize, floorIndex, cellX, cellY, 31, 3, 5, GrassMaterial());
+                    else BuildGrassTufts(center, cellSize, floorIndex, cellX, cellY);
+                    if (kind != GroundTileKind.FlowerPatch) BuildSwordGrass(center, cellSize, floorIndex, cellX, cellY);
+                    if (kind == GroundTileKind.FlowerPatch || kind == GroundTileKind.Grass || kind == GroundTileKind.GrassLeaves)
+                        FoliageManager.Instance.AddFlowers(center, cellSize, floorIndex, cellX, cellY, GrassMaterial(), guaranteedPatch: kind == GroundTileKind.FlowerPatch);
+                }
+            }
 
             switch (kind)
             {
@@ -170,8 +235,12 @@ namespace Gameplay
                 case GroundTileKind.GrassRockDirt: BuildRockAndDirtPatch(root.transform, mat, cellSize); break;
                 case GroundTileKind.Dirt: BuildPebbles(root.transform, mat, cellSize); break;
                 case GroundTileKind.Bush: BuildBushClump(root.transform, mat, cellSize); break;
+                case GroundTileKind.FlowerBush: BuildBushClump(root.transform, mat, cellSize, true); break;
+                case GroundTileKind.FlowerPatch: break;
                 default: break; // Grass y Path: solo la base (+ relieve/pasto de arriba)
             }
+
+            return kind;
         }
 
         // Bultos chatos (esferas aplastadas) esparcidos sobre la base -- el relieve barato de
@@ -180,17 +249,18 @@ namespace Gameplay
         // base de abajo sigue siendo la unica superficie de colision.
         private static void BuildGroundBumps(Transform parent, Material mat, float cellSize, Color baseTint)
         {
-            int count = Random.Range(3, 5);
+            int count = Random.Range(1, 3);
             for (int i = 0; i < count; i++)
             {
                 var bump = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                 bump.name = "GroundBump";
                 bump.transform.SetParent(parent, false);
-                Vector2 off = Random.insideUnitCircle * cellSize * 0.4f;
-                float radius = cellSize * Random.Range(0.09f, 0.16f);
-                float squash = Random.Range(0.28f, 0.45f); // achatado: un bulto, no una pelota
-                bump.transform.localPosition = new Vector3(off.x, radius * squash * 0.5f, off.y);
+                Vector2 off = Random.insideUnitCircle * cellSize * 0.23f;
+                float radius = cellSize * Random.Range(0.22f, 0.34f);
+                float squash = Random.Range(0.48f, 0.72f);
+                bump.transform.localPosition = new Vector3(off.x, radius * squash * 0.34f, off.y);
                 bump.transform.localScale = new Vector3(radius, radius * squash, radius);
+                bump.isStatic = true; // nunca se mueve ni cambia de material -- que el static batching lo agrupe
 
                 var col = bump.GetComponent<Collider>();
                 if (col != null) Object.Destroy(col);
@@ -203,43 +273,73 @@ namespace Gameplay
             }
         }
 
-        // Matitas de pasto de verdad (no solo el color de la base): 2 cartas cruzadas en X por
-        // mata, el truco clasico de "grass card" de bajo poligono, con el shader Custom/PS1Grass
-        // (ver PS1Grass.shader) que mece la punta con el viento sin animar nada por codigo -- todo
-        // el movimiento vive en el vertex shader.
-        private static void BuildGrassTufts(Transform parent, float cellSize)
+        // Pedacitos sueltos de la textura pintada real (Assets/Sprites/Ground/PineForestFloor.png,
+        // pedido puntual: "pintarlo de pedacitos", no la celda entera de una sola vez). Cartas
+        // chatas tumbadas (mismo truco que BuildLeafCards) con GrassGroundMaterial -- ese material
+        // muestrea por POSICION DE MUNDO (ver Custom/PS1Ground _MainTex/_TexScale), asi que cada
+        // pedacito, al estar en un punto de mundo distinto, muestra un recorte distinto de la
+        // textura sin necesitar UVs particulares por instancia. Pisan apenas 0.012 sobre el piso
+        // -- lo justo para no pelearse en el z-buffer con la base de abajo, invisible a simple
+        // vista pero evita parpadeo.
+        private static void BuildGroundTexturePatches(Transform parent, float cellSize)
         {
-            var grassMat = GrassMaterial();
-            int count = Random.Range(4, 7); // mas finitas -- compensar con un poco mas de cantidad
+            var mat = GrassGroundMaterial();
+            int count = Random.Range(2, 4);
             for (int i = 0; i < count; i++)
             {
-                Vector2 off = Random.insideUnitCircle * cellSize * 0.42f;
-                float height = cellSize * Random.Range(0.09f, 0.15f); // "mas fino y pequeno" -- pedido puntual
-                float width = cellSize * Random.Range(0.035f, 0.06f);
-                float baseYaw = Random.Range(0f, 360f);
-                float shade = Random.Range(0.8f, 1.25f);
-                Color tint = new Color(0.22f * shade, 0.42f * shade, 0.16f * shade);
+                var patch = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                patch.name = "GroundTexturePatch";
+                patch.transform.SetParent(parent, false);
+                float s = cellSize * Random.Range(0.22f, 0.34f);
+                Vector2 off = RandomFlatPatchOffset(cellSize, s);
+                patch.transform.localPosition = new Vector3(off.x, 0.012f + Random.Range(0f, 0.008f), off.y);
+                patch.transform.localRotation = Quaternion.Euler(90f, Random.Range(0f, 360f), 0f);
+                patch.transform.localScale = new Vector3(s, s, 1f);
 
-                BuildGrassCard(parent, grassMat, off, height, width, baseYaw, tint);
-                BuildGrassCard(parent, grassMat, off, height, width, baseYaw + 90f, tint);
+                var col = patch.GetComponent<Collider>();
+                if (col != null) Object.Destroy(col);
+
+                // Blanco: el color real lo aporta la textura, no un tinte extra encima (a
+                // diferencia del resto de los props, que son color plano sin textura).
+                Tint(patch, mat, Color.white);
             }
         }
 
-        private static void BuildGrassCard(Transform parent, Material mat, Vector2 off, float height, float width, float yaw, Color tint)
+        // Desplaza una carta cuadrada tumbada sin dejar que sus esquinas crucen el limite de la
+        // celda cuando se rota. El radio usa la semidiagonal de la carta, no solo la mitad de su
+        // lado, para cubrir cualquier orientacion.
+        private static Vector2 RandomFlatPatchOffset(float cellSize, float patchSize)
         {
-            var card = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            card.name = "GrassCard";
-            card.transform.SetParent(parent, false);
-            // Base del quad (vertice local y=-0.5) apoyada en el piso: con localPosition.y =
-            // height*0.5 el borde de abajo queda justo en Y=0, igual que el resto de los props.
-            card.transform.localPosition = new Vector3(off.x, height * 0.5f, off.y);
-            card.transform.localRotation = Quaternion.Euler(0f, yaw, 0f);
-            card.transform.localScale = new Vector3(width, height, 1f);
+            float edgeMargin = cellSize * 0.025f;
+            float halfDiagonal = patchSize * 0.70710678f;
+            float maxOffset = Mathf.Max(0f, cellSize * 0.5f - halfDiagonal - edgeMargin);
+            return Random.insideUnitCircle * maxOffset;
+        }
 
-            var col = card.GetComponent<Collider>();
-            if (col != null) Object.Destroy(col);
+        // Matitas de pasto de verdad (no solo el color de la base): 2 cartas cruzadas en X por
+        // mata, el truco clasico de "grass card" de bajo poligono, con el shader Custom/PS1Grass
+        // (ver PS1Grass.shader) que mece la punta con el viento sin animar nada por codigo -- todo
+        // el movimiento vive en el vertex shader. Antes esto instanciaba 2 GameObject+Quad por
+        // mata; ahora cada mata es solo una matriz que FoliageManager dibuja con GPU instancing
+        // (ver FoliageManager.AddGrassTufts), sin crear ni un GameObject.
+        private static void BuildGrassTufts(Vector3 cellCenter, float cellSize, int floorIndex, int cellX, int cellY)
+        {
+            // 8-14 matas de hojas estrechas en grupos pequeños, dejando claros visibles en vez de cobertura uniforme.
+            // tambien es determinista por celda, ver FoliageManager.AddGrassTufts.
+            FoliageManager.Instance.AddGrassTufts(cellCenter, cellSize, floorIndex, cellX, cellY, speciesSalt: 1, minCount: 8, maxCount: 15, GrassMaterial());
+        }
 
-            Tint(card, mat, tint);
+        // Pasto chico estilo Zelda ("hojas de espada", pedido puntual): mas chico y mas denso que
+        // BuildGrassTufts de arriba, con el shader Custom/PS1SwordGrass (recorta cada carta en
+        // punta via clip(), ver el shader) en vez de la carta rectangular lisa de PS1Grass -- se
+        // lee como una capa de detalle fino ENCIMA del pasto de base, no en su reemplazo. Cada
+        // brote tiene 3 cartas a 60 grados (ver FoliageManager.GetSwordGrassMesh), tambien via GPU
+        // instancing en vez de GameObjects sueltos.
+        private static void BuildSwordGrass(Vector3 cellCenter, float cellSize, int floorIndex, int cellX, int cellY)
+        {
+            // Menos brotes de detalle: ahora acompañan el grupo principal en vez de formar otra capa pareja.
+            // por celda, ver FoliageManager.AddSwordGrass.
+            FoliageManager.Instance.AddSwordGrass(cellCenter, cellSize, floorIndex, cellX, cellY, speciesSalt: 2, minCount: 4, maxCount: 8, SwordGrassMaterial());
         }
 
         // Cartas planas (un Quad chato tumbado, no una malla de hoja real) -- el truco clasico de
@@ -252,10 +352,10 @@ namespace Gameplay
                 var leaf = GameObject.CreatePrimitive(PrimitiveType.Quad);
                 leaf.name = "LeafCard";
                 leaf.transform.SetParent(parent, false);
-                Vector2 off = Random.insideUnitCircle * cellSize * 0.35f;
+                float s = cellSize * Random.Range(0.16f, 0.24f);
+                Vector2 off = RandomFlatPatchOffset(cellSize, s);
                 leaf.transform.localPosition = new Vector3(off.x, 0.045f + Random.Range(0f, 0.02f), off.y);
                 leaf.transform.localRotation = Quaternion.Euler(90f, Random.Range(0f, 360f), 0f);
-                float s = cellSize * Random.Range(0.16f, 0.24f);
                 leaf.transform.localScale = new Vector3(s, s, 1f);
 
                 var col = leaf.GetComponent<Collider>();
@@ -271,10 +371,10 @@ namespace Gameplay
             var dirt = GameObject.CreatePrimitive(PrimitiveType.Quad);
             dirt.name = "DirtPatch";
             dirt.transform.SetParent(parent, false);
-            Vector2 dirtOff = Random.insideUnitCircle * cellSize * 0.2f;
+            float dirtScale = cellSize * Random.Range(0.3f, 0.42f);
+            Vector2 dirtOff = RandomFlatPatchOffset(cellSize, dirtScale);
             dirt.transform.localPosition = new Vector3(dirtOff.x, 0.04f, dirtOff.y);
             dirt.transform.localRotation = Quaternion.Euler(90f, Random.Range(0f, 360f), 0f);
-            float dirtScale = cellSize * Random.Range(0.3f, 0.42f);
             dirt.transform.localScale = new Vector3(dirtScale, dirtScale, 1f);
             var dirtCol = dirt.GetComponent<Collider>();
             if (dirtCol != null) Object.Destroy(dirtCol);
@@ -344,11 +444,8 @@ namespace Gameplay
             }
         }
 
-        // Dientes chatos que sobresalen un poco del borde exacto de la celda (pedido puntual: que
-        // el borde del piso no se vea como un cuadrado perfecto). 2-3 dientes por lado, tamano y
-        // cuanto sobresalen al azar -- los 4 lados son siempre ejes X/Z (las celdas son cuadradas
-        // alineadas a los ejes), asi que no hace falta rotar nada, solo elegir que eje es "a lo
-        // largo del lado" y cual es "hacia afuera".
+        // Dientes chatos metidos hacia dentro del borde. Marcan un contorno irregular sin invadir
+        // el cuadrante vecino. Los 4 lados son ejes X/Z y las celdas quedan alineadas a los ejes.
         private static void BuildJaggedEdge(Transform parent, Material mat, float cellSize, Color tint)
         {
             BuildEdgeTeeth(parent, mat, cellSize, tint, alongIsX: true, outwardSign: 1f);  // borde +Z
@@ -360,20 +457,20 @@ namespace Gameplay
         private static void BuildEdgeTeeth(Transform parent, Material mat, float cellSize, Color tint, bool alongIsX, float outwardSign)
         {
             float half = cellSize * 0.5f;
+            float inset = cellSize * 0.025f;
             int teeth = Random.Range(3, 5);
             for (int i = 0; i < teeth; i++)
             {
-                float along = (Random.value - 0.5f) * cellSize * 0.8f;
-                float alongSize = cellSize * Random.Range(0.16f, 0.3f);
-                // Mordidas bien marcadas (pedido puntual: el borde tiene que leerse zigzagueante
-                // de un vistazo, no una textura sutil) -- antes llegaba a 0.12, muy poco notorio.
-                float reach = cellSize * Random.Range(0.08f, 0.3f); // cuanto sobresale del borde exacto
+                float alongSize = cellSize * Random.Range(0.16f, 0.26f);
+                float alongLimit = Mathf.Max(0f, half - alongSize * 0.5f - inset);
+                float along = Random.Range(-alongLimit, alongLimit);
+                float reach = cellSize * Random.Range(0.08f, 0.24f); // profundidad del relieve hacia el interior
 
                 var tooth = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 tooth.name = "EdgeTooth";
                 tooth.transform.SetParent(parent, false);
 
-                float perpCenter = outwardSign * (half + reach * 0.5f);
+                float perpCenter = outwardSign * (half - reach * 0.5f - inset);
                 tooth.transform.localPosition = alongIsX
                     ? new Vector3(along, -0.03f, perpCenter)
                     : new Vector3(perpCenter, -0.03f, along);
@@ -396,7 +493,7 @@ namespace Gameplay
         // chatas que BuildGroundBumps), como la silueta redondeada de un matorral. Tile propio
         // (GroundTileKind.Bush), no un prop suelto sobre pasto -- se ve desde lejos como un bulto
         // solido de follaje en vez de una mancha de color.
-        private static void BuildBushClump(Transform parent, Material mat, float cellSize)
+        private static void BuildBushClump(Transform parent, Material mat, float cellSize, bool flowering = false)
         {
             Vector2 hub = Random.insideUnitCircle * cellSize * 0.15f;
             int lobes = Random.Range(3, 5);
@@ -415,6 +512,24 @@ namespace Gameplay
 
                 float shade = Random.Range(0.85f, 1.15f);
                 Tint(lobe, mat, new Color(0.13f * shade, 0.24f * shade, 0.1f * shade));
+            }
+
+            if (!flowering) return;
+            // Acentos pequeños sobre la copa: la masa sigue leyéndose como arbusto verde.
+            int flowers = Random.Range(4, 8);
+            Color[] colors = { new Color(0.96f, 0.66f, 0.32f), new Color(0.9f, 0.55f, 0.68f), new Color(0.88f, 0.84f, 0.62f) };
+            for (int i = 0; i < flowers; i++)
+            {
+                var flower = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                flower.name = "BushFlower";
+                flower.transform.SetParent(parent, false);
+                Vector2 off = hub + Random.insideUnitCircle * cellSize * 0.2f;
+                float size = cellSize * Random.Range(0.045f, 0.075f);
+                flower.transform.localPosition = new Vector3(off.x, cellSize * Random.Range(0.15f, 0.23f), off.y);
+                flower.transform.localScale = new Vector3(size, size * 0.7f, size);
+                var col = flower.GetComponent<Collider>();
+                if (col != null) Object.Destroy(col);
+                Tint(flower, mat, colors[Random.Range(0, colors.Length)]);
             }
         }
 

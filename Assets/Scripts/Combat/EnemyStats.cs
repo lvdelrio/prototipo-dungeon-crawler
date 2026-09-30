@@ -58,6 +58,40 @@ namespace Combat
         public int DotDamagePerRound;
         public string DotLabel;
 
+        // Paralisis (ver Ranger, flecha de estado cargada -- CombatEngine.ApplyLoadedArrowStatus): mientras
+        // dura, este enemigo pierde su turno igual que IsBroken (ver
+        // CombatEngine.ExecuteEnemyAction), pero es un estado INDEPENDIENTE -- puede estar
+        // paralizado sin tener el aguante roto, y viceversa. Se descuenta al arrancar cada ronda
+        // nueva (ver BuildTurnOrder), nunca se repone solo como el aguante.
+        public int ParalyzedRoundsLeft;
+        public bool IsParalyzed => ParalyzedRoundsLeft > 0;
+
+        // Sangrado/vulnerable (ver Ranger): a diferencia del veneno (dano por turno, resta HP
+        // solo), mientras dura esto cualquier golpe que reciba pega VulnerableDamageMultiplier
+        // veces mas fuerte (ver CombatEngine.ComputeDamageVsEnemy) -- hace doler MAS los golpes
+        // que le sigan pegando, no resta nada por si solo.
+        public int VulnerableRoundsLeft;
+        public float VulnerableDamageMultiplier = 1.3f;
+        public bool IsVulnerable => VulnerableRoundsLeft > 0;
+
+        // Bonus de dano propio de ESTE enemigo mientras esta aturdido (IsBroken), en vez del
+        // generico CombatEngine.BrokenStateDamageMultiplier -- 0 = usar el generico. El Gordo
+        // Baboso (ver EnemyFactory.CreateSludge) lo usa: aguante fragil pero, una vez roto, un
+        // castigo mucho mayor al comun, para que "romperlo" se sienta como la forma real de
+        // bajarle la vida a algo tan defendido.
+        public float BrokenDamageMultiplierOverride;
+
+        // Habilidad propia de ataque (no depende de ningun arma de jugador, ver
+        // CombatEngine.ExecuteEnemyAction): mismo mecanismo que Combat.EquipmentItem.OnHitStatus*
+        // pero definido directo en el enemigo -- si conecta su ataque, esta es la chance de
+        // ademas aplicar un estado. Nombre generico ("veneno" para la Babosa, ver
+        // EnemyFactory.CreateSlug) para poder sumar mas enemigos con su propio proc sin agregar
+        // campos nuevos.
+        public string OnHitStatusName;
+        public int OnHitStatusChancePercent;
+        public int OnHitStatusDamagePercent; // % del MaxHP del objetivo, por ronda
+        public int OnHitStatusRounds;
+
         // Si no es null, la PRIMERA vez que este enemigo muere se lo reemplaza (ademas de quedar
         // "derrotado" el mismo) por los enemigos que devuelva esta funcion (p.ej. un Slime grande
         // se divide en 2 Slime chicos). Se limpia despues de usarse una vez, para que los

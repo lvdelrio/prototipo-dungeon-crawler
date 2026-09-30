@@ -20,8 +20,8 @@ namespace Gameplay
 
         [Header("QTE de habilidades")]
         public QteManager qteManager;
-        [Tooltip("Tiempo (segundos) para completar la secuencia de 3 teclas del QTE.")]
-        public float qteTimeLimit = 2.5f;
+        [Tooltip("Tiempo (segundos) para completar la secuencia de 3 teclas del QTE. Rework: 10% mas corto que el original (2.5s) porque ahora se revela una tecla a la vez en vez de mostrar toda la secuencia de entrada -- ver CombatHUD.DrawQteCenterOverlay.")]
+        public float qteTimeLimit = 2.25f;
 
         [Header("Feedback de impacto (flash + sacudida de camara)")]
         public CombatFeedback feedback;
@@ -52,6 +52,11 @@ namespace Gameplay
         // (huida exitosa) o despawnearlo (victoria) -- recien se pisa en el proximo StartEncounter/
         // StartFoeEncounter.
         public bool IsFoeFight { get; private set; }
+        // Mismo criterio/ciclo de vida que IsFoeFight de arriba: describe el guardian de una boveda
+        // de cascada (ver Gameplay.DungeonManager.OnPlayerEnterCell / DungeonCell.IsWaterfallVaultRoom)
+        // hasta el proximo StartEncounter/StartFoeEncounter/StartVaultEncounter -- HandleCombatFinished
+        // lo usa para entregar el tesoro garantizado SOLO si esta victoria fue justo esa pelea.
+        public bool IsVaultFight { get; private set; }
         public bool IsResolvingRound { get; private set; }
         public string CurrentTurnActorName { get; private set; }
         public bool CurrentTurnIsParty { get; private set; }
@@ -83,6 +88,11 @@ namespace Gameplay
         // apreto nada todavia). Mas pulsaciones = mas dano al ejecutar el golpe.
         public int AllOutAttackMashCount { get; private set; }
 
+        // Cuenta regresiva de la ventana actual (segundos) -- expuesto para que CombatHUD pueda
+        // dibujar una barra de tiempo real (ver DrawAllOutAttackCenterOverlay), igual que
+        // QteManager.TimeRemaining para el QTE.
+        public float AllOutAttackTimeRemaining { get; private set; }
+
         // (victoria, era jefe)
         public event Action<bool, bool> OnCombatFinished;
         public event Action OnCombatStarted;
@@ -96,10 +106,13 @@ namespace Gameplay
         // Golpe de HABILIDAD (no ataque basico) contra un enemigo: indice + elemento + intensidad
         // (SkillPower de quien la uso, tipicamente 1.4-2 -- mas fuerte la habilidad, mas grande y
         // llamativo el efecto). Un ataque basico siempre usa intensidad 1 (ver ReportHitFeedback).
-        public event Action<int, Element, float> OnEnemySkillHit;
+        public event Action<int, Element, float, CharacterClass> OnEnemySkillHit;
+        // Habilidades insignia con una secuencia de lanzamiento previa y un impacto propio.
+        public event Action<CharacterClass, int, float> OnSignatureSkillCast;
+        public event Action<CharacterClass, int, float> OnSignatureSkillHit;
         // CUALQUIER golpe contra un enemigo (ataque basico o habilidad, no curacion): indice +
         // elemento + intensidad. Para el efecto de shader elemental, que se ve en todos los golpes.
-        public event Action<int, Element, float> OnEnemyElementalHit;
+        public event Action<int, Element, float, CharacterClass, bool> OnEnemyElementalHit;
         // Se le acaba de romper el aguante a este enemigo (indice): pierde su proximo turno.
         public event Action<int> OnEnemyPoiseBroken;
         // Se rompio el aguante de TODOS los enemigos a la vez: aparece el aviso de Ataque en Conjunto.
@@ -162,12 +175,13 @@ namespace Gameplay
         // llamadas existentes (tests) que no les importa la escala. biome (0 = zona original, 1 =
         // Cueva Intergaláctica detrás de la Puerta Fría, 2 = Bioma de Cuevas detrás de la escalera
         // de la zona aislada, ver DungeonFloor.Biome) cambia todo el bestiario, incluido el jefe.
-        public void StartEncounter(bool isBoss, int floorIndex = 0, int biome = 0)
+        public void StartEncounter(bool isBoss, int floorIndex = 0, int biome = 0, int castleRegion = -1)
         {
             if (IsActive) return;
 
             IsBossFight = isBoss;
             IsFoeFight = false;
+            IsVaultFight = false;
             if (biome == 1)
             {
                 Enemies = isBoss ? new List<EnemyStats> { EnemyFactory.CreateKadulu(floorIndex) } : EnemyFactory.CreateCaveEncounter(_rng, floorIndex);
@@ -178,6 +192,23 @@ namespace Gameplay
             {
                 Enemies = isBoss ? new List<EnemyStats> { EnemyFactory.CreateCaveBoss(floorIndex) } : EnemyFactory.CreateRockCaveEncounter(_rng, floorIndex);
                 StartEncounterCommon(isBoss ? "¡Gorlok despierta entre las rocas!" : "¡Algo se arrastra en la oscuridad!");
+                return;
+            }
+            if (biome == 3)
+            {
+                Enemies = isBoss ? new List<EnemyStats> { EnemyFactory.CreatePatioBoss(floorIndex) } : EnemyFactory.CreateCastleEncounter(_rng, floorIndex);
+                StartEncounterCommon(isBoss ? "¡El guardián del patio te desafía!" : "¡Una presencia vigila desde los jardines!");
+                return;
+            }
+            if (biome == 4)
+            {
+                bool cryptBoss = isBoss && castleRegion == 4;
+                Enemies = isBoss
+                    ? new List<EnemyStats> { cryptBoss ? EnemyFactory.CreateCastleCryptBoss(floorIndex) : EnemyFactory.CreateCastleBoss(floorIndex) }
+                    : EnemyFactory.CreateCastleEncounter(_rng, floorIndex);
+                StartEncounterCommon(isBoss
+                    ? cryptBoss ? "¡El custodio de la cripta despierta!" : "¡El Castellano de la Corona Umbría te desafía!"
+                    : "¡Una presencia vigila desde los salones!");
                 return;
             }
             Enemies = isBoss ? new List<EnemyStats> { EnemyFactory.CreateBoss(floorIndex) } : EnemyFactory.CreateRandomEncounter(_rng, floorIndex);
@@ -194,8 +225,25 @@ namespace Gameplay
 
             IsBossFight = false;
             IsFoeFight = true;
+            IsVaultFight = false;
             Enemies = new List<EnemyStats> { foe };
             StartEncounterCommon($"¡{foe.Name} te alcanzó!");
+        }
+
+        // Guardian de una boveda de cascada (ver DungeonCell.IsWaterfallVaultRoom / Gameplay.
+        // DungeonManager.OnPlayerEnterCell): mismo patron 1 contra 1 que StartFoeEncounter, pero SIN
+        // IsFoeFight (no es el FOE que patrulla el piso, no hay que empujarlo/despawnearlo) -- lo
+        // unico que DungeonManager.HandleCombatFinished necesita distinguir es IsVaultFight, para
+        // entregar el tesoro garantizado solo al ganar ESTA pelea puntual.
+        public void StartVaultEncounter(EnemyStats guardian)
+        {
+            if (IsActive || guardian == null) return;
+
+            IsBossFight = false;
+            IsFoeFight = false;
+            IsVaultFight = true;
+            Enemies = new List<EnemyStats> { guardian };
+            StartEncounterCommon($"¡{guardian.Name} guarda este tesoro!");
         }
 
         private void StartEncounterCommon(string openingLogLine)
@@ -328,6 +376,7 @@ namespace Gameplay
         {
             if (!AllOutAttackReady) return;
             AllOutAttackMashCount = Mathf.Min(AllOutAttackMashCount + 1, CombatEngine.AllOutMaxPresses);
+            feedback?.OnAllOutMashPress(AllOutAttackMashCount);
         }
 
         // Formacion: se edita desde el menu de pausa DURANTE LA EXPLORACION (no en combate, para
@@ -434,6 +483,37 @@ namespace Gameplay
             return true;
         }
 
+        // Mismo patron que SetEquippedItemLive de arriba, pero para pasivas (ver Meta.PassiveSlot/
+        // Combat.PassiveCatalog) -- sin instancia fisica que validar (cualquier id de catalogo
+        // entra en cualquier slot), asi que solo falla si la party no tiene esta clase o el
+        // combate esta en curso.
+        public bool SetEquippedPassiveLive(MetaProgress meta, CharacterClass cls, int slotIndex, string passiveId)
+        {
+            if (!CanChangeFormation || meta == null) return false;
+            var character = Party.FirstOrDefault(p => p.Class == cls);
+            if (character == null) return false;
+
+            var before = meta.GetEquippedPassive(cls, slotIndex);
+            meta.SetEquippedPassive(cls, slotIndex, passiveId);
+            var after = meta.GetEquippedPassive(cls, slotIndex);
+
+            character.Attack += (after?.AttackBonus ?? 0) - (before?.AttackBonus ?? 0);
+            character.MagicAttack += (after?.MagicAttackBonus ?? 0) - (before?.MagicAttackBonus ?? 0);
+            character.Defense += (after?.DefenseBonus ?? 0) - (before?.DefenseBonus ?? 0);
+            character.Speed += (after?.SpeedBonus ?? 0) - (before?.SpeedBonus ?? 0);
+            character.Evasion += (after?.EvasionBonus ?? 0) - (before?.EvasionBonus ?? 0);
+            character.Luck += (after?.LuckBonus ?? 0) - (before?.LuckBonus ?? 0);
+            character.ThornsReflectPercent += (after?.ThornsReflectPercent ?? 0) - (before?.ThornsReflectPercent ?? 0);
+
+            int dHp = (after?.MaxHpBonus ?? 0) - (before?.MaxHpBonus ?? 0);
+            character.MaxHP += dHp;
+            character.HP = Mathf.Clamp(character.HP + dHp, 1, character.MaxHP);
+            int dTp = (after?.MaxTpBonus ?? 0) - (before?.MaxTpBonus ?? 0);
+            character.MaxTP += dTp;
+            character.TP = Mathf.Clamp(character.TP + dTp, 0, character.MaxTP);
+            return true;
+        }
+
         private void AdvanceChooser()
         {
             while (_chooserIndex < Party.Count && !Party[_chooserIndex].IsAlive)
@@ -466,6 +546,17 @@ namespace Gameplay
                     && currentPartyAction.Type == ActionType.Skill && !Party[idx].IsSelfStanceSkill)
                     yield return RunSkillQte(Party[idx], currentPartyAction);
 
+                bool isSignatureSkill = isParty && Party[idx].IsAlive && currentPartyAction != null
+                    && currentPartyAction.Type == ActionType.Skill
+                    && Party[idx].TP >= Party[idx].SkillTpCost
+                    && (Party[idx].Class == CharacterClass.Mage || Party[idx].Class == CharacterClass.Warrior)
+                    && currentPartyAction.TargetEnemyIndex >= 0;
+                if (isSignatureSkill)
+                {
+                    OnSignatureSkillCast?.Invoke(Party[idx].Class, currentPartyAction.TargetEnemyIndex, Party[idx].SkillPower);
+                    yield return new WaitForSeconds(0.28f);
+                }
+
                 int[] partyHpBefore = Party.Select(p => p.HP).ToArray();
                 int[] enemyHpBefore = Enemies.Select(e => e.HP).ToArray();
                 bool[] enemyBrokenBefore = Enemies.Select(e => e.IsBroken).ToArray();
@@ -488,7 +579,8 @@ namespace Gameplay
                 float hitIntensity = 1f;
                 if (isSkillHit) { hitElement = Party[idx].SkillElement; hitIntensity = Party[idx].SkillPower; }
                 else if (isParty && currentPartyAction != null && currentPartyAction.Type == ActionType.Attack) hitElement = Element.Strike;
-                ReportHitFeedback(partyHpBefore, enemyHpBefore, enemyBrokenBefore, isSkillHit, hitElement, hitIntensity);
+                CharacterClass skillClass = isSkillHit ? Party[idx].Class : CharacterClass.Warrior;
+                ReportHitFeedback(partyHpBefore, enemyHpBefore, enemyBrokenBefore, isSkillHit, hitElement, hitIntensity, skillClass);
 
                 // En cuanto la pelea queda decidida no se esperan mas turnos ni personajes: se corta
                 // la ronda ahi mismo en vez de seguir resolviendo al resto del orden de turnos.
@@ -501,19 +593,23 @@ namespace Gameplay
                 {
                     _allOutOfferedThisRound = true;
                     yield return OfferAllOutAttack();
+                    // Rework: antes esto cortaba el resto de la ronda (rompiendo el foreach) --
+                    // ahora los turnos que faltan SIGUEN resolviendose normalmente despues del golpe
+                    // en conjunto. Los enemigos que siguen vivos ya no estan rotos (ExecuteAllOutAttack
+                    // les repone el aguante), asi que actuan normal si les toca; si el jugador NO
+                    // llego a machacar el boton a tiempo (AllOutAttackMashCount == 0), siguen
+                    // aturdidos y los golpes que les sigan pegando esta misma ronda se benefician
+                    // igual del bonus de dano por aturdimiento (ver CombatEngine.
+                    // BrokenStateDamageMultiplier) -- la ventana no se pierde del todo.
                     if (AllOutAttackMashCount > 0)
-                    {
-                        // A proposito, no es un bug de estado: el resto del orden de turnos de ESTA
-                        // ronda se descarta (junto con _queuedActions.Clear() de mas abajo, asi que
-                        // ninguna accion en cola se arrastra a la ronda siguiente) porque el Ataque
-                        // en Conjunto YA les pego a todos los enemigos vivos. Antes esto pasaba en
-                        // silencio y se sentia como que a esos personajes "se les cancelo el turno"
-                        // sin explicacion -- este log aclara que fue el Ataque en Conjunto. Todos
-                        // los personajes que se quedaron sin actuar vuelven a elegir accion normal
-                        // en la ronda siguiente (AdvanceChooser mas abajo).
-                        Log.Add("¡El resto de la ronda se salta: el Ataque en Conjunto ya definio el turno!");
+                        Log.Add("¡Ataque en Conjunto ejecutado! El resto de la ronda continúa.");
+
+                    // El golpe en conjunto puede terminar la pelea por si solo (o dejar caida a
+                    // toda la party via espinas/DoT, aunque no deberia pasar) -- mismo chequeo que
+                    // el de arriba tras cada turno normal, para no seguir resolviendo turnos vacios
+                    // contra una lista de enemigos ya derrotados.
+                    if (_engine.AllEnemiesDefeated() || _engine.AllPartyDefeated())
                         break;
-                    }
                 }
             }
 
@@ -524,7 +620,10 @@ namespace Gameplay
 
             if (_engine.AllEnemiesDefeated())
             {
-                Log.Add(IsBossFight ? "¡Venciste al Guardián de Piedra!" : IsFoeFight ? "¡Venciste al FOE!" : "¡Victoria!");
+                Log.Add(IsBossFight && Enemies.Count > 0
+                    ? $"¡Venciste a {Enemies[0].Name}!"
+                    : IsFoeFight ? "¡Venciste al FOE!"
+                    : IsVaultFight && Enemies.Count > 0 ? $"¡Venciste a {Enemies[0].Name}! El tesoro es tuyo." : "¡Victoria!");
                 // Le da tiempo a la animacion de disolucion del ultimo enemigo caido antes de
                 // mostrar el resumen de la pelea. El combate NO termina todavia (EndCombat recien
                 // se llama desde DismissVictorySummary, cuando el jugador confirma haber visto el
@@ -565,6 +664,7 @@ namespace Gameplay
         {
             AllOutAttackMashCount = 0;
             AllOutAttackReady = true;
+            AllOutAttackTimeRemaining = allOutAttackMashWindow;
             Log.Add("¡Se rompe el aguante de TODOS los enemigos a la vez! ¡Machacá el botón para el Ataque en Conjunto!");
             OnAllOutAttackReady?.Invoke();
 
@@ -572,9 +672,11 @@ namespace Gameplay
             while (t < allOutAttackMashWindow)
             {
                 t += Time.deltaTime;
+                AllOutAttackTimeRemaining = Mathf.Max(0f, allOutAttackMashWindow - t);
                 yield return null;
             }
             AllOutAttackReady = false;
+            AllOutAttackTimeRemaining = 0f;
 
             if (AllOutAttackMashCount <= 0) yield break;
 
@@ -637,7 +739,7 @@ namespace Gameplay
         // rompio el aguante, para que la escena de batalla (BattleStageController/EnemyView) anime
         // el golpe, la disolucion de muerte o el flash de ruptura. El motor de combate puro no sabe
         // nada de esto.
-        private void ReportHitFeedback(int[] partyHpBefore, int[] enemyHpBefore, bool[] enemyBrokenBefore, bool isSkillHit, Element hitElement, float hitIntensity)
+        private void ReportHitFeedback(int[] partyHpBefore, int[] enemyHpBefore, bool[] enemyBrokenBefore, bool isSkillHit, Element hitElement, float hitIntensity, CharacterClass skillClass)
         {
             for (int i = 0; i < Party.Count; i++)
             {
@@ -658,8 +760,10 @@ namespace Gameplay
                 feedback?.OnEnemyHit(dmg, hitIntensity);
                 if (hitElement != Element.None) feedback?.OnElementalHit(hitElement);
                 OnEnemyDamaged?.Invoke(i);
-                OnEnemyElementalHit?.Invoke(i, hitElement, hitIntensity);
-                if (isSkillHit) OnEnemySkillHit?.Invoke(i, hitElement, hitIntensity);
+                OnEnemyElementalHit?.Invoke(i, hitElement, hitIntensity, skillClass, isSkillHit);
+                if (isSkillHit) OnEnemySkillHit?.Invoke(i, hitElement, hitIntensity, skillClass);
+                if (isSkillHit && (skillClass == CharacterClass.Mage || skillClass == CharacterClass.Warrior))
+                    OnSignatureSkillHit?.Invoke(skillClass, i, hitIntensity);
                 if (!enemyBrokenBefore[i] && Enemies[i].IsBroken)
                     OnEnemyPoiseBroken?.Invoke(i);
                 if (enemyHpBefore[i] > 0 && Enemies[i].HP <= 0)

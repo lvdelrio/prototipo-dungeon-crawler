@@ -25,19 +25,42 @@ Shader "Custom/PS1Grass"
             #pragma vertex vert
             #pragma fragment frag
             #pragma multi_compile_fog
+            #pragma multi_compile_instancing
             #include "UnityCG.cginc"
 
-            fixed4 _Color;
             float _WindStrength;
             float _WindSpeed;
             float _WindScale;
+            float4 _GrassInteractor;
+            float _WorldNightAmount;
 
-            struct appdata { float4 vertex : POSITION; float3 normal : NORMAL; };
-            struct v2f { float4 vertex : SV_POSITION; fixed3 shade : COLOR0; UNITY_FOG_COORDS(1) };
+            // _Color pasa a ser una propiedad POR INSTANCIA (ver FoliageManager.cs): cuando el
+            // pasto se dibuja con Graphics.DrawMeshInstanced, cada mata de un mismo lote (mismo
+            // mesh+material) puede tener su propio tinte via MaterialPropertyBlock.SetVectorArray,
+            // en vez de un solo _Color compartido por todo el draw call.
+            UNITY_INSTANCING_BUFFER_START(Props)
+                UNITY_DEFINE_INSTANCED_PROP(fixed4, _Color)
+            UNITY_INSTANCING_BUFFER_END(Props)
+
+            struct appdata
+            {
+                float4 vertex : POSITION;
+                float3 normal : NORMAL;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+            struct v2f
+            {
+                float4 vertex : SV_POSITION;
+                fixed3 shade : COLOR0;
+                UNITY_FOG_COORDS(1)
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
 
             v2f vert (appdata v)
             {
                 v2f o;
+                UNITY_SETUP_INSTANCE_ID(v);
+                UNITY_TRANSFER_INSTANCE_ID(v, o);
                 float3 worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
 
                 // Peso 0 en la base (y local -0.5), 1 en la punta (y local +0.5) -- la base se
@@ -47,6 +70,12 @@ Shader "Custom/PS1Grass"
                 float phase = (worldPos.x + worldPos.z) * _WindScale;
                 float sway = sin(_Time.y * _WindSpeed + phase) * _WindStrength * weight;
                 worldPos.x += sway;
+
+                float2 playerDelta = worldPos.xz - _GrassInteractor.xz;
+                float playerDistance = length(playerDelta);
+                float bend = _GrassInteractor.w > 0.001 ? saturate(1.0 - playerDistance / _GrassInteractor.w) : 0.0;
+                bend *= bend * weight;
+                worldPos.xz += normalize(playerDelta + float2(0.0001, 0.0001)) * bend * 0.38;
 
                 o.vertex = UnityWorldToClipPos(worldPos);
 
@@ -59,7 +88,12 @@ Shader "Custom/PS1Grass"
 
             fixed4 frag (v2f i) : SV_Target
             {
-                fixed4 col = fixed4(_Color.rgb * i.shade, 1.0);
+                UNITY_SETUP_INSTANCE_ID(i);
+                fixed4 color = UNITY_ACCESS_INSTANCED_PROP(Props, _Color);
+                fixed4 col = fixed4(color.rgb * i.shade, 1.0);
+                float night = saturate(_WorldNightAmount);
+                col.rgb *= lerp(1.0, 0.5, night);
+                col.rgb = lerp(col.rgb, col.rgb * fixed3(0.48, 0.62, 0.95), night * 0.58);
                 UNITY_APPLY_FOG(i.fogCoord, col);
                 return col;
             }

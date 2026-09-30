@@ -36,9 +36,79 @@ namespace Gameplay
             public Color Color;
             public float StartTime;
             public float X, Y;
+            // Corrimiento horizontal fijo, sorteado UNA vez al crearse (ver TrackHpChange): sin
+            // esto, un golpe multi-hit o un Ataque en Conjunto que pega a varios a la vez saca
+            // varios numeros perfectamente apilados uno arriba del otro, ilegibles.
+            public float JitterX;
         }
 
         private QteManager QteManager => combatManager != null ? combatManager.qteManager : null;
+
+        // Rework del QTE (antes: toda la secuencia mostrada de entrada en el panel lateral, ahora:
+        // overlay centrado en pantalla, una sola tecla revelada a la vez -- ver
+        // DrawQteCenterOverlay). Este bloque de estado detecta CAMBIOS en QteManager.ProgressIndex/
+        // IsActive frame a frame (polling desde Update, no eventos) para disparar el game feel
+        // (CombatFeedback) y animar el "pop" del icono actual sin tener que tocar QteManager -- esa
+        // clase se mantiene deliberadamente ciega a la UI (ver su comentario de clase).
+        private bool _qteWasActive;
+        private int _qteLastQteProgress;
+        private float _qtePressPopStart = -10f;
+        private const float QtePopDuration = 0.22f;
+        // Cuanto sigue dibujandose el overlay DESPUES de que QteManager.IsActive pasa a false, para
+        // que el jugador alcance a leer el resultado (tilde verde / cruz roja) en vez de que el
+        // panel desaparezca en el mismo frame que termina.
+        private float _qteResultLingerStart = -10f;
+        private bool _qteResultWasSuccess;
+        private const float QteResultLingerDuration = 0.4f;
+
+        // Rework del banner del Ataque en Conjunto (ver DrawAllOutAttackCenterOverlay): mismo
+        // patron de polling que el QTE de arriba -- detecta cuando AllOutAttackMashCount sube para
+        // disparar el "pop" del contador grande.
+        private int _lastAllOutMashCount;
+        private float _allOutMashPopStart = -10f;
+        private const float AllOutMashPopDuration = 0.18f;
+
+        private void UpdateAllOutMashFeedback()
+        {
+            if (combatManager.AllOutAttackReady && combatManager.AllOutAttackMashCount > _lastAllOutMashCount)
+                _allOutMashPopStart = Time.time;
+            _lastAllOutMashCount = combatManager.AllOutAttackReady ? combatManager.AllOutAttackMashCount : 0;
+        }
+
+        // Poll desde Update (una vez por frame, a diferencia de OnGUI que puede correr varias veces
+        // por frame con distintos Event.current) -- compara el ProgressIndex/IsActive de este frame
+        // contra el anterior y dispara feedback de camara + el timer del "pop" del icono cuando
+        // corresponde. No depende del orden de ejecucion contra QteManager.Update(): lee
+        // ProgressIndex/Sequence, que QteManager deja intactos despues de terminar (ver Finish()),
+        // asi que el acierto de la ULTIMA tecla se detecta igual sin importar si este Update corre
+        // antes o despues del de QteManager en el mismo frame.
+        private void UpdateQteFeedback()
+        {
+            var qte = QteManager;
+            if (qte == null) return;
+            bool active = qte.IsActive;
+
+            if (active && !_qteWasActive)
+                _qteLastQteProgress = 0; // arranca una secuencia nueva (personaje distinto, u otra ronda)
+
+            if (qte.Sequence.Count > 0 && qte.ProgressIndex > _qteLastQteProgress)
+            {
+                bool wasLast = qte.ProgressIndex >= qte.Sequence.Count;
+                combatManager.feedback?.OnQteKeyPress(wasLast);
+                _qtePressPopStart = Time.time;
+                _qteLastQteProgress = qte.ProgressIndex;
+            }
+
+            if (_qteWasActive && !active)
+            {
+                bool success = qte.Sequence.Count > 0 && qte.ProgressIndex >= qte.Sequence.Count;
+                if (!success) combatManager.feedback?.OnQteFail();
+                _qteResultWasSuccess = success;
+                _qteResultLingerStart = Time.time;
+            }
+
+            _qteWasActive = active;
+        }
 
         // Ademas de los botones, varios atajos de teclado -- se chequean en Update (no en OnGUI)
         // para no disparar varias veces por el mismo frame. Espacio hace distintas cosas segun el
@@ -47,6 +117,9 @@ namespace Gameplay
         void Update()
         {
             if (combatManager == null || !combatManager.IsActive) return;
+
+            UpdateQteFeedback();
+            UpdateAllOutMashFeedback();
 
             if (combatManager.AllOutAttackReady && Input.GetKeyDown(KeyCode.Space))
                 combatManager.TriggerAllOutAttack();
@@ -102,6 +175,7 @@ namespace Gameplay
             if (combatManager.IsShowingVictorySummary)
             {
                 DrawVictorySummary();
+                if (battleStage != null && battleStage.IsForestCombat) UIButton.DrawForestEffects();
                 return;
             }
 
@@ -115,31 +189,42 @@ namespace Gameplay
             GUI.Box(new Rect(panelX, panelY, panelW, panelH), "");
             GUI.Label(new Rect(panelX + 10, panelY + 5, panelW - 350, 24), combatManager.IsBossFight ? "COMBATE DE JEFE" : "COMBATE");
 
-            if (UIButton.Draw(new Rect(panelX + panelW - 330, panelY + 4, 100, 24), $"Huir ({combatManager.FleeChancePercent:F0}%)", enabled: !combatManager.IsBossFight))
+            if (DrawBattleButton(new Rect(panelX + panelW - 330, panelY + 4, 100, 24), $"Huir ({combatManager.FleeChancePercent:F0}%)", enabled: !combatManager.IsBossFight))
                 combatManager.TryFlee();
-            if (UIButton.Draw(new Rect(panelX + panelW - 220, panelY + 4, 100, 24), "Rendirse"))
+            if (DrawBattleButton(new Rect(panelX + panelW - 220, panelY + 4, 100, 24), "Rendirse"))
                 combatManager.Surrender();
-            if (UIButton.Draw(new Rect(panelX + panelW - 110, panelY + 4, 100, 24), "[TEST] Saltar"))
+            if (DrawBattleButton(new Rect(panelX + panelW - 110, panelY + 4, 100, 24), "[TEST] Saltar"))
                 combatManager.SkipFightForTesting();
 
             float y = panelY + 32;
 
             // --- Enemigos ---
             GUI.Label(new Rect(panelX + 10, y, 200, 20), "Enemigos:");
-            if (UIButton.Draw(new Rect(panelX + 200, y - 2, 150, 22), _inspecting ? "Ocultar debilidades" : "Inspeccionar"))
+            if (DrawBattleButton(new Rect(panelX + 200, y - 2, 150, 22), _inspecting ? "Ocultar debilidades" : "Inspeccionar"))
                 _inspecting = !_inspecting;
             y += 22;
             foreach (var enemy in combatManager.Enemies)
             {
                 bool isTurn = combatManager.IsResolvingRound && !combatManager.CurrentTurnIsParty && combatManager.CurrentTurnActorName == enemy.Name;
-                string status = enemy.IsAlive ? $"HP {enemy.HP}/{enemy.MaxHP}{(enemy.IsBroken ? " [ROTO: pierde su turno]" : "")}" : "derrotado";
+                string status = enemy.IsAlive ? StatusTags(enemy) : " - derrotado";
+                DrawTurnLine(panelX + 20, y, panelW - 40, $"{enemy.Name}{status}", isTurn, isEnemyTurn: true);
+
+                // Barra de vida con textura (ver Gameplay/HealthBarWidget) en vez del texto "HP
+                // X/Y" de antes -- showText:true porque el numero exacto sigue importando para
+                // decisiones tacticas (a quien rematar, etc.), a diferencia de la barra flotante
+                // sobre el enemigo en la escena 3D (EnemyHealthBarHUD), que es a proposito muda.
+                if (enemy.IsAlive)
+                    HealthBarWidget.Draw(new Rect(panelX + 260, y + 2, 150, 16), (enemy, BarKind.Hp), enemy.HP, enemy.MaxHP, BarKind.Hp, showText: true);
+
                 string weaknessLabel = enemy.Weaknesses != null && enemy.Weaknesses.Length > 0
                     ? string.Join("/", enemy.Weaknesses.Select(ElementLabel))
                     : ElementLabel(Element.None);
-                string inspect = _inspecting
-                    ? $"  |  Debil: {weaknessLabel}  Resiste: {ElementLabel(enemy.Resistance)}  DEF {enemy.Defense}  VEL {enemy.Speed}"
-                    : "";
-                DrawTurnLine(panelX + 20, y, panelW - 40, $"{enemy.Name} - {status}{inspect}", isTurn, isEnemyTurn: true);
+                if (_inspecting)
+                {
+                    string inspect = $"Débil: {weaknessLabel}  Resiste: {ElementLabel(enemy.Resistance)}  DEF {enemy.Defense}  VEL {enemy.Speed}";
+                    GUI.Label(new Rect(panelX + 425, y, panelW - 445, 20), inspect);
+                }
+
                 var (popupX, popupY) = EnemyPopupPosition(combatManager.Enemies.IndexOf(enemy), panelX + panelW - 60, y);
                 TrackHpChange(_lastEnemyHp, enemy, enemy.HP, popupX, popupY);
                 y += 20;
@@ -155,7 +240,21 @@ namespace Gameplay
                 bool isTurn = combatManager.IsResolvingRound && combatManager.CurrentTurnIsParty && combatManager.CurrentTurnActorName == member.Name;
                 string status = !member.IsAlive ? "caído" : member.IsProtectingAll ? "protegiendo al grupo" : member.IsGuarding ? "en guardia" : "listo";
                 string row = member.IsFrontRow ? "frente" : "fondo";
-                DrawTurnLine(panelX + 20, y, panelW - 40, $"{member.Name} ({member.Class}, {row}) - HP {member.HP}/{member.MaxHP}  TP {member.TP}/{member.MaxTP}  [{status}]", isTurn, isEnemyTurn: false);
+                DrawTurnLine(panelX + 20, y, panelW - 40, $"{member.Name} ({member.Class}, {row})  [{status}]", isTurn, isEnemyTurn: false);
+
+                // HP y TP como barras con textura (ver Gameplay/HealthBarWidget) en vez del texto
+                // "HP X/Y TP X/Y" de antes -- pedido puntual. showText:true, el numero exacto sigue
+                // ahi, solo que superpuesto a la barra en vez de ser todo el contenido.
+                if (member.IsAlive)
+                {
+                    // Clave compuesta (member, kind): member SOLO no alcanza -- HP y TP del MISMO
+                    // personaje son dos barras distintas, con su propio trail cada una. Sin el
+                    // kind ahi, la barra de TP pisaria el estado de animacion de la de HP y
+                    // viceversa (misma key, misma entrada de diccionario).
+                    HealthBarWidget.Draw(new Rect(panelX + 300, y + 2, 120, 16), (member, BarKind.Hp), member.HP, member.MaxHP, BarKind.Hp, showText: true);
+                    HealthBarWidget.Draw(new Rect(panelX + 430, y + 2, 90, 16), (member, BarKind.Tp), member.TP, member.MaxTP, BarKind.Tp, showText: true);
+                }
+
                 TrackHpChange(_lastPartyHp, member, member.HP, panelX + panelW - 60, y);
                 y += 20;
             }
@@ -164,13 +263,20 @@ namespace Gameplay
 
             if (combatManager.AllOutAttackReady)
             {
-                DrawAllOutAttackBanner(panelX, y, panelW);
-                y += 90;
+                // El banner en si ya NO se dibuja aca (ver DrawAllOutAttackCenterOverlay, llamado
+                // aparte al final de OnGUI, mismo criterio que el QTE): esta linea solo ocupa el
+                // lugar del menu de accion normal mientras dura la ventana de machacado.
+                GUI.Label(new Rect(panelX + 10, y, panelW - 20, 20), "¡Mirá el centro de la pantalla!");
+                y += 24;
             }
             else if (QteManager != null && QteManager.IsActive)
             {
-                DrawQteOverlay(panelX, y, panelW);
-                y += 90;
+                // La secuencia en si ya NO se dibuja aca (ver DrawQteCenterOverlay, llamado aparte
+                // al final de OnGUI): esta linea solo ocupa el lugar del menu de accion normal
+                // mientras dura el QTE, para que no aparezcan botones de Atacar/Habilidades
+                // superpuestos debajo del overlay centrado.
+                GUI.Label(new Rect(panelX + 10, y, panelW - 20, 20), "¡Mirá el centro de la pantalla!");
+                y += 24;
             }
             else if (combatManager.IsResolvingRound)
             {
@@ -187,7 +293,7 @@ namespace Gameplay
                 if (chooser != null)
                 {
                     GUI.Label(new Rect(panelX + 10, y, panelW - 130, 20), $"Turno de {chooser.Name}:");
-                    if (UIButton.Draw(new Rect(panelX + panelW - 120, y - 2, 120, 22), "◄ Volver", enabled: combatManager.CanGoBack))
+                    if (DrawBattleButton(new Rect(panelX + panelW - 120, y - 2, 120, 22), "◄ Volver", enabled: combatManager.CanGoBack))
                     {
                         combatManager.GoToPreviousChooser();
                         _pendingType = null;
@@ -200,7 +306,18 @@ namespace Gameplay
                     // CombatEngine.ResolveElement). Ocupa su propia fila solo para esta clase.
                     if (chooser.Class == CharacterClass.Gunner)
                     {
+                        DrawGunnerWeaponModeSelector(panelX, y, chooser);
+                        y += 30;
                         DrawGunnerBulletSelector(panelX, y, chooser);
+                        y += 30;
+                    }
+
+                    // Ranger: mismo criterio que el selector de bala del Gunner de arriba, pero
+                    // para flechas de estado (ver CombatEngine.ApplyLoadedArrowStatus) -- Atacar Y
+                    // Ataque Cruzado usan igual la que este cargada.
+                    if (chooser.Class == CharacterClass.Ranger)
+                    {
+                        DrawRangerArrowSelector(panelX, y, chooser);
                         y += 30;
                     }
 
@@ -216,13 +333,15 @@ namespace Gameplay
                                     ? $"{chooser.SkillName} - buffea aliado / debuffea enemigo ({chooser.SkillTpCost} TP)"
                                     : chooser.SkillIsAoe
                                         ? $"{chooser.SkillName} - {ElementLabel(chooser.SkillElement)} x{chooser.SkillPower:F1} a TODOS ({chooser.SkillTpCost} TP)"
-                                        : $"{chooser.SkillName} - {ElementLabel(chooser.SkillElement)} x{chooser.SkillPower:F1} ({chooser.SkillTpCost} TP)";
-                        if (UIButton.Draw(new Rect(panelX + 20, y, 340, 26), skillLabel))
+                                        : chooser.SkillHitsEnemyFrontRow
+                                            ? $"{chooser.SkillName} - {ElementLabel(chooser.SkillElement)} x{chooser.SkillPower:F1} a la fila delantera ({chooser.SkillTpCost} TP)"
+                                            : $"{chooser.SkillName} - {ElementLabel(chooser.SkillElement)} x{chooser.SkillPower:F1} ({chooser.SkillTpCost} TP)";
+                        if (DrawBattleButton(new Rect(panelX + 20, y, 340, 26), skillLabel))
                         {
                             _showingAbilities = false;
                             if (chooser.IsSelfStanceSkill)
                                 combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.Skill });
-                            else if (chooser.SkillIsAoe)
+                            else if (chooser.SkillIsAoe || chooser.SkillHitsEnemyFrontRow)
                                 combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.Skill });
                             else
                                 _pendingType = ActionType.Skill;
@@ -231,14 +350,14 @@ namespace Gameplay
                         if (chooser.CanProtectAll)
                         {
                             string protectLabel = $"Proteger a todos ({CombatEngine.ProtectAllTpCost} TP)";
-                            if (UIButton.Draw(new Rect(panelX + 370, y, 220, 26), protectLabel))
+                            if (DrawBattleButton(new Rect(panelX + 370, y, 220, 26), protectLabel))
                             {
                                 combatManager.SubmitAction(new PartyAction { Actor = chooser, Type = ActionType.ProtectAll });
                                 _showingAbilities = false;
                             }
                         }
 
-                        if (UIButton.Draw(new Rect(panelX + 600, y, 100, 26), "Cerrar"))
+                        if (DrawBattleButton(new Rect(panelX + 600, y, 100, 26), "Cerrar"))
                             _showingAbilities = false;
                     }
                     else if (_pendingType == null && !_showingItems && !_pendingItem.HasValue)
@@ -275,18 +394,18 @@ namespace Gameplay
                         GUI.Label(new Rect(panelX + 20, y, 300, 20), "Elegí un ítem:");
                         y += 22;
                         string potionLabel = $"Poción ({combatManager.PotionCharges}) - cura {CombatEngine.PotionHealAmount} HP";
-                        if (UIButton.Draw(new Rect(panelX + 20, y, 260, 26), potionLabel, enabled: combatManager.PotionCharges > 0))
+                        if (DrawBattleButton(new Rect(panelX + 20, y, 260, 26), potionLabel, enabled: combatManager.PotionCharges > 0))
                         {
                             _showingItems = false;
                             _pendingItem = ItemActionKind.Potion;
                         }
                         string reviverLabel = $"Revivir ({combatManager.ReviverCharges}) - devuelve a un caído";
-                        if (UIButton.Draw(new Rect(panelX + 290, y, 260, 26), reviverLabel, enabled: combatManager.ReviverCharges > 0))
+                        if (DrawBattleButton(new Rect(panelX + 290, y, 260, 26), reviverLabel, enabled: combatManager.ReviverCharges > 0))
                         {
                             _showingItems = false;
                             _pendingItem = ItemActionKind.Reviver;
                         }
-                        if (UIButton.Draw(new Rect(panelX + 560, y, 100, 26), "Cerrar")) _showingItems = false;
+                        if (DrawBattleButton(new Rect(panelX + 560, y, 100, 26), "Cerrar")) _showingItems = false;
                     }
                     else if (_pendingItem.HasValue)
                     {
@@ -296,14 +415,14 @@ namespace Gameplay
                         float bx = panelX + 20;
                         foreach (var ally in combatManager.Party.Where(p => p.IsAlive == wantsAlive))
                         {
-                            if (UIButton.Draw(new Rect(bx, y, 150, 26), ally.Name))
+                            if (DrawBattleButton(new Rect(bx, y, 150, 26), ally.Name))
                             {
                                 combatManager.SubmitItemAction(chooser, _pendingItem.Value, combatManager.Party.IndexOf(ally));
                                 _pendingItem = null;
                             }
                             bx += 160;
                         }
-                        if (UIButton.Draw(new Rect(panelX + 20, y + 34, 100, 24), "Cancelar")) _pendingItem = null;
+                        if (DrawBattleButton(new Rect(panelX + 20, y + 34, 100, 24), "Cancelar")) _pendingItem = null;
                     }
                     else if (_pendingType == ActionType.Skill && chooser.IsHealSkill)
                     {
@@ -312,7 +431,7 @@ namespace Gameplay
                         float bx = panelX + 20;
                         foreach (var ally in combatManager.Party)
                         {
-                            if (UIButton.Draw(new Rect(bx, y, 150, 26), ally.IsAlive ? ally.Name : $"{ally.Name} (caído)"))
+                            if (DrawBattleButton(new Rect(bx, y, 150, 26), ally.IsAlive ? ally.Name : $"{ally.Name} (caído)"))
                             {
                                 var action = new PartyAction { Actor = chooser, Type = ActionType.Skill, TargetAllyIndex = combatManager.Party.IndexOf(ally) };
                                 combatManager.SubmitAction(action);
@@ -320,7 +439,7 @@ namespace Gameplay
                             }
                             bx += 160;
                         }
-                        if (UIButton.Draw(new Rect(panelX + 20, y + 34, 100, 24), "Cancelar")) _pendingType = null;
+                        if (DrawBattleButton(new Rect(panelX + 20, y + 34, 100, 24), "Cancelar")) _pendingType = null;
                     }
                     else if (_pendingType == ActionType.Skill && chooser.IsVersatileBuffSkill)
                     {
@@ -331,7 +450,7 @@ namespace Gameplay
                         float bx = panelX + 20;
                         foreach (var ally in combatManager.Party.Where(p => p.IsAlive))
                         {
-                            if (UIButton.Draw(new Rect(bx, y, 150, 26), $"{ally.Name} (buff)"))
+                            if (DrawBattleButton(new Rect(bx, y, 150, 26), $"{ally.Name} (buff)"))
                             {
                                 var action = new PartyAction { Actor = chooser, Type = ActionType.Skill, TargetIsAlly = true, TargetAllyIndex = combatManager.Party.IndexOf(ally) };
                                 combatManager.SubmitAction(action);
@@ -344,7 +463,7 @@ namespace Gameplay
                         foreach (var enemy in combatManager.Enemies.Where(e => e.IsAlive))
                         {
                             int idx = combatManager.Enemies.IndexOf(enemy);
-                            if (UIButton.Draw(new Rect(bx, y, 150, 26), $"{enemy.Name} (debuff)"))
+                            if (DrawBattleButton(new Rect(bx, y, 150, 26), $"{enemy.Name} (debuff)"))
                             {
                                 var action = new PartyAction { Actor = chooser, Type = ActionType.Skill, TargetIsAlly = false, TargetEnemyIndex = idx };
                                 combatManager.SubmitAction(action);
@@ -352,7 +471,7 @@ namespace Gameplay
                             }
                             bx += 160;
                         }
-                        if (UIButton.Draw(new Rect(panelX + 20, y + 34, 100, 24), "Cancelar")) _pendingType = null;
+                        if (DrawBattleButton(new Rect(panelX + 20, y + 34, 100, 24), "Cancelar")) _pendingType = null;
                     }
                     else if (_pendingType.HasValue)
                     {
@@ -368,7 +487,7 @@ namespace Gameplay
                         foreach (var enemy in combatManager.Enemies.Where(e => e.IsAlive))
                         {
                             int idx = combatManager.Enemies.IndexOf(enemy);
-                            if (UIButton.Draw(new Rect(bx, y, 180, 26), enemy.Name))
+                            if (DrawBattleButton(new Rect(bx, y, 180, 26), enemy.Name))
                             {
                                 var action = new PartyAction { Actor = chooser, Type = _pendingType.Value, TargetEnemyIndex = idx };
                                 combatManager.SubmitAction(action);
@@ -379,7 +498,7 @@ namespace Gameplay
                             else bx += 190;
                         }
                         if (col != 0) y += 30;
-                        if (UIButton.Draw(new Rect(panelX + 20, y + 4, 100, 24), "Cancelar")) _pendingType = null;
+                        if (DrawBattleButton(new Rect(panelX + 20, y + 4, 100, 24), "Cancelar")) _pendingType = null;
                     }
                 }
                 else
@@ -401,6 +520,9 @@ namespace Gameplay
             }
 
             DrawDamagePopups();
+            if (battleStage != null && battleStage.IsForestCombat) UIButton.DrawForestEffects();
+            DrawQteCenterOverlay();
+            DrawAllOutAttackCenterOverlay();
         }
 
         // Compara el HP actual contra el ultimo visto para ese combatiente; si bajo o subio,
@@ -416,7 +538,11 @@ namespace Gameplay
             var view = battleStage != null && enemyIndex >= 0 ? battleStage.GetEnemyView(enemyIndex) : null;
             if (cam == null || !cam.enabled || view == null) return (fallbackX, fallbackY);
 
-            Vector3 screenPos = cam.WorldToScreenPoint(view.TopAnchor);
+            // WorldToScreenPointStable (no WorldToScreenPoint a secas): la camara de batalla
+            // tiembla en CombatFeedback.LateUpdate ANTES de que este OnGUI corra este frame, asi
+            // que proyectar con la posicion ya temblando tira el numero a cualquier lado del
+            // enemigo real -- ver el comentario en CombatFeedback.WorldToScreenPointStable.
+            Vector3 screenPos = CombatFeedback.WorldToScreenPointStable(cam, view.TopAnchor);
             if (screenPos.z <= 0f) return (fallbackX, fallbackY);
 
             return (screenPos.x, Screen.height - screenPos.y - 18f);
@@ -429,12 +555,17 @@ namespace Gameplay
                 int delta = currentHp - previous;
                 var color = delta < 0 ? new Color(1f, 0.3f, 0.3f) : new Color(0.4f, 1f, 0.5f);
                 string text = delta < 0 ? delta.ToString() : $"+{delta}";
-                _popups.Add(new DamagePopup { Text = text, Color = color, StartTime = Time.time, X = x, Y = y });
+                float jitter = Random.Range(-14f, 14f);
+                _popups.Add(new DamagePopup { Text = text, Color = color, StartTime = Time.time, X = x, Y = y, JitterX = jitter });
             }
             lastHp[key] = currentHp;
         }
 
         private static GUIStyle _popupStyle;
+
+        // Duracion del "pop" de entrada (ver EaseOutBack mas abajo) -- corto a proposito, el golpe
+        // ya pasó, esto es solo el numero reaccionando de inmediato a el.
+        private const float PopDuration = 0.14f;
 
         private void DrawDamagePopups()
         {
@@ -456,11 +587,63 @@ namespace Gameplay
 
                 float frac = age / PopupDuration;
                 var popup = _popups[i];
-                _popupStyle.normal.textColor = new Color(popup.Color.r, popup.Color.g, popup.Color.b, 1f - frac);
-                // Centrado horizontal real (no solo el punto de anclaje a la izquierda), y sube
-                // flotando desde la posicion de origen -- sobre el enemigo si vino de
-                // EnemyPopupPosition, o junto a la fila del panel para la party.
-                GUI.Label(new Rect(popup.X - w / 2f, popup.Y - frac * 24f - h / 2f, w, h), popup.Text, _popupStyle);
+                _popupStyle.normal.textColor = new Color(popup.Color.r, popup.Color.g, popup.Color.b, 1f - frac * frac);
+
+                // Pop de entrada con sobre-elongacion (EaseOutBack): el numero nace mas grande de
+                // lo que va a quedar y "rebota" hasta su tamano final en PopDuration segundos --
+                // esto es lo que lee como "juicy" en vez de aparecer/desaparecer parejo. Despues
+                // del pop, se achica un poco de nuevo hacia el final (settle) para que el fade no
+                // se sienta como que el numero se queda pegado del mismo tamano todo el rato.
+                float popT = Mathf.Clamp01(age / PopDuration);
+                float scale = Mathf.Max(0.05f, EaseOutBack(popT) * Mathf.Lerp(1f, 0.85f, frac));
+
+                // Sube con ease-out (rapido al salir, se frena) en vez de velocidad constante --
+                // se siente mas como un impacto real que un ascensor. JitterX separa golpes
+                // simultaneos (multi-hit, Ataque en Conjunto) para que no queden apilados.
+                float riseY = 30f * (1f - (1f - frac) * (1f - frac));
+                float cx = popup.X + popup.JitterX;
+                float cy = popup.Y - riseY;
+
+                var oldMatrix = GUI.matrix;
+                GUIUtility.ScaleAroundPivot(new Vector2(scale, scale), new Vector2(cx, cy));
+                GUI.Label(new Rect(cx - w / 2f, cy - h / 2f, w, h), popup.Text, _popupStyle);
+                GUI.matrix = oldMatrix;
+            }
+        }
+
+        // Clasica curva "back ease out" (Robert Penner): pasa de 0 a 1 pero se pasa de largo hasta
+        // ~1.1 antes de asentarse -- el "rebote" del pop. c1/c3 son las constantes estandar de esta
+        // familia de curvas, no valores ajustados a mano.
+        private static float EaseOutBack(float t)
+        {
+            const float c1 = 1.70158f;
+            const float c3 = c1 + 1f;
+            float x = t - 1f;
+            return 1f + c3 * x * x * x + c1 * x * x;
+        }
+
+        // Gunner: que arma tiene puesta (ver CharacterStats.WeaponMode / CombatEngine.
+        // ResolveClassAwareHit) -- Rifle pega colateral en cruz (misma fila y columna del
+        // objetivo) con descuento por objetivo extra, Shotgun pega mas fuerte pero solo al
+        // objetivo elegido. Independiente de la bala elemental cargada (selector de abajo).
+        private void DrawGunnerWeaponModeSelector(float panelX, float y, CharacterStats gunner)
+        {
+            (GunnerWeaponMode mode, string label)[] options =
+            {
+                (GunnerWeaponMode.Rifle, "Rifle (colateral fila+col)"),
+                (GunnerWeaponMode.Shotgun, "Escopeta (x1.4, 1 objetivo)"),
+            };
+
+            float bx = panelX + 20;
+            foreach (var (mode, label) in options)
+            {
+                bool active = gunner.WeaponMode == mode;
+                var old = GUI.color;
+                if (active) GUI.color = new Color(1f, 0.85f, 0.3f);
+                if (DrawBattleButton(new Rect(bx, y, 220, 24), label))
+                    gunner.WeaponMode = mode;
+                GUI.color = old;
+                bx += 226;
             }
         }
 
@@ -486,11 +669,55 @@ namespace Gameplay
                 string text = element == Element.None ? label : $"{label} ({stock})";
                 var old = GUI.color;
                 if (loaded) GUI.color = new Color(1f, 0.85f, 0.3f);
-                if (UIButton.Draw(new Rect(bx, y, 130, 24), text, enabled: enabled))
+                if (DrawBattleButton(new Rect(bx, y, 130, 24), text, enabled: enabled))
                     gunner.LoadedBulletElement = element;
                 GUI.color = old;
                 bx += 136;
             }
+        }
+
+        // Ranger: fila de botones para cargar una flecha de estado (o volver a las normales), mismo
+        // criterio que DrawGunnerBulletSelector de arriba. El tipo cargado se guarda directo en
+        // CharacterStats.LoadedArrowType -- CombatEngine lo lee al resolver CUALQUIER golpe que
+        // conecte (ataque basico Y habilidad, ver ApplyLoadedArrowStatus), y gasta 1 flecha de
+        // stock cada vez que de verdad se usa.
+        private void DrawRangerArrowSelector(float panelX, float y, CharacterStats ranger)
+        {
+            (RangerArrowType type, string label, int stock)[] options =
+            {
+                (RangerArrowType.None, "Normal", -1),
+                (RangerArrowType.Poison, "Veneno", ranger.PoisonArrows),
+                (RangerArrowType.Paralysis, "Parálisis", ranger.ParalysisArrows),
+                (RangerArrowType.Bleed, "Sangrado", ranger.BleedArrows),
+            };
+
+            float bx = panelX + 20;
+            foreach (var (type, label, stock) in options)
+            {
+                bool loaded = ranger.LoadedArrowType == type;
+                bool enabled = type == RangerArrowType.None || stock > 0;
+                string text = type == RangerArrowType.None ? label : $"{label} ({stock})";
+                var old = GUI.color;
+                if (loaded) GUI.color = new Color(1f, 0.85f, 0.3f);
+                if (DrawBattleButton(new Rect(bx, y, 130, 24), text, enabled: enabled))
+                    ranger.LoadedArrowType = type;
+                GUI.color = old;
+                bx += 136;
+            }
+        }
+
+        // Etiquetas cortas de estado para la fila de un enemigo vivo (ver DrawTurnLine mas arriba)
+        // -- IsBroken ya existia, ahora se suman Paralizado/Sangrando/Veneno (ver EnemyStats,
+        // CombatEngine.ApplyLoadedArrowStatus/ExecuteEnemyAction) para que el jugador vea de un
+        // vistazo que estados tiene encima cada uno, sin tener que inspeccionar nada mas.
+        private string StatusTags(EnemyStats enemy)
+        {
+            var tags = new List<string>();
+            if (enemy.IsBroken) tags.Add("ROTO: pierde su turno");
+            if (enemy.IsParalyzed) tags.Add("paralizado");
+            if (enemy.IsVulnerable) tags.Add("sangrando");
+            if (enemy.DotRoundsLeft > 0) tags.Add(string.IsNullOrEmpty(enemy.DotLabel) ? "veneno" : enemy.DotLabel.ToLowerInvariant());
+            return tags.Count > 0 ? $" [{string.Join(", ", tags)}]" : "";
         }
 
         private string ElementLabel(Element element)
@@ -507,33 +734,66 @@ namespace Gameplay
             }
         }
 
-        // Banner grande y llamativo ("hazlo estiloso"): se rompio el aguante de TODOS los
-        // enemigos a la vez. Pulsa entre dorado y blanco y ofrece el boton (o Espacio) para
-        // lanzar el golpe de equipo antes de que se acabe el tiempo.
-        private void DrawAllOutAttackBanner(float panelX, float y, float panelW)
+        // Rework del banner del Ataque en Conjunto (antes: banner angosto en el panel lateral, ver
+        // el commit anterior). Ahora vive en el CENTRO de pantalla, mismo criterio que
+        // DrawQteCenterOverlay: dos barras separadas (tiempo restante de la ventana vs. cuanto se
+        // "cargo" machacando) y un contador grande que hace un "pop" con rebote cada vez que sube
+        // (EaseOutBack, ver UpdateAllOutMashFeedback).
+        private void DrawAllOutAttackCenterOverlay()
         {
+            if (!combatManager.AllOutAttackReady) return;
+
             int mashCount = combatManager.AllOutAttackMashCount;
-            // Cuanto mas se "machaca" el boton, mas intenso el pulso -- feedback inmediato de que
-            // cada apretada suma (hasta el tope, donde se queda brillando a full).
             float mashFrac = Mathf.Clamp01(mashCount / (float)CombatEngine.AllOutMaxPresses);
             float pulse = 0.5f + 0.5f * Mathf.Sin(Time.time * (8f + mashFrac * 10f));
             Color glow = Color.Lerp(new Color(0.85f, 0.65f, 0.1f), new Color(1f, 0.95f, 0.55f), Mathf.Max(pulse, mashFrac));
 
-            DrawRect(new Rect(panelX + 10, y, panelW - 20, 80), new Color(0.08f, 0.06f, 0.02f, 0.9f));
-            DrawRect(new Rect(panelX + 10, y, panelW - 20, 4), glow);
-            DrawRect(new Rect(panelX + 10, y + 76, panelW - 20, 4), glow);
+            float cx = Screen.width * 0.5f;
+            const float boxW = 420f, boxH = 168f;
+            float boxY = Screen.height * 0.5f - boxH - 30f;
+            var boxRect = new Rect(cx - boxW * 0.5f, boxY, boxW, boxH);
+
+            DrawRect(new Rect(boxRect.x - 4, boxRect.y - 4, boxRect.width + 8, boxRect.height + 8), new Color(0f, 0f, 0f, 0.45f));
+            DrawRect(boxRect, new Color(0.08f, 0.06f, 0.02f, 0.92f));
+            DrawRect(new Rect(boxRect.x, boxRect.y, boxRect.width, 4), glow);
+            DrawRect(new Rect(boxRect.x, boxRect.y + boxRect.height - 4, boxRect.width, 4), glow);
 
             var oldColor = GUI.color;
-            var bigStyle = new GUIStyle(GUI.skin.label) { fontSize = 20, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
-            bigStyle.normal.textColor = glow;
-            GUI.Label(new Rect(panelX + 10, y + 6, panelW - 20, 28), "¡TODOS LOS ENEMIGOS ATURDIDOS!", bigStyle);
+            var titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 24, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
+            titleStyle.normal.textColor = glow;
+            GUI.Label(new Rect(boxRect.x, boxRect.y + 10, boxRect.width, 32), "¡AGUANTE ROTO!", titleStyle);
             GUI.color = oldColor;
 
-            string countLabel = mashCount > 0 ? $"¡Golpes acumulados: x{mashCount}! Mientras más machacás, más daño." : "¡MACHACÁ el botón (o Espacio) para el Ataque en Conjunto!";
-            GUI.Label(new Rect(panelX + 20, y + 34, panelW - 260, 24), countLabel);
+            // --- Barra de tiempo restante: la ventana se cierra sola, no depende de cuanto machaques ---
+            float barW = boxRect.width - 60, barH = 10;
+            var timeBarRect = new Rect(cx - barW * 0.5f, boxRect.y + 48, barW, barH);
+            DrawRect(timeBarRect, new Color(0.2f, 0.2f, 0.22f));
+            float timeFrac = combatManager.allOutAttackMashWindow > 0f
+                ? Mathf.Clamp01(combatManager.AllOutAttackTimeRemaining / combatManager.allOutAttackMashWindow) : 0f;
+            DrawRect(new Rect(timeBarRect.x, timeBarRect.y, timeBarRect.width * timeFrac, barH), new Color(0.9f, 0.3f, 0.2f));
 
-            string buttonLabel = mashCount > 0 ? $"¡SEGUÍ MACHACANDO! x{mashCount} (Espacio)" : "¡ATAQUE EN CONJUNTO! (Espacio)";
-            if (UIButton.Draw(new Rect(panelX + panelW - 260, y + 30, 240, 32), buttonLabel, accentColor: glow))
+            // --- Barra de carga: cuanto se "machaco" hasta ahora, hasta el tope ---
+            var chargeBarRect = new Rect(cx - barW * 0.5f, timeBarRect.y + barH + 8, barW, barH);
+            DrawRect(chargeBarRect, new Color(0.2f, 0.2f, 0.22f));
+            DrawRect(new Rect(chargeBarRect.x, chargeBarRect.y, chargeBarRect.width * mashFrac, barH), glow);
+
+            // --- Contador de golpes: pop con rebote cada vez que sube (ver UpdateAllOutMashFeedback) ---
+            float popT = Mathf.Clamp01((Time.time - _allOutMashPopStart) / AllOutMashPopDuration);
+            float scale = Mathf.Max(0.05f, EaseOutBack(popT));
+            var countRect = new Rect(cx - 60f, chargeBarRect.y + barH + 8, 120f, 44f);
+            var savedMatrix = GUI.matrix;
+            GUIUtility.ScaleAroundPivot(new Vector2(scale, scale), countRect.center);
+            var countStyle = new GUIStyle(GUI.skin.label) { fontSize = 34, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
+            countStyle.normal.textColor = mashCount > 0 ? glow : new Color(0.6f, 0.6f, 0.6f);
+            GUI.Label(countRect, mashCount > 0 ? $"x{mashCount}" : "—", countStyle);
+            GUI.matrix = savedMatrix;
+
+            string hint = mashCount > 0 ? "¡SEGUÍ MACHACANDO! (Espacio)" : "¡MACHACÁ Espacio para el Ataque en Conjunto!";
+            var hintStyle = new GUIStyle(GUI.skin.label) { fontSize = 12, alignment = TextAnchor.MiddleCenter };
+            hintStyle.normal.textColor = new Color(0.85f, 0.85f, 0.85f);
+            GUI.Label(new Rect(boxRect.x, countRect.y + countRect.height, boxRect.width, 18), hint, hintStyle);
+
+            if (DrawBattleButton(new Rect(cx - 130f, boxRect.y + boxRect.height + 10f, 260f, 34f), "¡ATAQUE EN CONJUNTO!", accentColor: glow))
                 combatManager.TriggerAllOutAttack();
         }
 
@@ -588,7 +848,7 @@ namespace Gameplay
                 y += 26;
             }
 
-            if (UIButton.Draw(new Rect(panelX + panelW - 180, panelY + panelH - 44, 160, 34), "Continuar"))
+            if (DrawBattleButton(new Rect(panelX + panelW - 180, panelY + panelH - 44, 160, 34), "Continuar"))
                 combatManager.DismissVictorySummary();
         }
 
@@ -599,12 +859,31 @@ namespace Gameplay
             _actionMenuRevealStart = Time.time;
         }
 
+        private bool DrawBattleButton(Rect rect, string label, bool enabled = true, Color? accentColor = null, int fontSize = 0)
+        {
+            return battleStage != null && battleStage.IsForestCombat
+                ? UIButton.DrawForest(rect, label, enabled, accentColor, fontSize)
+                : UIButton.Draw(rect, label, enabled, accentColor, fontSize);
+        }
+
         // Mismo boton compartido (UIButton) que el resto del juego, pero con una entrada extra:
         // desliza desde la izquierda con una desaceleracion marcada, en cascada segun "order"
         // (cada boton entra un poco despues que el anterior) -- el gesto de los menus de Persona
         // 5. No es clickeable hasta que termina de entrar, para que la animacion se note.
         private bool DrawP5Button(Rect target, string label, int order)
         {
+            if (battleStage != null && battleStage.IsForestCombat)
+            {
+                const float forestDelay = 0.045f;
+                const float forestDuration = 0.18f;
+                float forestT = Mathf.Clamp01((Time.time - _actionMenuRevealStart - order * forestDelay) / forestDuration);
+                if (forestT <= 0f) return false;
+                float rise = (1f - forestT) * 12f;
+                var forestRect = new Rect(target.x, target.y + rise, target.width, target.height);
+                bool forestClicked = DrawBattleButton(forestRect, label);
+                return forestT >= 1f && forestClicked;
+            }
+
             const float perStepDelay = 0.06f;
             const float duration = 0.22f;
             float t = Mathf.Clamp01((Time.time - _actionMenuRevealStart - order * perStepDelay) / duration);
@@ -614,37 +893,99 @@ namespace Gameplay
             float slide = (1f - eased) * (target.width + 40f);
             var r = new Rect(target.x - slide, target.y, target.width, target.height);
 
-            bool clicked = UIButton.Draw(r, label.ToUpperInvariant());
+            bool clicked = DrawBattleButton(r, label.ToUpperInvariant());
             return t >= 1f && clicked;
         }
 
-        private void DrawQteOverlay(float panelX, float y, float panelW)
+        // Overlay del QTE: rework completo del dibujo viejo (que vivia adentro del panel lateral y
+        // mostraba TODA la secuencia revelada de entrada, ver el commit anterior). Ahora:
+        //  - vive en el CENTRO real de la pantalla (Screen.width/height), no en el panel de abajo;
+        //  - solo se ve la tecla que toca AHORA (qte.Sequence[qte.ProgressIndex]) -- las que faltan
+        //    quedan como pips grises sin revelar cual son, asi no se puede memorizar la secuencia
+        //    entera de un vistazo como antes;
+        //  - la tecla actual "pop-ea" (arranca grande y se asienta) cada vez que ProgressIndex
+        //    avanza, ver UpdateQteFeedback/_qtePressPopStart;
+        //  - al terminar (exito o fallo) se queda un instante mas (QteResultLingerDuration) con el
+        //    resultado grande en vez de desaparecer en seco.
+        private void DrawQteCenterOverlay()
         {
             var qte = QteManager;
-            GUI.Box(new Rect(panelX + 10, y, panelW - 20, 80), "");
-            GUI.Label(new Rect(panelX + 20, y + 4, panelW - 40, 20), "¡Repetí la secuencia a tiempo para un golpe extra!");
+            if (qte == null) return;
+            bool active = qte.IsActive;
+            bool lingering = !active && Time.time - _qteResultLingerStart < QteResultLingerDuration;
+            if (!active && !lingering) return;
 
-            // Barra de tiempo que se achica en tiempo real.
-            float barX = panelX + 20, barY = y + 26, barW = panelW - 220, barH = 16;
-            DrawRect(new Rect(barX, barY, barW, barH), new Color(0.2f, 0.2f, 0.22f));
-            float frac = qte.TimeLimit > 0f ? Mathf.Clamp01(qte.TimeRemaining / qte.TimeLimit) : 0f;
-            Color barColor = Color.Lerp(new Color(0.9f, 0.2f, 0.2f), new Color(0.3f, 0.9f, 0.3f), frac);
-            DrawRect(new Rect(barX, barY, barW * frac, barH), barColor);
+            float cx = Screen.width * 0.5f;
+            const float boxW = 260f, boxH = 176f;
+            // Un poco arriba del centro exacto: deja libre la mitad inferior de la pantalla, donde
+            // sigue viviendo el panel de combate de siempre.
+            float boxY = Screen.height * 0.5f - boxH - 30f;
+            var boxRect = new Rect(cx - boxW * 0.5f, boxY, boxW, boxH);
 
-            // Iconos de la secuencia: gris = pendiente, amarillo = el que toca ahora, verde = ya hecho.
-            float iconX = panelX + 20;
-            float iconY = y + 48;
-            for (int i = 0; i < qte.Sequence.Count; i++)
+            DrawRect(new Rect(boxRect.x - 3, boxRect.y - 3, boxRect.width + 6, boxRect.height + 6), new Color(0f, 0f, 0f, 0.4f));
+            DrawRect(boxRect, new Color(0.05f, 0.05f, 0.07f, 0.88f));
+
+            var titleStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 13 };
+            titleStyle.normal.textColor = new Color(0.85f, 0.85f, 0.85f);
+            GUI.Label(new Rect(boxRect.x, boxRect.y + 6, boxRect.width, 20), "¡Repetí la secuencia!", titleStyle);
+
+            if (active)
             {
-                Color c = i < qte.ProgressIndex ? new Color(0.3f, 0.9f, 0.3f)
-                    : i == qte.ProgressIndex ? new Color(1f, 0.9f, 0.2f)
-                    : new Color(0.5f, 0.5f, 0.5f);
-                DrawRect(new Rect(iconX, iconY, 26, 26), c);
-                var old = GUI.color;
+                // --- Barra de tiempo ---
+                float barW = boxRect.width - 40, barH = 10;
+                var barRect = new Rect(cx - barW * 0.5f, boxRect.y + 30, barW, barH);
+                DrawRect(barRect, new Color(0.2f, 0.2f, 0.22f));
+                float frac = qte.TimeLimit > 0f ? Mathf.Clamp01(qte.TimeRemaining / qte.TimeLimit) : 0f;
+                Color barColor = Color.Lerp(new Color(0.9f, 0.2f, 0.2f), new Color(0.3f, 0.9f, 0.3f), frac);
+                DrawRect(new Rect(barRect.x, barRect.y, barRect.width * frac, barRect.height), barColor);
+
+                // --- Pips de progreso: SOLO cuentan aciertos, nunca revelan que tecla es cada uno ---
+                float pipSize = 10f, pipGap = 6f;
+                float pipsTotalW = qte.Sequence.Count * pipSize + Mathf.Max(0, qte.Sequence.Count - 1) * pipGap;
+                float pipX = cx - pipsTotalW * 0.5f;
+                float pipY = barRect.y + barH + 10;
+                for (int i = 0; i < qte.Sequence.Count; i++)
+                {
+                    Color c = i < qte.ProgressIndex ? new Color(0.3f, 0.9f, 0.3f) : new Color(0.4f, 0.4f, 0.45f);
+                    DrawRect(new Rect(pipX, pipY, pipSize, pipSize), c);
+                    pipX += pipSize + pipGap;
+                }
+
+                // --- La tecla que toca AHORA: grande, sola, en el centro, con "pop" al acertar ---
+                // Reusa EaseOutBack (ver DrawDamagePopups mas abajo, mismo truco que los numeros de
+                // dano): la tecla nueva "nace" en 0 y rebota hasta su tamano final en QtePopDuration
+                // segundos, en vez de aparecer/quedarse quieta -- la primera tecla de una secuencia
+                // (nunca hubo un acierto previo, _qtePressPopStart sigue en su default viejo) cae ya
+                // asentada en escala 1, sin pop de entrada.
+                const float glyphSize = 68f;
+                float glyphY = pipY + 26;
+                float popT = Mathf.Clamp01((Time.time - _qtePressPopStart) / QtePopDuration);
+                float scale = Mathf.Max(0.05f, EaseOutBack(popT));
+                Color glyphBg = Color.Lerp(new Color(1f, 0.9f, 0.2f), Color.white, popT);
+
+                var glyphRect = new Rect(cx - glyphSize * 0.5f, glyphY, glyphSize, glyphSize);
+                var savedMatrix = GUI.matrix;
+                GUIUtility.ScaleAroundPivot(new Vector2(scale, scale), glyphRect.center);
+
+                DrawRect(new Rect(glyphRect.x - 4, glyphRect.y - 4, glyphRect.width + 8, glyphRect.height + 8), new Color(0f, 0f, 0f, 0.5f));
+                DrawRect(glyphRect, glyphBg);
+
+                var oldColor = GUI.color;
                 GUI.color = Color.black;
-                GUI.Label(new Rect(iconX, iconY + 3, 26, 20), ArrowGlyph(qte.Sequence[i]));
-                GUI.color = old;
-                iconX += 34;
+                var glyphStyle = new GUIStyle(GUI.skin.label) { fontSize = 40, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
+                GUI.Label(glyphRect, ArrowGlyph(qte.Sequence[qte.ProgressIndex]), glyphStyle);
+                GUI.color = oldColor;
+
+                GUI.matrix = savedMatrix;
+            }
+            else
+            {
+                // --- Linger: resultado final (tilde verde / cruz roja), sin revelar nada mas ---
+                var resultStyle = new GUIStyle(GUI.skin.label) { fontSize = 56, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
+                var oldColor = GUI.color;
+                GUI.color = _qteResultWasSuccess ? new Color(0.4f, 1f, 0.45f) : new Color(1f, 0.35f, 0.35f);
+                GUI.Label(new Rect(boxRect.x, boxRect.y + 60, boxRect.width, 90), _qteResultWasSuccess ? "✓" : "✗", resultStyle);
+                GUI.color = oldColor;
             }
         }
 

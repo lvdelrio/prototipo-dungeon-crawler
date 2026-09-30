@@ -59,6 +59,7 @@ namespace Gameplay
         // de limpieza la salteaba en silencio. Puede pasar en un combate real si el jugador huye
         // (o hace algo que termine el combate) muy rapido, justo al arrancar la pelea.
         private bool _cleanupPendingSceneLoad;
+        public bool IsForestCombat { get; private set; }
 
         // Niebla de distancia: se guarda la de la mazmorra la primera vez (ya viene cargada del
         // scene file) y se restaura al salir de combate, para que la niebla de la batalla no se
@@ -94,6 +95,8 @@ namespace Gameplay
             combatManager.OnEnemyDefeated += HandleEnemyDefeated;
             combatManager.OnEnemyAdded += HandleEnemyAdded;
             combatManager.OnEnemySkillHit += HandleEnemySkillHit;
+            combatManager.OnSignatureSkillCast += HandleSignatureSkillCast;
+            combatManager.OnSignatureSkillHit += HandleSignatureSkillHit;
             combatManager.OnEnemyElementalHit += HandleEnemyElementalHit;
             combatManager.OnEnemyPoiseBroken += HandleEnemyPoiseBroken;
             combatManager.OnAllOutAttackUsed += HandleAllOutAttackUsed;
@@ -141,7 +144,10 @@ namespace Gameplay
 
             bool isBoss = combatManager != null && combatManager.IsBossFight;
             var zone = DetermineZoneTheme();
+            IsForestCombat = zone == CombatZoneTheme.Forest;
             ApplyBattleFog(isBoss, zone);
+            if (zone == CombatZoneTheme.Forest && dungeonManager != null && dungeonManager.levelBuilder != null)
+                BattleForestStage.Spawn(battleScene, _battleCamera, dungeonManager.levelBuilder);
             if (_battleCamera != null)
                 _ambientParticles = BattleAmbientParticles.Spawn(_battleCamera.transform, isBoss, zone);
 
@@ -208,7 +214,7 @@ namespace Gameplay
                 };
             }
             RenderSettings.fogStartDistance = 6f;
-            RenderSettings.fogEndDistance = boss ? 20f : 16f;
+            RenderSettings.fogEndDistance = zone == CombatZoneTheme.Forest ? (boss ? 48f : 42f) : (boss ? 20f : 16f);
         }
 
         private void RestoreDungeonFog()
@@ -360,8 +366,9 @@ namespace Gameplay
         // habilidades del mismo elemento comparten shader). Los ataques basicos NUNCA llegan aca;
         // solo usan el shader simple de HandleEnemyElementalHit. "intensity" (SkillPower de quien
         // la uso) agranda el efecto para las habilidades mas fuertes.
-        private void HandleEnemySkillHit(int index, Element element, float intensity)
+        private void HandleEnemySkillHit(int index, Element element, float intensity, CharacterClass actorClass)
         {
+            if (actorClass == CharacterClass.Mage || actorClass == CharacterClass.Warrior) return;
             if (index < 0 || index >= _activeViews.Count) return;
             var view = _activeViews[index];
             if (view == null) return;
@@ -391,6 +398,53 @@ namespace Gameplay
                 ImpactSparkEffect.Spawn(sparkMaterial, anchor, ElementVisuals.ColorFor(element), facing, slashMode, intensity);
         }
 
+        private void HandleSignatureSkillCast(CharacterClass characterClass, int index, float intensity)
+        {
+            if (index < 0 || index >= _activeViews.Count) return;
+            var view = _activeViews[index];
+            if (view == null) return;
+
+            Vector3 anchor = EffectAnchor(view);
+            Vector3 ground = view.transform.position - Vector3.up * view.Extents.y + Vector3.up * 0.03f;
+            if (characterClass == CharacterClass.Mage)
+            {
+                Vector3 source = anchor;
+                if (_battleCamera != null)
+                    source = anchor - _battleCamera.transform.right * 3.6f + _battleCamera.transform.up * 0.35f;
+                SignatureSkillVfx.PlayMageCast(transform, source, anchor, ground, intensity);
+            }
+            else if (characterClass == CharacterClass.Warrior)
+            {
+                SignatureSkillVfx.PlayWarriorCharge(transform, anchor, _battleCamera, intensity);
+            }
+        }
+
+        private void HandleSignatureSkillHit(CharacterClass characterClass, int index, float intensity)
+        {
+            if (index < 0 || index >= _activeViews.Count) return;
+            var view = _activeViews[index];
+            if (view == null) return;
+
+            Vector3 anchor = EffectAnchor(view);
+            Quaternion facing = _battleCamera != null ? _battleCamera.transform.rotation : Quaternion.identity;
+            if (characterClass == CharacterClass.Mage)
+            {
+                SignatureSkillVfx.PlayMageImpact(transform, anchor, _battleCamera, intensity);
+                if (iceSkillMaterial != null)
+                    ElementalBurstEffect.Spawn(iceSkillMaterial, anchor, ElementVisuals.ColorFor(Element.Ice), facing, intensity);
+            }
+            else if (characterClass == CharacterClass.Warrior)
+            {
+                SignatureSkillVfx.PlayWarriorImpact(transform, anchor, _battleCamera, intensity);
+                if (shockwaveMaterial != null)
+                    ImpactShockwaveEffect.Spawn(shockwaveMaterial, anchor, ElementVisuals.ColorFor(Element.Slash), facing, slashMode: true, intensity: intensity);
+                if (sparkMaterial != null)
+                    ImpactSparkEffect.Spawn(sparkMaterial, anchor, ElementVisuals.ColorFor(Element.Slash), facing, slashMode: true, intensity: intensity);
+            }
+
+            combatManager?.feedback?.OnSignatureSkillImpact(characterClass);
+        }
+
         private Material SkillMaterialFor(Element element)
         {
             switch (element)
@@ -417,8 +471,11 @@ namespace Gameplay
         // feedback visual, no solo las habilidades (que ademas tienen el sprite de HitImpactEffect).
         // "intensity" (SkillPower de la habilidad, o 1 en un ataque basico) agranda y hace mas
         // intensas las chispas cuanto mas fuerte es el golpe.
-        private void HandleEnemyElementalHit(int index, Element element, float intensity)
+        private void HandleEnemyElementalHit(int index, Element element, float intensity, CharacterClass actorClass, bool isSkillHit)
         {
+            // Mage y Warrior tienen secuencias insignia propias; evita superponerles el burst
+            // elemental generico y deja que el golpe sea legible en dos tiempos: lanzamiento y remate.
+            if (isSkillHit && (actorClass == CharacterClass.Mage || actorClass == CharacterClass.Warrior)) return;
             if (index < 0 || index >= _activeViews.Count) return;
             var view = _activeViews[index];
             if (view == null) return;
@@ -549,6 +606,7 @@ namespace Gameplay
 
         private void CleanupAfterCombat()
         {
+            IsForestCombat = false;
             var battleSceneCheck = SceneManager.GetSceneByName(battleSceneName);
             if (battleSceneCheck.IsValid() && !battleSceneCheck.isLoaded)
             {

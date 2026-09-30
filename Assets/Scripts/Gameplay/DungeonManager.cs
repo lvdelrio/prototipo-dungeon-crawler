@@ -24,6 +24,10 @@ namespace Gameplay
 
         private const int TreasurePointsReward = 25;
         private static readonly string[] TreasureEquipmentIds = { "daga_venenosa", "hacha_desgarradora", "anillo_de_espinas", "grebas_aislantes", "tunica_ignifuga", "manto_glacial" };
+
+        // Tumba del Bioma de Cuevas (ver DungeonGenerator.AddTombs / TryInteract mas abajo): chance
+        // de que interactuar dispare un combate contra goblins emboscados en vez de dar botin.
+        private const float TombCombatChance = 0.3f;
         // Fraccion del HP maximo que una trampa (ver DungeonGenerator.AddTrapRoom) le saca a CADA
         // integrante vivo cuando se activa. Ya no hay probabilidad de por medio: SpikeCells duele
         // apenas se pisa, y ArrowSweep dispara una flecha real (ver TrapDisparadorController) que
@@ -54,8 +58,22 @@ namespace Gameplay
         private TrapDisparadorController _activeTrapDisparador;
         private int _activeTrapDisparadorFloorIndex = -1;
 
+        // Roca que persigue (ver Gameplay/BoulderTrapController), null si este piso no tiene una
+        // (solo la mini cueva del piso 0, ver DungeonGenerator.AddBoulderTrap). Mismo patron que
+        // _activeTrapDisparador de arriba.
+        private BoulderTrapController _activeBoulderTrap;
+        private int _activeBoulderTrapFloorIndex = -1;
+
+        // Corutina de la sala que colapsa activa (ver CollapseRoomRoutine) -- null mientras no haya
+        // ninguna en curso. Un solo piso puede tener sala que colapsa (mini cueva del piso 0), asi
+        // que un solo campo alcanza (a diferencia de FOE/disparador/roca, no hace falta reconstruir
+        // nada al cambiar de piso: si el jugador se va a mitad de la ola, la corutina se corta sola).
+        private Coroutine _collapseRoutine;
+        private bool _isPlayerFalling;
+        public bool IsPlayerFalling => _isPlayerFalling;
+
         // Indice en _floors del PRIMER piso de cada bioma secundario (clave = DungeonFloor.Biome:
-        // 1 = Bioma 2/Cueva Intergalactica, 2 = Bioma de Cuevas, ver GenerateAndEnterDungeon --
+        // 1 = Bioma 2/Cueva Intergalactica, 2 = Bioma de Cuevas, 3 = Patio, 4 = Castillo interior --
         // cada uno tiene varios pisos propios, esto es solo el punto de entrada/salida). Generico
         // por diseño: agregar un cuarto bioma no pisa el estado de los anteriores.
         private readonly Dictionary<int, int> _biomeEntryFloorIndex = new Dictionary<int, int>();
@@ -68,6 +86,15 @@ namespace Gameplay
 
         public DungeonFloor CurrentFloor => _floors[_currentFloorIndex];
         public int CurrentFloorIndex => _currentFloorIndex;
+
+        // Nombre de RoomTemplate de la celda donde esta parado el jugador ahora mismo, o null si no
+        // esta dentro de ninguna sala de autor (ver DungeonGen.RoomTemplate) -- usado por
+        // PauseMenuHUD para el boton "Guardar forma" de la pestaña Mapa (pedido puntual: "reconocer
+        // formas que se repitan entre runs").
+        public string CurrentPredefinedRoomTemplateName =>
+            IsReady && CurrentFloor.InBounds(player.CellX, player.CellY)
+                ? CurrentFloor.Cells[player.CellX, player.CellY].PredefinedRoomTemplateName
+                : null;
         // Para el fondo de combate (ver Gameplay.BattleStageController): que tematica de zona esta
         // pisando el jugador ahora mismo, para que el combate se sienta parte del mismo lugar en
         // vez de siempre el mismo fondo generico.
@@ -95,6 +122,7 @@ namespace Gameplay
         public MetaProgress Meta => _meta;
         public bool IsGameOverShopActive { get; private set; }
         public bool LastRunWasVictory { get; private set; }
+        public bool LastRunReturnedToHub { get; private set; }
         public int LastRunPointsEarned => _lastRunPointsEarned;
 
         // false hasta que se genera la PRIMERA mazmorra (recien despues de que el jugador elige
@@ -153,20 +181,31 @@ namespace Gameplay
         private const int Biome2FloorCount = 2;
 
         // Mismo criterio para el Bioma de Cuevas (Biome id 2 -- ver CombatManager.StartEncounter y
-        // DungeonLevelBuilder para el resto de las diferencias visuales/de fauna).
-        private const int CaveBiomeFloorCount = 2;
+        // DungeonLevelBuilder para el resto de las diferencias visuales/de fauna). Pedido puntual:
+        // "agregar pisos hasta el piso 2" -- antes 2 (indices 0-1), ahora 3 (indices 0-2), con el
+        // jefe (Gorlok) en el ultimo (bossFloorStart se recalcula solo mas abajo).
+        private const int CaveBiomeFloorCount = 3;
+        // Bioma exterior: patio frontal, lateral y trasero. Bioma interior: salon,
+        // dos niveles de torre y dos niveles de sotano.
+        private const int PatioBiomeFloorCount = 3;
+        private const int CastleBiomeFloorCount = 5;
 
         private void GenerateAndEnterDungeon(int seed)
         {
+            _biomeReturnPoint.Clear();
+            // El bosque necesita al menos los indices 0, 1 y 2: el jefe y la ruta al castillo
+            // viven en el indice 2. Una configuracion reducida no debe borrarlos silenciosamente.
+            int forestFloorCount = Mathf.Max(3, settings.floorCount);
             _floors = _generator.GenerateDungeon(
-                settings.floorCount, settings.size, settings.size, seed, out var log,
+                forestFloorCount, settings.size, settings.size, seed, out var log,
                 settings.stairPairsPerFloor,
                 settings.bossFloorStart,
                 settings.bossFloorInterval,
                 settings.voidFraction,
                 settings.dangerValueMin,
                 settings.dangerValueMax,
-                BuildLorePool());
+                BuildLorePool(),
+                extraOpeningChance: settings.extraOpeningChance);
 
             foreach (var line in log) Debug.Log(line);
 
@@ -188,15 +227,16 @@ namespace Gameplay
                 dangerValueMax: settings.dangerValueMax,
                 loreIdPool: BuildLorePool(),
                 indexOffset: _floors.Count,
-                biome: 1);
+                biome: 1,
+                extraOpeningChance: settings.extraOpeningChance);
             foreach (var line in biomeLog) Debug.Log(line);
 
             _floors.AddRange(biomeFloors);
             _biomeEntryFloorIndex.Clear();
             _biomeEntryFloorIndex[1] = biomeFloors[0].Index;
 
-            // Bioma de Cuevas (Biome id 2): mismo patron que el Bioma 2 de arriba -- una mazmorra
-            // COMPLETA aparte, mismo motor, apendiada a _floors. Se llega desde CUALQUIER piso del
+            // Bioma de Cuevas (Biome id 2): mazmorra completa aparte, apendiada a _floors. Reusa
+            // el generador base y sus salas/recompensas, pero no el candado+palanca generico. Se llega desde CUALQUIER piso del
             // Bioma 1 (ver DungeonGenerator.PlaceCaveBiomeExit / CellType.CaveBiomeExit), nunca por
             // escalera normal.
             var caveBiomeFloors = _generator.GenerateDungeon(
@@ -209,11 +249,50 @@ namespace Gameplay
                 dangerValueMax: settings.dangerValueMax,
                 loreIdPool: BuildLorePool(),
                 indexOffset: _floors.Count,
-                biome: 2);
+                biome: 2,
+                extraOpeningChance: settings.extraOpeningChance);
             foreach (var line in caveBiomeLog) Debug.Log(line);
 
             _floors.AddRange(caveBiomeFloors);
             _biomeEntryFloorIndex[2] = caveBiomeFloors[0].Index;
+
+            // Bioma del Patio (id 3): tres zonas exteriores encadenadas. El jefe del patio
+            // aparece en el patio trasero; ambos portones conducen al bioma interior.
+            var patioFloors = _generator.GenerateDungeon(
+                PatioBiomeFloorCount, settings.size, settings.size, seed ^ unchecked((int)0xA710), out var patioLog,
+                stairPairsPerFloor: 0,
+                bossFloorStart: PatioBiomeFloorCount - 1,
+                bossFloorInterval: 1,
+                voidFraction: settings.voidFraction,
+                dangerValueMin: settings.dangerValueMin,
+                dangerValueMax: settings.dangerValueMax,
+                loreIdPool: BuildLorePool(),
+                indexOffset: _floors.Count,
+                biome: 3,
+                extraOpeningChance: settings.extraOpeningChance);
+            foreach (var line in patioLog) Debug.Log(line);
+            ConfigurePatioGeography(patioFloors);
+            _floors.AddRange(patioFloors);
+            _biomeEntryFloorIndex[3] = patioFloors[0].Index;
+
+            // Bioma interior (id 4): el salon conecta dos rutas independientes. La torre sube
+            // dos niveles hasta un jefe; el sotano baja dos niveles hasta otro jefe.
+            var castleFloors = _generator.GenerateDungeon(
+                CastleBiomeFloorCount, settings.size, settings.size, seed ^ unchecked((int)0xC4571E), out var castleLog,
+                stairPairsPerFloor: 0,
+                bossFloorStart: 2,
+                bossFloorInterval: 2,
+                voidFraction: settings.voidFraction,
+                dangerValueMin: settings.dangerValueMin,
+                dangerValueMax: settings.dangerValueMax,
+                loreIdPool: BuildLorePool(),
+                indexOffset: _floors.Count,
+                biome: 4,
+                extraOpeningChance: settings.extraOpeningChance);
+            foreach (var line in castleLog) Debug.Log(line);
+            ConfigureCastleInteriorGeography(castleFloors, patioFloors);
+            _floors.AddRange(castleFloors);
+            _biomeEntryFloorIndex[4] = castleFloors[0].Index;
 
             _bossDefeatedFloors.Clear();
             _deepestFloorReachedThisRun = 0;
@@ -233,6 +312,200 @@ namespace Gameplay
             player.Warp(start.x, start.y, startFacing);
             OnPlayerEnterCell(start.x, start.y, advanceFoe: false);
             IsReady = true;
+        }
+
+        private static DungeonCell FindCastleCell(DungeonFloor floor, HashSet<(int x, int y)> used,
+            System.Func<DungeonCell, float> score)
+        {
+            var walkable = floor.Cells.Cast<DungeonCell>()
+                .Where(c => (c.Type == CellType.Normal || c.Type == CellType.Start)
+                    && !c.IsBossRoom && !c.IsTrapRoom && !c.IsPredefinedRoom && !c.IsPuzzleTile
+                    && !c.IsAmbushRoom && !c.IsCollapseRoom && !c.IsBoulderTrapCell
+                    && !used.Contains((c.X, c.Y)))
+                .ToList();
+            var exterior = walkable.Where(c => !floor.IsInIsolatedZone(c.X, c.Y)).OrderBy(score).FirstOrDefault();
+            return exterior ?? walkable.OrderBy(score).FirstOrDefault();
+        }
+
+        private static void SetCastleRouteCell(DungeonCell cell, CellType type,
+            int targetFloor, DungeonCell target)
+        {
+            if (cell == null || target == null) return;
+            cell.Type = type;
+            cell.StairTargetFloor = targetFloor;
+            cell.StairTargetX = target.X;
+            cell.StairTargetY = target.Y;
+        }
+
+        private static void ResetCastleFloorLinks(IList<DungeonFloor> floors, int firstRegion)
+        {
+            foreach (var floor in floors)
+            {
+                floor.CastleRegion = firstRegion++;
+                foreach (var cell in floor.Cells)
+                {
+                    if (cell.Type != CellType.StairsUp && cell.Type != CellType.StairsDown) continue;
+                    cell.Type = CellType.Normal;
+                    cell.StairTargetFloor = cell.StairTargetX = cell.StairTargetY = -1;
+                }
+            }
+        }
+
+        private static void ConfigurePatioGeography(IList<DungeonFloor> floors)
+        {
+            if (floors == null || floors.Count != PatioBiomeFloorCount) return;
+            ResetCastleFloorLinks(floors, firstRegion: 0);
+            var front = floors[0];
+            var side = floors[1];
+            var rear = floors[2];
+            var frontUsed = new HashSet<(int, int)>();
+            var sideUsed = new HashSet<(int, int)>();
+            var rearUsed = new HashSet<(int, int)>();
+
+            var frontSpawn = FindCastleCell(front, frontUsed,
+                c => c.Y * 1000f + Mathf.Abs(c.X - (front.Width - 1) * 0.5f));
+            if (frontSpawn == null) return;
+            frontUsed.Add((frontSpawn.X, frontSpawn.Y));
+            var frontGate = FindCastleCell(front, frontUsed,
+                c => -c.Y * 1000f + Mathf.Abs(c.X - (front.Width - 1) * 0.5f));
+            if (frontGate == null) return;
+            frontUsed.Add((frontGate.X, frontGate.Y));
+            var frontSideStair = FindCastleCell(front, frontUsed,
+                c => Mathf.Abs(c.X) * 1000f + Mathf.Abs(c.Y - (front.Height - 1) * 0.5f));
+            if (frontSideStair == null) return;
+            frontUsed.Add((frontSideStair.X, frontSideStair.Y));
+
+            var sideArrival = FindCastleCell(side, sideUsed,
+                c => c.Y * 1000f + Mathf.Abs(c.X));
+            if (sideArrival == null) return;
+            sideUsed.Add((sideArrival.X, sideArrival.Y));
+            var sideRearStair = FindCastleCell(side, sideUsed,
+                c => -c.Y * 1000f + Mathf.Abs(c.X - (side.Width - 1) * 0.5f));
+            if (sideRearStair == null) return;
+            sideUsed.Add((sideRearStair.X, sideRearStair.Y));
+
+            var rearArrival = FindCastleCell(rear, rearUsed,
+                c => c.Y * 1000f + Mathf.Abs(c.X - (rear.Width - 1) * 0.5f));
+            if (rearArrival == null) return;
+            rearUsed.Add((rearArrival.X, rearArrival.Y));
+            var rearGate = FindCastleCell(rear, rearUsed,
+                c => c.Y * 1000f + Mathf.Abs(c.X - (rear.Width - 1) * 0.72f));
+            if (rearGate == null) return;
+
+            var oldStart = front.Cells[front.StartPos.x, front.StartPos.y];
+            if (oldStart != frontSpawn && oldStart.Type == CellType.Start) oldStart.Type = CellType.Normal;
+            frontSpawn.Type = CellType.Start;
+            front.StartPos = (frontSpawn.X, frontSpawn.Y);
+
+            // Ruta exterior: frente -> lateral -> fondo. El jefe del patio ocupa el patio trasero;
+            // desde ahi una puerta al sur entra por la parte trasera del castillo.
+            SetCastleRouteCell(frontSideStair, CellType.StairsUp, side.Index, sideArrival);
+            SetCastleRouteCell(sideArrival, CellType.StairsDown, front.Index, frontSideStair);
+            SetCastleRouteCell(sideRearStair, CellType.StairsUp, rear.Index, rearArrival);
+            SetCastleRouteCell(rearArrival, CellType.StairsDown, side.Index, sideRearStair);
+            // El porton frontal y la puerta trasera son dos entradas reales al salon del castillo.
+            // La puerta trasera queda al sur del torreón, despues del patio del jefe.
+            frontGate.Type = CellType.CastleMainEntrance;
+            rearGate.Type = CellType.CastleRearEntrance;
+        }
+
+        private static DungeonCell FindCastleBossRoomCell(DungeonFloor floor, HashSet<(int, int)> used,
+            System.Func<DungeonCell, float> score)
+        {
+            if (floor.BossRoomCells == null) return null;
+            return floor.BossRoomCells
+                .Select(p => floor.Cells[p.Item1, p.Item2])
+                .Where(c => c.Type == CellType.Normal && !used.Contains((c.X, c.Y)))
+                .OrderBy(score)
+                .FirstOrDefault();
+        }
+
+        private static void ConfigureCastleInteriorGeography(IList<DungeonFloor> floors, IList<DungeonFloor> patioFloors)
+        {
+            if (floors == null || floors.Count != CastleBiomeFloorCount) return;
+            ResetCastleFloorLinks(floors, firstRegion: 0);
+            var hall = floors[0];
+            var towerOne = floors[1];
+            var towerBoss = floors[2];
+            var cellarOne = floors[3];
+            var cellarBoss = floors[4];
+            var hallUsed = new HashSet<(int, int)>();
+            var towerOneUsed = new HashSet<(int, int)>();
+            var cellarOneUsed = new HashSet<(int, int)>();
+            var towerBossUsed = new HashSet<(int, int)>();
+            var cellarBossUsed = new HashSet<(int, int)>();
+            // Conserva la marca Start del salon para poder regresar al patio desde la entrada del bioma.
+            hallUsed.Add(hall.StartPos);
+
+            // Dos portones llevan desde los patios al salon principal; desde ese salon nacen las
+            // rutas independientes de la torre (norte/arriba) y las criptas (sur/abajo).
+            var mainEntry = FindCastleCell(hall, hallUsed,
+                c => -c.Y * 1000f + Mathf.Abs(c.X - (hall.Width - 1) * 0.5f));
+            if (mainEntry == null) return;
+            hallUsed.Add((mainEntry.X, mainEntry.Y));
+            var rearEntry = FindCastleCell(hall, hallUsed,
+                c => c.Y * 1000f + Mathf.Abs(c.X - (hall.Width - 1) * 0.5f));
+            if (rearEntry == null) return;
+            hallUsed.Add((rearEntry.X, rearEntry.Y));
+            var towerExit = FindCastleCell(hall, hallUsed,
+                c => -c.Y * 1000f + c.X);
+            if (towerExit == null) return;
+            hallUsed.Add((towerExit.X, towerExit.Y));
+            var cellarExit = FindCastleCell(hall, hallUsed,
+                c => c.Y * 1000f + (hall.Width - 1 - c.X));
+            if (cellarExit == null) return;
+            hallUsed.Add((cellarExit.X, cellarExit.Y));
+
+            var towerArrival = FindCastleCell(towerOne, towerOneUsed,
+                c => c.Y * 1000f + Mathf.Abs(c.X - (towerOne.Width - 1) * 0.5f));
+            if (towerArrival == null) return;
+            towerOneUsed.Add((towerArrival.X, towerArrival.Y));
+            var towerAscent = FindCastleCell(towerOne, towerOneUsed,
+                c => -c.Y * 1000f + Mathf.Abs(c.X - (towerOne.Width - 1) * 0.5f));
+            if (towerAscent == null) return;
+
+            var towerBossArrival = FindCastleBossRoomCell(towerBoss, towerBossUsed,
+                c => c.Y * 1000f + Mathf.Abs(c.X - (towerBoss.Width - 1) * 0.5f));
+            if (towerBossArrival == null) return;
+            towerBossUsed.Add((towerBossArrival.X, towerBossArrival.Y));
+
+            var cellarArrival = FindCastleCell(cellarOne, cellarOneUsed,
+                c => -c.Y * 1000f + Mathf.Abs(c.X - (cellarOne.Width - 1) * 0.5f));
+            if (cellarArrival == null) return;
+            cellarOneUsed.Add((cellarArrival.X, cellarArrival.Y));
+            var cellarDescent = FindCastleCell(cellarOne, cellarOneUsed,
+                c => c.Y * 1000f + Mathf.Abs(c.X - (cellarOne.Width - 1) * 0.5f));
+            if (cellarDescent == null) return;
+            var cellarBossArrival = FindCastleBossRoomCell(cellarBoss, cellarBossUsed,
+                c => -c.Y * 1000f + Mathf.Abs(c.X - (cellarBoss.Width - 1) * 0.5f));
+            if (cellarBossArrival == null) return;
+
+            SetCastleRouteCell(towerExit, CellType.StairsUp, towerOne.Index, towerArrival);
+            SetCastleRouteCell(towerArrival, CellType.StairsDown, hall.Index, towerExit);
+            SetCastleRouteCell(towerAscent, CellType.StairsUp, towerBoss.Index, towerBossArrival);
+            SetCastleRouteCell(towerBossArrival, CellType.StairsDown, towerOne.Index, towerAscent);
+            SetCastleRouteCell(cellarExit, CellType.StairsDown, cellarOne.Index, cellarArrival);
+            SetCastleRouteCell(cellarArrival, CellType.StairsUp, hall.Index, cellarExit);
+            SetCastleRouteCell(cellarDescent, CellType.StairsDown, cellarBoss.Index, cellarBossArrival);
+            SetCastleRouteCell(cellarBossArrival, CellType.StairsUp, cellarOne.Index, cellarDescent);
+
+            // Las entradas se enlazan en el mismo marco con el patio, despues de configurar ambos.
+            LinkPatioEntrancesToInterior(patioFloors, floors, mainEntry, rearEntry);
+        }
+
+        private static void LinkPatioEntrancesToInterior(IList<DungeonFloor> patioFloors, IList<DungeonFloor> interiorFloors,
+            DungeonCell mainEntry, DungeonCell rearEntry)
+        {
+            if (patioFloors == null || patioFloors.Count != PatioBiomeFloorCount || mainEntry == null || rearEntry == null) return;
+            var front = patioFloors[0];
+            var rear = patioFloors[2];
+            var frontGate = front.Cells.Cast<DungeonCell>().FirstOrDefault(c => c.Type == CellType.CastleMainEntrance);
+            var rearGate = rear.Cells.Cast<DungeonCell>().FirstOrDefault(c => c.Type == CellType.CastleRearEntrance);
+            if (frontGate == null || rearGate == null) return;
+            SetCastleRouteCell(frontGate, CellType.CastleMainEntrance, interiorFloors[0].Index, mainEntry);
+            SetCastleRouteCell(mainEntry, CellType.CastleMainEntrance, front.Index, frontGate);
+            SetCastleRouteCell(rearGate, CellType.CastleRearEntrance, interiorFloors[0].Index, rearEntry);
+            SetCastleRouteCell(rearEntry, CellType.CastleRearEntrance, rear.Index, rearGate);
         }
 
         // Prioriza fragmentos de lore que el jugador TODAVIA NO descubrio en runs anteriores
@@ -261,9 +534,14 @@ namespace Gameplay
 
         private void BuildActiveFloor()
         {
+            // Mantiene el horizonte del castillo y las balizas de escalera dentro del frustum aunque
+            // la escena serializada tenga un far clip corto; la niebla sigue ocultando el terreno.
+            var camera = Camera.main;
+            if (camera != null) camera.farClipPlane = Mathf.Max(camera.farClipPlane, settings.cellSize * 55f);
             levelBuilder.Build(CurrentFloor, settings.cellSize, settings.wallHeight, settings.wallThickness);
             RefreshActiveFoe();
             RefreshActiveTrapDisparador();
+            RefreshActiveBoulderTrap();
         }
 
         // Se llama cada vez que se (re)construye la geometria del piso activo (entrar/cambiar de
@@ -288,7 +566,7 @@ namespace Gameplay
 
             var foeGo = new GameObject("Foe");
             _activeFoe = foeGo.AddComponent<FoeController>();
-            _activeFoe.Initialize(CurrentFloor, CanMove, CellToWorld, settings.cellSize, EnemyFactory.CreateFoe(_currentFloorIndex).MaxHP);
+            _activeFoe.Initialize(CurrentFloor, CanMove, CellToWorld, settings.cellSize, EnemyFactory.CreateFoe(_currentFloorIndex).MaxHP, GetComponent<DayNightCycle>());
         }
 
         // Mismo patron que RefreshActiveFoe: solo recrea el disparador si cambio de piso (perforar
@@ -312,6 +590,143 @@ namespace Gameplay
                 () => ApplyTrapDamage("¡Una flecha te atraviesa el paso!"),
                 () => _activeFoe != null ? ((int x, int y)?)(_activeFoe.X, _activeFoe.Y) : null,
                 OnTrapArrowHitFoe, settings.cellSize);
+        }
+
+        // Mismo patron que RefreshActiveTrapDisparador, para la roca que persigue (ver
+        // DungeonGenerator.AddBoulderTrap / Gameplay/BoulderTrapController) -- solo la mini cueva
+        // del piso 0 tiene una.
+        private void RefreshActiveBoulderTrap()
+        {
+            if (_activeBoulderTrap != null && _activeBoulderTrapFloorIndex == _currentFloorIndex) return;
+
+            if (_activeBoulderTrap != null)
+            {
+                Destroy(_activeBoulderTrap.gameObject);
+                _activeBoulderTrap = null;
+            }
+            _activeBoulderTrapFloorIndex = _currentFloorIndex;
+            if (!CurrentFloor.HasBoulderTrap) return;
+
+            var go = new GameObject("BoulderTrap");
+            _activeBoulderTrap = go.AddComponent<BoulderTrapController>();
+            _activeBoulderTrap.Initialize(CurrentFloor, CellToWorld, () => (player.CellX, player.CellY),
+                () => ApplyTrapDamage("¡La roca te aplasta contra la pared!"), settings.cellSize);
+        }
+
+        // Arranca la ola de colapso de la sala que colapsa (ver DungeonGenerator.
+        // AddCollapsingRushRoom), si todavia no hay una en curso.
+        private void TriggerCollapseRoom()
+        {
+            if (_collapseRoutine != null || CurrentFloor.CollapseOrder == null) return;
+            _collapseRoutine = StartCoroutine(CollapseRoomRoutine(CurrentFloor, _currentFloorIndex));
+        }
+
+        // Cada CollapseSecondsPerTile segundos, la siguiente celda de CollapseOrder (ya ordenada
+        // por distancia real desde la entrada, ver AddCollapsingRushRoom) queda IsCollapseFallen y
+        // pierde su piso visual (ver DungeonLevelBuilder.CollapseFloorVisual) -- si el jugador
+        // sigue parado justo ahi cuando le toca el turno, cae de inmediato en vez de esperar a que
+        // de un paso mas.
+        private const float CollapseSecondsPerTile = 0.4f;
+
+        private System.Collections.IEnumerator CollapseRoomRoutine(DungeonFloor floor, int floorIndexAtStart)
+        {
+            foreach (var (cx, cy) in floor.CollapseOrder)
+            {
+                yield return new WaitForSeconds(CollapseSecondsPerTile);
+
+                // El jugador se fue de este piso a mitad de la ola (escalera, atajo, cambio por
+                // otro colapso/Goteras) -- no seguir tocando un piso que ya no es el activo.
+                if (_currentFloorIndex != floorIndexAtStart) break;
+
+                var cell = floor.Cells[cx, cy];
+                cell.IsCollapseFallen = true;
+                levelBuilder?.CollapseFloorVisual(cx, cy);
+
+                if (player != null && player.CellX == cx && player.CellY == cy && !IsCombatActive)
+                {
+                    if (BeginPitFall(true, "¡El suelo se rompe! Caés por un túnel profundo hacia las cuevas."))
+                        break;
+                    ApplyTrapDamage("¡El piso colapsa bajo tus pies!");
+                }
+            }
+            _collapseRoutine = null;
+        }
+
+        private bool BeginPitFall(bool preferCaveBiome, string message)
+        {
+            int targetIndex = -1;
+            if (preferCaveBiome && CurrentFloor.Biome == 0)
+            {
+                if (!_biomeEntryFloorIndex.TryGetValue(2, out targetIndex)) targetIndex = -1;
+                else if (CurrentFloor.CaveBiomeExitPos.HasValue)
+                {
+                    var returnPos = CurrentFloor.CaveBiomeExitPos.Value;
+                    _biomeReturnPoint[2] = (_currentFloorIndex, returnPos.x, returnPos.y);
+                }
+            }
+            else if (preferCaveBiome && CurrentFloor.Biome == 2)
+            {
+                for (int i = _currentFloorIndex + 1; i < _floors.Count; i++)
+                {
+                    if (_floors[i].Biome != 2) continue;
+                    targetIndex = i;
+                    break;
+                }
+            }
+
+            if (targetIndex < 0 || targetIndex >= _floors.Count)
+                targetIndex = _currentFloorIndex + 1 < _floors.Count ? _currentFloorIndex + 1 : -1;
+            if (targetIndex < 0) return false;
+
+            var target = _floors[targetIndex];
+            BeginFallToFloor(targetIndex, target.StartPos.x, target.StartPos.y, message);
+            return true;
+        }
+
+        private void BeginFallToFloor(int targetFloorIndex, int spawnX, int spawnY, string message)
+        {
+            if (_isPlayerFalling) return;
+            StartCoroutine(FallToFloorRoutine(targetFloorIndex, spawnX, spawnY, message));
+        }
+
+        private System.Collections.IEnumerator FallToFloorRoutine(int targetFloorIndex, int spawnX, int spawnY, string message)
+        {
+            _isPlayerFalling = true;
+            if (player == null)
+            {
+                _isPlayerFalling = false;
+                ChangeFloor(targetFloorIndex, spawnX, spawnY);
+                if (hud != null) hud.SetLastMessage(message);
+                yield break;
+            }
+
+            Vector3 start = player.transform.position;
+            Quaternion startRotation = player.transform.rotation;
+            float duration = 1.35f;
+            float fallDistance = Mathf.Max(6f, settings.wallHeight * 2.6f);
+            float elapsed = 0f;
+            while (elapsed < duration)
+            {
+                elapsed += Time.deltaTime;
+                float t = Mathf.Clamp01(elapsed / duration);
+                float easedDrop = t * t;
+                player.transform.position = start + Vector3.down * (fallDistance * easedDrop);
+                float tilt = Mathf.Sin(t * Mathf.PI * 2f) * 8f;
+                player.transform.rotation = startRotation * Quaternion.Euler(t * 42f, 0f, tilt);
+                yield return null;
+            }
+
+            _isPlayerFalling = false;
+            ChangeFloor(targetFloorIndex, spawnX, spawnY);
+            if (hud != null) hud.SetLastMessage(message);
+        }
+
+        private void UpdateCaveLighting(DungeonCell cell)
+        {
+            var dayNight = GetComponent<DayNightCycle>();
+            if (dayNight == null) return;
+            bool inCave = CurrentFloor.Biome == 2 || (CurrentFloor.Biome == 0 && cell.IsIsolatedZone);
+            dayNight.SetCaveEnvironment(inCave);
         }
 
         // La flecha (ya en vuelo, disparada por el jugador o por el FOE pisando la linea) alcanzo
@@ -350,9 +765,22 @@ namespace Gameplay
         // ninguna chance de esquivarlo. Un paso real del jugador (GridPlayerController) si lo avanza.
         public void OnPlayerEnterCell(int x, int y, bool advanceFoe = true)
         {
+            if (_isPlayerFalling) return;
             var cell = CurrentFloor.Cells[x, y];
+            UpdateCaveLighting(cell);
             cell.Discovered = true;
             if (AutoPaintWalls) AutoPaintCellWalls(cell);
+
+            // La celda central marcada como jefe inicia el combate al pisarla; no depende de que
+            // el jugador adivine que tambien debe pulsar Espacio sobre el marcador.
+            if (cell.Type == CellType.Boss
+                && !_bossDefeatedFloors.Contains(_currentFloorIndex)
+                && !IsCombatActive && combat != null)
+            {
+                if (hud != null) hud.SetLastMessage("¡El jefe te bloquea el paso!");
+                combat.StartEncounter(isBoss: true, floorIndex: _currentFloorIndex,
+                    biome: CurrentFloor.Biome, castleRegion: CurrentFloor.CastleRegion);
+            }
 
             if (cell.Type == CellType.Normal && !IsCombatActive)
                 AccumulateDangerAndMaybeEncounter(cell);
@@ -381,6 +809,69 @@ namespace Gameplay
                     ApplyTrapDamage("¡Pisaste una trampa de picos!");
             }
 
+            // Roca que persigue (ver DungeonGenerator.AddBoulderTrap / Gameplay/
+            // BoulderTrapController): pisar el extremo de arranque del corredor la dispara -- se
+            // puede volver a disparar cada vez que se re-entra, a diferencia de la sala que colapsa.
+            if (cell.IsBoulderTrapCell && !IsCombatActive && CurrentFloor.HasBoulderTrap
+                && (x, y) == CurrentFloor.BoulderTrapStartPos)
+                _activeBoulderTrap?.Trigger();
+
+            // Sala de emboscada (ver DungeonGenerator.AddAmbushRoom): pisar CUALQUIER celda de la
+            // sala dispara el combate, una sola vez por run -- despues queda "limpia".
+            if (cell.IsAmbushRoom && !CurrentFloor.AmbushTriggered && !IsCombatActive && combat != null)
+            {
+                CurrentFloor.AmbushTriggered = true;
+                if (hud != null) hud.SetLastMessage("¡Una emboscada!");
+                combat.StartEncounter(isBoss: false, floorIndex: _currentFloorIndex, biome: CurrentFloor.Biome);
+            }
+
+            // Trampa de goblins del Bioma de Cuevas (ver DungeonGenerator.AddGoblinTraps): a
+            // diferencia de la emboscada de arriba (UNA bandera por piso), cada celda dispara su
+            // PROPIO combate una sola vez -- puede haber varias independientes en el mismo piso.
+            if (cell.IsGoblinTrap && !cell.GoblinTrapTriggered && !IsCombatActive && combat != null)
+            {
+                cell.GoblinTrapTriggered = true;
+                if (hud != null) hud.SetLastMessage("¡El suelo cede -- goblins saltan de sus escondites!");
+                combat.StartEncounter(isBoss: false, floorIndex: _currentFloorIndex, biome: CurrentFloor.Biome);
+            }
+
+            // Boveda de cascada (ver DungeonGenerator.AddWaterfallVault): pisar la boveda dispara el
+            // combate contra su guardian, una sola vez por run -- el tesoro garantizado se entrega
+            // al ganar (ver HandleCombatFinished/RollWaterfallVaultLoot), no al pisar.
+            if (cell.IsWaterfallVaultRoom && !CurrentFloor.WaterfallVaultTriggered && !IsCombatActive && combat != null)
+            {
+                CurrentFloor.WaterfallVaultTriggered = true;
+                if (hud != null) hud.SetLastMessage("¡Un guardián protege este lugar!");
+                combat.StartVaultEncounter(EnemyFactory.CreateWaterfallGuardian(_currentFloorIndex));
+            }
+
+            // Sala que colapsa (ver DungeonGenerator.AddCollapsingRushRoom): pisar la entrada
+            // arranca la ola de colapso (una sola vez por run). Si la celda en la que el jugador
+            // ACABA de entrar ya habia colapsado antes (volvio a pisarla despues de la ola, o la
+            // ola le alcanzo los pies mientras dudaba, ver CollapseRoomRoutine), cae de inmediato --
+            // mismo mecanismo que Goteras mas abajo.
+            if (cell.IsCollapseRoom && !CurrentFloor.CollapseTriggered && !IsCombatActive
+                && (x, y) == CurrentFloor.CollapseEntryPos)
+            {
+                CurrentFloor.CollapseTriggered = true;
+                TriggerCollapseRoom();
+                if (hud != null) hud.SetLastMessage("¡El piso empieza a ceder detrás tuyo! ¡Corré!");
+            }
+            if (cell.IsCollapseFallen && !IsCombatActive)
+            {
+                if (BeginPitFall(true, "¡El suelo se rompe! Caés por un túnel profundo hacia las cuevas."))
+                    return;
+                ApplyTrapDamage("¡El piso colapsa bajo tus pies!");
+            }
+
+            // Peligro de una sala de autor con forma prediseñada (ver RoomTemplate '^' /
+            // DungeonGenerator.TryStampRoomAt): a diferencia de la trampa de arriba, esta es
+            // personalidad FIJA de esa sala -- no depende de CurrentFloor.TrapKind/TrapDisabled (ese
+            // sistema es exclusivo de AddTrapRoom) y no existe forma de desactivarla, solo de
+            // esquivarla a pie.
+            if (cell.IsPredefinedRoomHazard && !IsCombatActive)
+                ApplyTrapDamage("¡Un peligro oculto en la sala te lastima!");
+
             // Sala de pistas (ver DungeonGenerator.AddLoreCorridorRoom): pisar una celda de la
             // grilla que NO es piso real. En Goteras (agua) el piso directamente NO ESTA (ver
             // DungeonLevelBuilder.Build) y esto te hace caer de verdad al piso de abajo -- no
@@ -392,8 +883,8 @@ namespace Gameplay
                 if (CurrentFloor.LoreCorridorKind == PuzzleKind.Goteras && _currentFloorIndex + 1 < _floors.Count)
                 {
                     var below = _floors[_currentFloorIndex + 1];
-                    ChangeFloor(_currentFloorIndex + 1, below.StartPos.x, below.StartPos.y);
-                    if (hud != null) hud.SetLastMessage("¡El piso cede bajo tus pies! Caes al piso de abajo.");
+                    BeginFallToFloor(_currentFloorIndex + 1, below.StartPos.x, below.StartPos.y,
+                        "¡El piso cede bajo tus pies! Caes al piso de abajo.");
                     return;
                 }
                 ApplyTrapDamage("¡El piso cede bajo tus pies!");
@@ -426,8 +917,12 @@ namespace Gameplay
                     break;
                 case CellType.Boss:
                     message = _bossDefeatedFloors.Contains(_currentFloorIndex)
-                        ? "El jefe de este piso ya fue derrotado. La escalera para avanzar esta en esta sala."
-                        : "Sala del jefe. Presiona Espacio para enfrentarlo.";
+                        ? CurrentFloor.Biome == 3
+                            ? "El guardián del patio ya cayó. La puerta trasera lleva al castillo."
+                            : "El jefe de esta ruta ya fue derrotado."
+                        : IsCombatActive
+                            ? "¡El jefe te bloquea el paso!"
+                            : "¡Sala del jefe! Entra en la marca roja para iniciar el combate.";
                     break;
                 case CellType.Lore:
                     // "Ya lo conocias" se decide ANTES de UnlockLore (que es idempotente y no
@@ -476,6 +971,22 @@ namespace Gameplay
                 case CellType.CaveBiomeExit:
                     message = "Una escalera de piedra baja hacia la oscuridad. Presiona Espacio para descender.";
                     break;
+                case CellType.CastleGate:
+                    message = "¡Encontraste el acceso al castillo! Párate en el arco magenta y presiona Espacio para entrar.";
+                    break;
+                case CellType.CastleMainEntrance:
+                    message = CurrentFloor.Biome == 4
+                        ? "El portón norte devuelve al patio frontal. Presiona Espacio para salir."
+                        : "El portón principal del castillo. Presiona Espacio para entrar.";
+                    break;
+                case CellType.CastleRearEntrance:
+                    message = CurrentFloor.Biome == 4
+                        ? "La puerta sur devuelve al patio trasero. Presiona Espacio para salir."
+                        : "La puerta trasera, al sur del torreón. Presiona Espacio para entrar.";
+                    break;
+                case CellType.HubPortal:
+                    message = "El portal al refugio está abierto. Presiona Espacio para volver al hub.";
+                    break;
                 case CellType.Start:
                     // Solo el Start del PRIMER piso de CADA bioma secundario es la vuelta a su
                     // entrada -- el resto de sus pisos (todo bioma tiene varios, ver
@@ -483,9 +994,13 @@ namespace Gameplay
                     // es de donde arrancarias si entraras por ahi), pero ese es solo un marcador
                     // normal, no una salida.
                     if (CurrentFloor.Biome != 0 && IsBiomeEntryFloor(_currentFloorIndex, CurrentFloor.Biome))
-                        message = CurrentFloor.Biome == 1
-                            ? "La Puerta Fría, del otro lado. Presiona Espacio para volver."
-                            : "La escalera de piedra, del otro lado. Presiona Espacio para volver.";
+                        message = CurrentFloor.Biome switch
+                        {
+                            1 => "La Puerta Fría, del otro lado. Presiona Espacio para volver.",
+                            2 => "La escalera de piedra, del otro lado. Presiona Espacio para volver.",
+                            3 => "El arco del bosque, del otro lado. Presiona Espacio para volver.",
+                            _ => "El acceso al patio, del otro lado. Presiona Espacio para volver."
+                        };
                     break;
             }
             if (message != null && hud != null) hud.SetLastMessage(message);
@@ -552,6 +1067,23 @@ namespace Gameplay
             if (roll2 == 1) { _meta.DrillCharges++; return ($"¡Encontraste un cofre! +1 carga de Perforador.{firstChestBonus}", null); }
             _meta.IncenseCharges++;
             return ($"¡Encontraste un cofre! +1 carga de Incienso.{firstChestBonus}", null);
+        }
+
+        // Boveda de cascada (ver DungeonCell.IsWaterfallVaultRoom): a diferencia de un cofre comun
+        // (RollTreasureLoot, que la mitad de las veces solo da puntos), ganarle al guardian SIEMPRE
+        // entrega una pieza de equipo real de TreasureEquipmentIds -- pedido puntual, "un tesoro muy
+        // util". Si ya la tenias, se convierte en puntos igual que RollTreasureLoot (nunca "nada").
+        private (string message, EquipmentItem foundItem) RollWaterfallVaultLoot()
+        {
+            string equipId = TreasureEquipmentIds[Random.Range(0, TreasureEquipmentIds.Length)];
+            var equip = EquipmentCatalog.Find(equipId);
+            if (_meta.OwnsItem(equipId))
+            {
+                _meta.BankedPoints += equip.Cost;
+                return ($"¡El guardián caído dejó un botín! Ya tenías {equip.Name} -- +{equip.Cost} puntos en su lugar.", null);
+            }
+            _meta.AddToInventory(equipId);
+            return ("", equip);
         }
 
         // Dialogo de "encontraste un item" (ver caja de dialogo en Gameplay/DialogueHUD): nombre,
@@ -682,6 +1214,22 @@ namespace Gameplay
             {
                 _bossDefeatedFloors.Add(_currentFloorIndex);
                 _bossesDefeatedThisRun++;
+                if (CurrentFloor.Biome == 0)
+                {
+                    SpawnHubPortal();
+                    BuildActiveFloor();
+                    if (hud != null) hud.SetLastMessage("¡El Guardián cayó! Un portal al refugio se abrió en la sala.");
+                    return;
+                }
+                if (CurrentFloor.Biome == 3 || CurrentFloor.Biome == 4)
+                {
+                    if (hud != null) hud.SetLastMessage(CurrentFloor.Biome == 3
+                        ? "¡El guardián del patio cayó! El acceso trasero al castillo queda libre."
+                        : CurrentFloor.CastleRegion == 4
+                            ? "¡El custodio de la cripta cayó! La ruta del sótano está despejada."
+                            : "¡El Castellano cayó! La ruta de la torre está despejada.");
+                    return;
+                }
                 EndRun(won: true, "¡Derrotaste al jefe! La run termina con exito.");
                 return;
             }
@@ -689,6 +1237,15 @@ namespace Gameplay
             if (victory)
             {
                 _enemiesDefeatedThisRun += combat.Enemies.Count;
+                // combat.IsVaultFight (ver CombatManager.StartVaultEncounter): mismo criterio de
+                // "no se pisa hasta el proximo Start*Encounter" que IsFoeFight arriba, asi que
+                // todavia describe la pelea que se acaba de ganar.
+                if (combat.IsVaultFight)
+                {
+                    var (lootMessage, foundItem) = RollWaterfallVaultLoot();
+                    if (foundItem != null) ShowItemFoundDialogue(foundItem, lootMessage);
+                    else if (hud != null && !string.IsNullOrEmpty(lootMessage)) hud.SetLastMessage(lootMessage);
+                }
                 return;
             }
 
@@ -711,11 +1268,12 @@ namespace Gameplay
         // La run termina (por derrota, rendicion, o por vencer a un jefe): se banca la recompensa
         // (piso mas profundo alcanzado + enemigos/jefes derrotados) y se abre la pantalla de
         // tienda/mejoras; la proxima mazmorra (semilla nueva) arranca recien al cerrarla (StartNewRun).
-        private void EndRun(bool won, string message)
+        private void EndRun(bool won, string message, bool viaHubPortal = false)
         {
             _lastRunPointsEarned = _meta.AddRunRewards(_deepestFloorReachedThisRun, _enemiesDefeatedThisRun, _bossesDefeatedThisRun);
             MetaSaveService.Save(_meta);
             LastRunWasVictory = won;
+            LastRunReturnedToHub = viaHubPortal;
             IsGameOverShopActive = true;
             if (hud != null) hud.SetLastMessage(message);
         }
@@ -771,7 +1329,11 @@ namespace Gameplay
             }
             _meta.DrillCharges--;
             MetaSaveService.Save(_meta);
-            BuildActiveFloor();
+            // Pedido puntual: "perforar una pared no deberia reconstruir el laberinto entero, solo
+            // esa pared deberia cambiar" -- TryDrillWall ya puso cell.HasWall(facing) en false,
+            // RebuildWallAt borra solo la geometria de esa pared puntual sin tocar el resto del
+            // piso (nada de BuildActiveFloor: la fauna ambiental y todo lo demas ni se entera).
+            levelBuilder.RebuildWallAt(CurrentFloor, x, y, facing);
             if (hud != null) hud.SetLastMessage("¡Perforaste la pared! Se abrio un paso permanente para esta run.");
             return true;
         }
@@ -813,17 +1375,24 @@ namespace Gameplay
             }
             else if (cell.Type == CellType.StairsUp || cell.Type == CellType.StairsDown)
             {
-                ChangeFloor(cell.StairTargetFloor, cell.StairTargetX, cell.StairTargetY);
+                Direction arrivalFacing = cell.StairTargetFloor >= 0 && CurrentFloor.Biome >= 3
+                    && _floors[cell.StairTargetFloor].Biome >= 3
+                    ? CastleArrivalFacing(cell, _floors[cell.StairTargetFloor])
+                    : Direction.North;
+                ChangeFloor(cell.StairTargetFloor, cell.StairTargetX, cell.StairTargetY, arrivalFacing);
             }
             else if (cell.Type == CellType.Boss)
             {
                 if (_bossDefeatedFloors.Contains(_currentFloorIndex))
                 {
-                    if (hud != null) hud.SetLastMessage("El jefe de este piso ya fue derrotado.");
+                    if (hud != null) hud.SetLastMessage(CurrentFloor.Biome == 3
+                        ? "El guardián del patio ya cayó. La puerta trasera lleva al castillo."
+                        : "El jefe de esta ruta ya fue derrotado.");
                 }
                 else if (combat != null && !combat.IsActive)
                 {
-                    combat.StartEncounter(isBoss: true, floorIndex: _currentFloorIndex, biome: CurrentFloor.Biome);
+                    combat.StartEncounter(isBoss: true, floorIndex: _currentFloorIndex,
+                        biome: CurrentFloor.Biome, castleRegion: CurrentFloor.CastleRegion);
                 }
             }
             else if (cell.Type == CellType.Lever)
@@ -838,10 +1407,14 @@ namespace Gameplay
                 }
                 int doorIndex = CurrentFloor.LockedDoors.IndexOf(door);
                 _generator.UnlockDoor(CurrentFloor, doorIndex);
-                // Reconstruir el piso es necesario para que la pared recien abierta deje de
-                // renderizarse como solida; el marcador rojo de la puerta se recrea en ese rebuild
-                // (el CellType sigue siendo LockedDoor), asi que el cambio a verde va DESPUES.
-                BuildActiveFloor();
+                // Pedido puntual (mismo criterio que el Perforador, ver TryUseDrill): nada de
+                // reconstruir el piso entero por una sola pared. UnlockDoor ya puso
+                // cell.HasWall(door.DoorDir) en false -- RebuildWallAt borra solo esa pared puntual.
+                // OJO: la celda de la PUERTA (door.DoorX/DoorY/DoorDir), no la de la palanca (x,y) --
+                // FindDoorForLever las separa a proposito, son dos celdas distintas. El marcador
+                // rojo NO se toca por este cambio (vive en _lockedDoorMarkers, ajeno a _root), asi
+                // que UnlockDoorVisual lo encuentra igual y lo pasa a verde a continuacion.
+                levelBuilder.RebuildWallAt(CurrentFloor, door.DoorX, door.DoorY, door.DoorDir);
                 levelBuilder.UnlockDoorVisual(door.DoorX, door.DoorY);
                 if (Dialogue != null) Dialogue.Show("Palanca", "¡Activaste la palanca! El candado se abrio de forma permanente.");
                 else if (hud != null) hud.SetLastMessage("¡Activaste la palanca! El candado se abrio de forma permanente.");
@@ -861,6 +1434,37 @@ namespace Gameplay
                 else if (Dialogue != null) Dialogue.Show("Cofre", lootMessage);
                 else if (hud != null) hud.SetLastMessage(lootMessage);
             }
+            // Tumba del Bioma de Cuevas (ver DungeonGenerator.AddTombs): el tesoro garantizado de
+            // ESE bioma en vez del cofre comun de arriba -- pedido puntual, 70% tesoro (mismo
+            // RollTreasureLoot de siempre) y 30% de que sean goblins emboscados adentro en vez de
+            // botin (combate comun del bioma, ver CombatManager.StartEncounter -- ya sale con el
+            // bestiario goblin de EnemyFactory.CreateRockCaveEncounter).
+            else if (cell.Type == CellType.Tomb)
+            {
+                if (cell.EventConsumed)
+                {
+                    if (Dialogue != null) Dialogue.Show("Tumba", "Esta tumba ya fue saqueada.");
+                    else if (hud != null) hud.SetLastMessage("Esta tumba ya fue saqueada.");
+                    return;
+                }
+                cell.EventConsumed = true;
+                if (Random.value < TombCombatChance)
+                {
+                    if (combat != null && !IsCombatActive)
+                    {
+                        if (hud != null) hud.SetLastMessage("¡Goblins saltan de la tumba!");
+                        combat.StartEncounter(isBoss: false, floorIndex: _currentFloorIndex, biome: CurrentFloor.Biome);
+                    }
+                }
+                else
+                {
+                    var (tombLootMessage, tombFoundItem) = RollTreasureLoot();
+                    MetaSaveService.Save(_meta);
+                    if (tombFoundItem != null) ShowItemFoundDialogue(tombFoundItem, tombLootMessage);
+                    else if (Dialogue != null) Dialogue.Show("Tumba", tombLootMessage);
+                    else if (hud != null) hud.SetLastMessage(tombLootMessage);
+                }
+            }
             else if (cell.Type == CellType.LockedDoor)
             {
                 if (hud != null) hud.SetLastMessage("Un mecanismo sella el paso. Hace falta encontrar la palanca que lo abre.");
@@ -872,6 +1476,24 @@ namespace Gameplay
             else if (cell.Type == CellType.CaveBiomeExit)
             {
                 EnterCaveBiomeExit();
+            }
+            else if (cell.Type == CellType.CastleGate)
+            {
+                EnterCastleBiome();
+            }
+            else if (cell.Type == CellType.CastleMainEntrance || cell.Type == CellType.CastleRearEntrance)
+            {
+                if (cell.StairTargetFloor >= 0)
+                {
+                    if (CurrentFloor.Biome == 3 && _floors[cell.StairTargetFloor].Biome == 4)
+                        _biomeReturnPoint[4] = (_currentFloorIndex, x, y);
+                    ChangeFloor(cell.StairTargetFloor, cell.StairTargetX, cell.StairTargetY,
+                        CastleArrivalFacing(cell, _floors[cell.StairTargetFloor]));
+                }
+            }
+            else if (cell.Type == CellType.HubPortal)
+            {
+                EndRun(won: true, "Derrotaste al jefe del bosque y regresaste al refugio por el portal.", viaHubPortal: true);
             }
             else if (cell.Type == CellType.Start && CurrentFloor.Biome != 0 && IsBiomeEntryFloor(_currentFloorIndex, CurrentFloor.Biome))
             {
@@ -919,6 +1541,31 @@ namespace Gameplay
             if (hud != null) hud.SetLastMessage("Bajás por la escalera de la cueva. El aire cambia por completo.");
         }
 
+        private void SpawnHubPortal()
+        {
+            var floor = CurrentFloor;
+            var candidates = floor.HasBossRoom
+                ? floor.BossRoomCells.Where(c => floor.Cells[c.Item1, c.Item2].Type == CellType.Normal).ToList()
+                : new List<(int, int)>();
+            if (candidates.Count == 0)
+                candidates.Add(floor.BossPos);
+            var portal = candidates
+                .OrderBy(c => Mathf.Abs(c.Item1 - floor.BossPos.x) + Mathf.Abs(c.Item2 - floor.BossPos.y))
+                .First();
+            floor.Cells[portal.Item1, portal.Item2].Type = CellType.HubPortal;
+            floor.HubPortalPos = portal;
+        }
+
+        private void EnterCastleBiome()
+        {
+            if (!_biomeEntryFloorIndex.TryGetValue(3, out var entryFloorIndex)) return;
+            var gatePos = CurrentFloor.CastleGatePos;
+            if (gatePos.HasValue) _biomeReturnPoint[3] = (_currentFloorIndex, gatePos.Value.x, gatePos.Value.y);
+            var target = _floors[entryFloorIndex].StartPos;
+            ChangeFloor(entryFloorIndex, target.x, target.y);
+            if (hud != null) hud.SetLastMessage("Entras al patio frontal. El portón principal se alza al norte; las escaleras laterales rodean el castillo.");
+        }
+
         // Vuelta al bioma raiz desde CUALQUIER bioma secundario: se para sobre Start (que ahi no
         // tiene otro uso, ya que a ese piso nunca se entra por escalera) y aparece de vuelta
         // EXACTAMENTE sobre la entrada que uso para llegar -- piso Y celda (_biomeReturnPoint,
@@ -930,8 +1577,17 @@ namespace Gameplay
         {
             int biome = CurrentFloor.Biome;
             if (!_biomeReturnPoint.TryGetValue(biome, out var back)) return;
-            ChangeFloor(back.floorIndex, back.x, back.y);
-            if (hud != null) hud.SetLastMessage(biome == 1 ? "Volvés a través de la Puerta Fría." : "Volvés a través de la escalera de la cueva.");
+            Direction facing = biome == 4
+                ? CastleArrivalFacing(_floors[back.floorIndex].Cells[back.x, back.y], _floors[back.floorIndex])
+                : Direction.North;
+            ChangeFloor(back.floorIndex, back.x, back.y, facing);
+            if (hud != null) hud.SetLastMessage(biome switch
+            {
+                1 => "Volvés a través de la Puerta Fría.",
+                2 => "Volvés a través de la escalera de la cueva.",
+                3 => "Volvés al bosque por el arco del patio.",
+                _ => "Volvés al patio del castillo."
+            });
         }
 
         // Etiqueta de piso para UI (minimapa/menu de pausa): cada bioma secundario tiene su PROPIA
@@ -943,25 +1599,99 @@ namespace Gameplay
             if (floorIndex < 0 || floorIndex >= _floors.Count) return $"Piso {floorIndex}";
             int biome = _floors[floorIndex].Biome;
             if (biome == 0 || !_biomeEntryFloorIndex.TryGetValue(biome, out var entryIdx)) return $"Piso {floorIndex}";
-            string biomeName = biome == 1 ? "Bioma 2" : "Bioma de Cuevas";
+            if (biome == 3 || biome == 4)
+            {
+                string castleRegion = biome == 3
+                    ? _floors[floorIndex].CastleRegion switch
+                    {
+                        0 => "Patio frontal",
+                        1 => "Patio lateral",
+                        2 => "Patio trasero - jefe del patio",
+                        _ => "Patio"
+                    }
+                    : _floors[floorIndex].CastleRegion switch
+                    {
+                        0 => "Salón principal",
+                        1 => "Torre I",
+                        2 => "Torre II - jefe",
+                        3 => "Sótano I",
+                        4 => "Sótano II - jefe",
+                        _ => "Interior"
+                    };
+                return biome == 3 ? $"Patio - {castleRegion}" : $"Castillo - {castleRegion}";
+            }
+            string biomeName = biome switch { 1 => "Bioma 2", 2 => "Bioma de Cuevas", _ => $"Bioma {biome}" };
             return $"{biomeName} - Piso {floorIndex - entryIdx + 1}";
         }
 
-        public void ChangeFloor(int floorIndex, int spawnX, int spawnY)
+        private Direction CastleArrivalFacing(DungeonCell sourceCell, DungeonFloor targetFloor)
+        {
+            if (targetFloor.Biome == 3)
+            {
+                if (sourceCell.Type == CellType.CastleMainEntrance) return Direction.South;
+                if (sourceCell.Type == CellType.CastleRearEntrance) return Direction.North;
+                return sourceCell.Type == CellType.StairsDown ? Direction.South : Direction.North;
+            }
+            if (targetFloor.CastleRegion == 0)
+            {
+                if (sourceCell.Type == CellType.CastleMainEntrance) return Direction.South;
+                if (sourceCell.Type == CellType.CastleRearEntrance) return Direction.North;
+                return CurrentFloor.CastleRegion >= 3 ? Direction.North : Direction.South;
+            }
+            return sourceCell.Type == CellType.StairsDown ? Direction.South : Direction.North;
+        }
+
+        public void ChangeFloor(int floorIndex, int spawnX, int spawnY, Direction facing = Direction.North)
         {
             if (floorIndex < 0 || floorIndex >= _floors.Count) return;
+            _isPlayerFalling = false;
             _currentFloorIndex = floorIndex;
             if (floorIndex > _deepestFloorReachedThisRun) _deepestFloorReachedThisRun = floorIndex;
             BuildActiveFloor();
             RollNewEncounterThreshold();
-            player.Warp(spawnX, spawnY, Direction.North);
+            player.Warp(spawnX, spawnY, facing);
             OnPlayerEnterCell(spawnX, spawnY, advanceFoe: false);
             if (hud != null) hud.SetLastMessage($"Cambiaste al piso {floorIndex}.");
+            if (hud != null && CurrentFloor.Biome == 0 && CurrentFloor.Index == 2)
+                hud.SetLastMessage("CASTILLO: el arco magenta está marcado en el minimapa. Explora este piso y pulsa Espacio al llegar.");
         }
 
         public (bool ok, List<string> issues) ValidateCurrentDungeon()
         {
             return _generator.ValidateDungeon(_floors);
+        }
+
+        // DEBUG/testeo: lista de biomas existentes esta run (0 = raiz, 1/2 = secundarios, 3 = patio,
+        // 4 = interior del castillo; todos existen desde el inicio de la run).
+        public IEnumerable<int> DebugAvailableBiomes()
+        {
+            yield return 0;
+            foreach (var biome in _biomeEntryFloorIndex.Keys) yield return biome;
+        }
+
+        // DEBUG/testeo: salta directo al PRIMER piso de un bioma (0 = raiz, 1 = Bioma 2 espacial,
+        // 2 = Bioma de Cuevas, 3 = Patio, 4 = Castillo interior) sin tener que jugar hasta encontrar su acceso sin
+        // la cueva. Reusa el mismo ChangeFloor que esos caminos reales, asi que geometria/threshold/
+        // FOE quedan tan consistentes como entrando de verdad -- solo que instantaneo.
+        public bool DebugWarpToBiome(int biome)
+        {
+            if (_floors == null) return false;
+            int entryFloorIndex = 0;
+            if (biome != 0 && !_biomeEntryFloorIndex.TryGetValue(biome, out entryFloorIndex)) return false;
+            return DebugWarpToFloor(entryFloorIndex);
+        }
+
+        // DEBUG/testeo: mismo salto de arriba pero a un piso GLOBAL puntual (indice de _floors, no
+        // el numero "Piso N" que muestra FloorLabel dentro de un bioma) -- para probar un piso
+        // profundo de cualquier bioma sin caminar toda la mazmorra hasta ahi. Aparece sobre el Start
+        // de ese piso.
+        public bool DebugWarpToFloor(int floorIndex)
+        {
+            if (_floors == null || floorIndex < 0 || floorIndex >= _floors.Count) return false;
+            var target = _floors[floorIndex].StartPos;
+            ChangeFloor(floorIndex, target.x, target.y);
+            if (hud != null) hud.SetLastMessage($"[DEBUG] Warp a {FloorLabel(floorIndex)} (piso global {floorIndex}, bioma {_floors[floorIndex].Biome}).");
+            return true;
         }
     }
 }

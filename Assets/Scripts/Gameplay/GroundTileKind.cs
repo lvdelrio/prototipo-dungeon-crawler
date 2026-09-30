@@ -11,6 +11,8 @@ namespace Gameplay
         Dirt,
         Leaves,
         Path,
-        Bush
+        Bush,
+        FlowerBush,
+        FlowerPatch
     }
 }

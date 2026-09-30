@@ -25,6 +25,14 @@ namespace DungeonGen
         Lever,
         Treasure,
 
+        // Tumba del Bioma de Cuevas (pedido puntual, ver DungeonGenerator.AddTombs): el tesoro
+        // garantizado de ESE bioma, con un giro -- interactuar tiene 70% de chance de dar loot
+        // (igual que un cofre comun) y 30% de disparar un combate contra goblins emboscados
+        // adentro (ver Gameplay/DungeonManager.TryInteract). Ocupa 2 celdas de ancho visualmente
+        // (ver DungeonLevelBuilder.BuildTombDecor), pero solo esta celda es la interactiva de
+        // verdad -- la otra mitad del sarcofago es decoracion pura sobre una celda normal vecina.
+        Tomb,
+
         // La "Puerta Fria" (ver DungeonGenerator.PlaceBiomeGate): una celda real sellada detras de
         // una pared normal, en el piso 0. NO depende de ningun lore ni flag -- cualquiera que la
         // encuentre y la perfore con el Perforador (TryDrillWall generico, sin casos especiales)
@@ -38,6 +46,16 @@ namespace DungeonGen
         // encuentra caminando, sin lore ni pistas, y lleva directo al Bioma 2 igual que la Puerta
         // Fria (mismo destino, mecanismo de entrada totalmente distinto).
         CaveBiomeExit,
+
+        // Camino secundario desde uno de los cuadrantes del segundo piso del bosque hacia el castillo.
+        CastleGate,
+
+        // Aparece al vencer al jefe del bosque y devuelve la expedicion al hub entre runs.
+        HubPortal,
+
+        // Puertas del patio frontal/trasero al torreón; su StairTargetFloor apunta al destino.
+        CastleMainEntrance,
+        CastleRearEntrance,
 
         Void // celda podada: no es parte de ningun camino, roca solida (no caminable, no se renderiza)
     }

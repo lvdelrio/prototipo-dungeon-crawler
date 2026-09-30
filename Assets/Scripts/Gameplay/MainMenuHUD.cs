@@ -20,11 +20,16 @@ namespace Gameplay
         private readonly List<CharacterClass> _selected = new List<CharacterClass>();
         private const int PartySize = 6;
 
+        // Clase mostrada en el popup de stats (ver ClassStatsPanel) -- null significa cerrado.
+        // Se abre con el boton "Status" de cada carta (DrawClassCard) y se dibuja aparte, encima de
+        // toda la grilla, al final de DrawPartyCreation.
+        private CharacterClass? _statusPopupClass;
+
         private static readonly Dictionary<CharacterClass, string> ClassBlurbs = new Dictionary<CharacterClass, string>
         {
             { CharacterClass.Warrior, "Guerrero cuerpo a cuerpo: Corte parejo y fuerte." },
             { CharacterClass.Protector, "Tanque: puede proteger a todo el grupo a la vez." },
-            { CharacterClass.Ranger, "Tirador veloz, Perforación certera." },
+            { CharacterClass.Ranger, "Flechas de estado intercambiables (Veneno/Parálisis/Sangrado)." },
             { CharacterClass.Alchemist, "Ataques mágicos en ÁREA (Fuego a TODOS los enemigos)." },
             { CharacterClass.Mage, "Mago de Hielo, alto daño mágico a un solo blanco." },
             { CharacterClass.Medic, "Cura a los aliados; escala con Ataque Mágico." },
@@ -86,6 +91,7 @@ namespace Gameplay
             if (UIButton.Draw(new Rect((w - btnW) / 2f, startY + btnH + gap + 20f, btnW, btnH), "NUEVA PARTIDA", accentColor: new Color(1f, 0.78f, 0.2f)))
             {
                 _selected.Clear();
+                _statusPopupClass = null;
                 mainMenu.SetStage(canContinue ? MainMenuManager.Stage.ConfirmOverwrite : MainMenuManager.Stage.PartyCreation);
             }
         }
@@ -112,6 +118,7 @@ namespace Gameplay
             if (UIButton.Draw(new Rect(boxX + 30, boxY + boxH - 60, 220, 40), "Sí, borrar y empezar", accentColor: new Color(0.82f, 0.08f, 0.1f)))
             {
                 _selected.Clear();
+                _statusPopupClass = null;
                 mainMenu.SetStage(MainMenuManager.Stage.PartyCreation);
             }
             if (UIButton.Draw(new Rect(boxX + boxW - 250, boxY + boxH - 60, 220, 40), "Cancelar"))
@@ -159,12 +166,21 @@ namespace Gameplay
             bool canConfirm = _selected.Count == PartySize;
             if (UIButton.Draw(new Rect(contentX + contentW - btnW, bottomY + 34f, btnW, btnH), "CONFIRMAR Y EMPEZAR", enabled: canConfirm, accentColor: new Color(1f, 0.78f, 0.2f)))
             {
+                _statusPopupClass = null;
                 dungeonManager.BeginBrandNewGame(_selected);
                 mainMenu.SetStage(MainMenuManager.Stage.Closed);
             }
 
             if (UIButton.Draw(new Rect(contentX, bottomY + 34f + btnH + 10f, 140f, 32f), "< Volver"))
+            {
+                _statusPopupClass = null;
                 mainMenu.SetStage(MainMenuManager.Stage.RootChoice);
+            }
+
+            // Popup de stats: se dibuja al final, ENCIMA de toda la grilla de cartas (ver
+            // ClassStatsPanel.DrawModal, que ya incluye el fondo oscuro + boton Cerrar).
+            if (_statusPopupClass.HasValue && ClassStatsPanel.DrawModal(_statusPopupClass.Value))
+                _statusPopupClass = null;
         }
 
         private void DrawClassCard(Rect rect, CharacterClass cls)
@@ -186,9 +202,19 @@ namespace Gameplay
             string blurb = ClassBlurbs.TryGetValue(cls, out var b) ? b : "";
             GUI.Label(new Rect(rect.x + 14, rect.y + 32, rect.width - 28, rect.height - 60), blurb, descStyle);
 
+            // Fila de abajo dividida en dos: "Status" abre el popup de stats (ClassStatsPanel, ver
+            // DrawPartyCreation) sin afectar la seleccion; el boton de Agregar/Sacar sigue ocupando
+            // el resto del ancho, un poco mas angosto que antes para hacerle lugar.
+            float bottomY = rect.y + rect.height - 30;
+            float statusW = (rect.width - 28) * 0.38f;
+            if (UIButton.Draw(new Rect(rect.x + 14, bottomY, statusW, 24), "Status"))
+                _statusPopupClass = cls;
+
             bool wouldExceed = !selected && _selected.Count >= PartySize;
             string btnLabel = selected ? "Sacar" : "Agregar";
-            if (UIButton.Draw(new Rect(rect.x + 14, rect.y + rect.height - 30, rect.width - 28, 24), btnLabel, enabled: selected || !wouldExceed))
+            float addX = rect.x + 14 + statusW + 8f;
+            float addW = rect.width - 28 - statusW - 8f;
+            if (UIButton.Draw(new Rect(addX, bottomY, addW, 24), btnLabel, enabled: selected || !wouldExceed))
             {
                 if (selected) _selected.Remove(cls);
                 else _selected.Add(cls);

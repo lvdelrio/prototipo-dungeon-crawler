@@ -61,6 +61,44 @@ namespace Gameplay
         public float allOutHitStopDuration = 0.12f;
         public float allOutChromaAmount = 0.05f;
 
+        // Rework del QTE (ver CombatHUD.DrawQteCenterOverlay): antes apretar una tecla de la
+        // secuencia no tenia NINGUN feedback de camara, solo el icono cambiaba de color en el
+        // panel. Presets chicos (no escalan con "intensity" como Impact, son siempre el mismo
+        // golpecito) para que cada acierto se sienta, sin pisar el peso de un golpe de combate
+        // real -- el ultimo acierto (que cierra la secuencia) usa el preset "completo", mas fuerte.
+        [Header("QTE: acierto de tecla (game feel chico, no es un golpe de verdad)")]
+        public Color qteHitFlashColor = new Color(1f, 0.95f, 0.4f, 0.14f);
+        public float qteHitFlashDuration = 0.07f;
+        public float qteHitShakeDuration = 0.05f;
+        public float qteHitShakeMagnitude = 0.02f;
+        public float qteHitStopDuration = 0.012f;
+
+        [Header("QTE: secuencia completa (ultimo acierto, mas fuerte)")]
+        public Color qteCompleteFlashColor = new Color(0.35f, 1f, 0.45f, 0.26f);
+        public float qteCompleteFlashDuration = 0.16f;
+        public float qteCompleteShakeDuration = 0.1f;
+        public float qteCompleteShakeMagnitude = 0.05f;
+        public float qteCompleteHitStopDuration = 0.03f;
+
+        [Header("QTE: fallo (tecla equivocada o se acabo el tiempo)")]
+        public Color qteFailFlashColor = new Color(0.6f, 0.12f, 0.12f, 0.3f);
+        public float qteFailFlashDuration = 0.16f;
+        public float qteFailShakeDuration = 0.08f;
+        public float qteFailShakeMagnitude = 0.04f;
+
+        // Rework del Ataque en Conjunto (ver CombatHUD.DrawAllOutAttackCenterOverlay): antes
+        // machacar el boton no tenia NINGUN feedback de camara hasta el golpe final. Cada pulsacion
+        // ahora da un golpecito chico que crece con mashFrac (0 al primer apreton, 1 en el tope de
+        // CombatEngine.AllOutMaxPresses) -- se siente que "cargar" el golpe importa, sin llegar a
+        // pisar el peso del golpe final de verdad (OnAllOutAttack, ya existente).
+        [Header("Ataque en Conjunto: cada pulsacion durante el machacado (escala con mashFrac 0-1)")]
+        public Color allOutMashFlashColor = new Color(1f, 0.85f, 0.3f, 0.1f);
+        public float allOutMashFlashDuration = 0.06f;
+        public float allOutMashShakeDurationMin = 0.03f;
+        public float allOutMashShakeDurationMax = 0.09f;
+        public float allOutMashShakeMagnitudeMin = 0.015f;
+        public float allOutMashShakeMagnitudeMax = 0.05f;
+
         private Material _flashMat;
         private float _flashIntensity;
         private Color _flashColor = Color.white;
@@ -131,6 +169,65 @@ namespace Gameplay
             TriggerChroma(allOutChromaAmount);
         }
 
+        // Remates mas marcados para las dos habilidades insignia que estamos prototipando. El
+        // impacto normal sigue comunicando el dano; este acento extra les da peso sin cambiarlo.
+        public void OnSignatureSkillImpact(CharacterClass characterClass)
+        {
+            if (characterClass == CharacterClass.Warrior)
+            {
+                Flash(new Color(1f, 0.83f, 0.53f, 0.28f), 0.16f);
+                Shake(0.18f, 0.11f);
+                TriggerHitStop(0.075f);
+                TriggerChroma(0.035f);
+            }
+            else if (characterClass == CharacterClass.Mage)
+            {
+                Flash(new Color(0.6f, 0.88f, 1f, 0.2f), 0.2f);
+                Shake(0.12f, 0.065f);
+                TriggerHitStop(0.06f);
+                TriggerChroma(0.03f);
+            }
+        }
+
+        // Un acierto de tecla dentro del QTE (ver CombatHUD.UpdateQteFeedback, que detecta cuando
+        // QteManager.ProgressIndex avanza): isLast = esta fue la tecla que cerro la secuencia
+        // entera, usa el preset "completo" (mas fuerte) en vez del golpecito chico de cada tecla
+        // intermedia.
+        public void OnQteKeyPress(bool isLast)
+        {
+            if (isLast)
+            {
+                Flash(qteCompleteFlashColor, qteCompleteFlashDuration);
+                Shake(qteCompleteShakeDuration, qteCompleteShakeMagnitude);
+                TriggerHitStop(qteCompleteHitStopDuration);
+            }
+            else
+            {
+                Flash(qteHitFlashColor, qteHitFlashDuration);
+                Shake(qteHitShakeDuration, qteHitShakeMagnitude);
+                TriggerHitStop(qteHitStopDuration);
+            }
+        }
+
+        // Tecla equivocada o se acabo el tiempo: flash rojo corto + sacudida chica, para que la
+        // falla se sienta tan clara como el acierto (antes no habia ningun feedback de camara).
+        public void OnQteFail()
+        {
+            Flash(qteFailFlashColor, qteFailFlashDuration);
+            Shake(qteFailShakeDuration, qteFailShakeMagnitude);
+        }
+
+        // mashCount ya viene clampeado a CombatEngine.AllOutMaxPresses (ver
+        // CombatManager.TriggerAllOutAttack). Escala linealmente de 0 a 1 -- el primer apreton
+        // apenas se siente, el ultimo antes del tope sacude en serio.
+        public void OnAllOutMashPress(int mashCount)
+        {
+            float mashFrac = Mathf.Clamp01(mashCount / (float)CombatEngine.AllOutMaxPresses);
+            Flash(allOutMashFlashColor, allOutMashFlashDuration);
+            Shake(Mathf.Lerp(allOutMashShakeDurationMin, allOutMashShakeDurationMax, mashFrac),
+                Mathf.Lerp(allOutMashShakeMagnitudeMin, allOutMashShakeMagnitudeMax, mashFrac));
+        }
+
         // Brillo de borde tenido segun el elemento del golpe (fuego, hielo, etc): se ve SIEMPRE,
         // sin importar hacia donde este mirando la camara en ese momento, ademas del efecto en el
         // mundo (particulas/shader sobre el enemigo golpeado).
@@ -194,6 +291,39 @@ namespace Gameplay
                 _shakeBasePos = transform.localPosition;
             _shakeTimeLeft = Mathf.Max(_shakeTimeLeft, duration);
             _shakeMagnitude = Mathf.Max(_shakeMagnitude, magnitude);
+        }
+
+        // Usado por CombatHUD (numeros de dano) y EnemyHealthBarHUD (barras) para proyectar
+        // posiciones de mundo a pantalla SIN el offset aleatorio del temblor -- LateUpdate de aca
+        // arriba ya movio transform.position para este frame antes de que OnGUI llegue a correr
+        // (el orden real es Update -> LateUpdate -> OnGUI), asi que un WorldToScreenPoint hecho a
+        // ciegas en OnGUI proyecta con la camara ya temblando: el numero/barra sale tirado a
+        // cualquier lado del enemigo real en vez de centrado. Esto no es "el numero tiembla un
+        // poco", es que agarra una muestra al azar de Random.insideUnitSphere y se queda pegado
+        // ahi el resto de su vida (el popup solo calcula su posicion UNA vez, al crearse).
+        public bool IsShaking => _shakeTimeLeft > 0f;
+
+        public Vector3 RestWorldPosition => transform.parent != null
+            ? transform.parent.TransformPoint(_shakeBasePos)
+            : _shakeBasePos;
+
+        // Punto de entrada unico para CombatHUD/EnemyHealthBarHUD: proyecta worldPos a pantalla
+        // con esta camara, pero si esta temblando lo hace desde RestWorldPosition en vez de la
+        // posicion ya sacudida. Mueve transform.position de ida y vuelta SOLO para el calculo --
+        // en el momento que corre OnGUI la camara ya renderizo este frame (el temblor real ya se
+        // vio en pantalla como corresponde), asi que este swap es puramente matematico, nunca
+        // visible.
+        public static Vector3 WorldToScreenPointStable(Camera cam, Vector3 worldPos)
+        {
+            var feedback = cam.GetComponent<CombatFeedback>();
+            if (feedback == null || !feedback.IsShaking)
+                return cam.WorldToScreenPoint(worldPos);
+
+            Vector3 shakenPos = cam.transform.position;
+            cam.transform.position = feedback.RestWorldPosition;
+            Vector3 screenPos = cam.WorldToScreenPoint(worldPos);
+            cam.transform.position = shakenPos;
+            return screenPos;
         }
 
         private void TriggerChroma(float amount)

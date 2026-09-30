@@ -65,13 +65,25 @@ namespace Combat
                     };
 
                 case CharacterClass.Ranger:
+                    // Rework: mismo sistema que el Gunner (ver ese case mas abajo) pero con
+                    // flechas de ESTADO en vez de elementales -- arranca con 3 de cada tipo
+                    // (Veneno/Paralisis/Sangrado, ver CharacterStats.PoisonArrows/etc.), y mientras
+                    // tenga una cargada Y con stock, CUALQUIER golpe que conecte (ataque basico O
+                    // habilidad) tiene chance de aplicar ESE estado -- la chance depende del tipo
+                    // (ver CombatEngine.RangerPoisonChancePercent/etc.), ya no es una habilidad en
+                    // si misma. La habilidad ahora es "Ataque Cruzado": puro dano a TODA la fila
+                    // delantera de enemigos a la vez (ver CharacterStats.SkillHitsEnemyFrontRow),
+                    // sin estado propio (el estado, si sale, viene de la flecha cargada, igual que
+                    // en el basico).
                     return new CharacterStats
                     {
                         Name = "Ranger", Class = CharacterClass.Ranger,
                         MaxHP = 38, HP = 38, MaxTP = 10, TP = 10,
                         Attack = 11, Defense = 4, Speed = 8, Evasion = 15, Luck = 8,
                         AttackElement = Element.Pierce,
-                        SkillName = "Tiro Certero", SkillTpCost = 5, SkillPower = 1.7f, SkillElement = Element.Pierce,
+                        SkillName = "Ataque Cruzado", SkillTpCost = 5, SkillPower = 1.6f, SkillElement = Element.Pierce,
+                        SkillHitsEnemyFrontRow = true,
+                        PoisonArrows = 3, ParalysisArrows = 3, BleedArrows = 3,
                         SkillSequenceA = new[] { QteKey.Left, QteKey.Right, QteKey.Up },
                         SkillSequenceB = new[] { QteKey.Down, QteKey.Down, QteKey.Up },
                         IsFrontRow = true,

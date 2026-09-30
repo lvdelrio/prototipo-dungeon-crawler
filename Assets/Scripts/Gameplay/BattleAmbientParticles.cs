@@ -10,6 +10,7 @@ namespace Gameplay
     {
         private ParticleSystem _near;
         private ParticleSystem _far;
+        private ParticleSystem _leaves;
         private Transform _followTarget;
 
         public static BattleAmbientParticles Spawn(Transform followTarget, bool boss, BattleStageController.CombatZoneTheme zone = BattleStageController.CombatZoneTheme.Forest)
@@ -26,6 +27,12 @@ namespace Gameplay
         {
             _near = ParticleLayerFactory.CreateLayer(transform, "BattleAmbientNear");
             _far = ParticleLayerFactory.CreateLayer(transform, "BattleAmbientFar");
+            if (zone == BattleStageController.CombatZoneTheme.Forest)
+            {
+                _leaves = ParticleLayerFactory.CreateLayer(transform, "BattleForestLeaves");
+                _leaves.GetComponent<ParticleSystemRenderer>().material = ParticleTextureFactory.LeafMaterial;
+                ConfigureLeaves(_leaves);
+            }
 
             ConfigureCommon(_near, maxParticles: 150, boxScale: new Vector3(8f, 4f, 8f));
             ConfigureCommon(_far, maxParticles: 100, boxScale: new Vector3(22f, 9f, 22f));
@@ -84,6 +91,34 @@ namespace Gameplay
 
             ParticleLayerFactory.Activate(_near);
             ParticleLayerFactory.Activate(_far);
+            if (_leaves != null) ParticleLayerFactory.Activate(_leaves);
+        }
+
+        private void ConfigureLeaves(ParticleSystem ps)
+        {
+            var main = ps.main;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.loop = true;
+            main.playOnAwake = true;
+            main.maxParticles = 22;
+            main.startColor = new ParticleSystem.MinMaxGradient(new Color(0.73f, 0.83f, 0.52f, 0.58f), new Color(0.88f, 0.58f, 0.32f, 0.68f));
+            main.startSpeed = new ParticleSystem.MinMaxCurve(0.08f, 0.2f);
+            main.startSize = new ParticleSystem.MinMaxCurve(0.12f, 0.24f);
+            main.startLifetime = new ParticleSystem.MinMaxCurve(5f, 8f);
+            main.gravityModifier = 0.015f;
+            var emission = ps.emission;
+            emission.rateOverTime = 1.6f;
+            var shape = ps.shape;
+            shape.shapeType = ParticleSystemShapeType.Box;
+            shape.scale = new Vector3(14f, 7f, 1.5f);
+            var velocity = ps.velocityOverLifetime;
+            velocity.enabled = true;
+            velocity.x = new ParticleSystem.MinMaxCurve(-0.12f, 0.12f);
+            velocity.y = new ParticleSystem.MinMaxCurve(-0.08f, -0.02f);
+            velocity.z = new ParticleSystem.MinMaxCurve(-0.015f, 0.015f);
+            var renderer = ps.GetComponent<ParticleSystemRenderer>();
+            renderer.renderMode = ParticleSystemRenderMode.Billboard;
+            renderer.sortingFudge = 1f;
         }
 
         private void ConfigureCommon(ParticleSystem ps, int maxParticles, Vector3 boxScale)

@@ -38,6 +38,10 @@ namespace Gameplay
         // click, en ese caso se muestra el primero de la party.
         private CharacterClass? _selectedEquipClass;
 
+        // Clase mostrada en el popup de stats (ver ClassStatsPanel, compartido con MainMenuHUD) --
+        // se abre con el boton "Status" de cada fila en la pestaña Stats (ver DrawStats).
+        private CharacterClass? _statusPopupClass;
+
         private static readonly (EquipmentSlotType Slot, int AccessoryIndex, string Label)[] EquipSlots =
         {
             (EquipmentSlotType.Weapon, 0, "Arma"),
@@ -123,6 +127,10 @@ namespace Gameplay
                 GUI.Label(new Rect(panelX + 20, panelY + panelH - 30, 300, 24), "¡Progreso guardado!");
                 GUI.color = old;
             }
+
+            // Popup de stats de clase (ver DrawStats): encima de TODO el menu, no solo del panel.
+            if (_statusPopupClass.HasValue && ClassStatsPanel.DrawModal(_statusPopupClass.Value))
+                _statusPopupClass = null;
         }
 
         // Sub-pestanas a la izquierda (una por piso ya explorado, del 0 al actual) y el mapa del
@@ -168,6 +176,30 @@ namespace Gameplay
             DungeonMapRenderer.Draw(new Vector2(mapAreaX, y + 24), floor, playerMode: true, cellPixelSize, wallPixelThickness: 2,
                 player, showPlayerMarker: isCurrent,
                 foe: isCurrent ? dungeonManager.ActiveFoe : null, foeAlwaysVisible: dungeonManager.debugFoeAlwaysVisibleOnMap);
+
+            // "Guardar forma" (pedido puntual: "poder guardar plantillas... para reconocer formas
+            // que se repitan entre runs"): solo tiene sentido parado DENTRO de una sala de autor del
+            // piso ACTUAL -- ver DungeonManager.CurrentPredefinedRoomTemplateName. Persiste en
+            // MetaProgress (mismo Guardar general de arriba lo escribe a disco), asi que sobrevive
+            // aunque la mazmorra de la proxima run sea otra completamente distinta.
+            if (isCurrent)
+            {
+                string templateName = dungeonManager.CurrentPredefinedRoomTemplateName;
+                if (!string.IsNullOrEmpty(templateName))
+                {
+                    var meta = dungeonManager.Meta;
+                    bool alreadyKnown = meta.IsRoomTemplateRecognized(templateName);
+                    float btnY = y + 24 + cellPixelSize * floor.Height + 10;
+                    if (alreadyKnown)
+                        GUI.Label(new Rect(mapAreaX, btnY, mapAreaW, 22), "Ya reconocés la forma de esta sala (ver Códex).");
+                    else if (UIButton.Draw(new Rect(mapAreaX, btnY, 220, 24), "Guardar forma de esta sala"))
+                    {
+                        meta.RecognizeRoomTemplate(templateName);
+                        MetaSaveService.Save(meta);
+                        _saveMessageUntil = Time.time + 2f;
+                    }
+                }
+            }
         }
 
         // Leyenda del mapa: un cuadradito del color exacto que usa DungeonMapRenderer (misma fuente
@@ -420,10 +452,18 @@ namespace Gameplay
                 GUI.Label(new Rect(colX[i], y, colW[i], 20), columns[i].label, headerStyle);
             y += 24;
 
+            float statusColX = cx + 10f;
             foreach (var character in combatManager.Party)
             {
                 for (int i = 0; i < columns.Length; i++)
                     GUI.Label(new Rect(colX[i], y, colW[i], 22), columns[i].get(character));
+
+                // Abre ClassStatsPanel con las stats BASE de esta clase (ver el comentario de ese
+                // archivo) -- util para comparar contra la fila de arriba, que ya subio de nivel en
+                // la tienda, o simplemente para repasar que trae cada clase sin salir del menu.
+                if (UIButton.Draw(new Rect(statusColX, y - 2, 90, 24), "Status"))
+                    _statusPopupClass = character.Class;
+
                 y += 26;
             }
         }
@@ -440,6 +480,16 @@ namespace Gameplay
                 "FOE: enemigo fuerte que patrulla a la vista, blanco y tranquilo -- si te acercás se pone rojo y te persigue. Colisionar arranca un combate donde escapar cuesta más (30%).",
                 tipStyle);
             y += 40;
+
+            // Codex de formas de sala (ver MetaProgress.RecognizedRoomTemplateNames): a diferencia
+            // del lore de mas abajo, esto NO se descubre solo, hay que guardarlo a mano desde la
+            // pestaña Mapa parado dentro de la sala (ver PauseMenuHUD.DrawMap) -- "reconocer formas
+            // que se repitan entre runs" aunque la mazmorra entera cambie de una partida a otra.
+            var recognized = meta.RecognizedRoomTemplateNames;
+            string recognizedList = recognized.Count > 0 ? $" ({string.Join(", ", recognized)})" : "";
+            GUI.Label(new Rect(panelX + 20, y, panelW - 40, 20),
+                $"Formas de sala reconocidas: {recognized.Count}/{DungeonGen.RoomTemplateLibrary.All.Length}{recognizedList}");
+            y += 24;
 
             GUI.Label(new Rect(panelX + 20, y, panelW - 40, 20), $"Fragmentos de lore descubiertos: {meta.UnlockedLoreIds.Count}/{LoreCatalog.All.Length}");
             const float headerH = 26f;
@@ -578,6 +628,48 @@ namespace Gameplay
             {
                 y += 6;
                 GUI.Label(new Rect(panelX + 20, y, panelW - 40, 24), "Todavía no compraste ningún equipo. Se compran con puntos en la tienda al terminar una run, o se encuentran en cofres.");
+                y += 24;
+            }
+
+            DrawPassiveSlots(panelX, y, panelW, meta, selected);
+        }
+
+        // Pasivas (ver Combat.PassiveCatalog/Meta.MetaProgress.EquippedPassives): a diferencia del
+        // equipamiento de arriba, NO son instancias fisicas -- cualquier pasiva del catalogo se
+        // puede poner en cualquiera de los PassiveCatalog.SlotsPerCharacter slots de CUALQUIER
+        // personaje, asi que cada slot simplemente ofrece TODO el catalogo como opcion (mas
+        // "Quitar"), sin agrupar por cantidad poseida como el equipamiento.
+        private void DrawPassiveSlots(float panelX, float y, float panelW, MetaProgress meta, CharacterStats selected)
+        {
+            GUI.Label(new Rect(panelX + 20, y, panelW - 40, 20), "Pasivas (libres, sin restricción de clase):", new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold });
+            y += 24;
+
+            for (int slotIndex = 0; slotIndex < Combat.PassiveCatalog.SlotsPerCharacter; slotIndex++)
+            {
+                var equipped = meta.GetEquippedPassive(selected.Class, slotIndex);
+                GUI.Label(new Rect(panelX + 20, y, 140, 22), $"Slot {slotIndex + 1}:");
+                string current = equipped != null ? $"{equipped.Name} -- {equipped.Description}" : "(vacío)";
+                GUI.Label(new Rect(panelX + 160, y, panelW - 260, 22), current, new GUIStyle(GUI.skin.label) { wordWrap = true });
+
+                if (UIButton.Draw(new Rect(panelX + panelW - 90, y, 70, 22), "Quitar", enabled: equipped != null))
+                    combatManager.SetEquippedPassiveLive(meta, selected.Class, slotIndex, "");
+                y += 26;
+
+                float ix = panelX + 20;
+                foreach (var passive in Combat.PassiveCatalog.All)
+                {
+                    bool isThisOne = equipped != null && equipped.Id == passive.Id;
+                    const float btnW = 150f;
+                    if (ix + btnW > panelX + panelW - 20)
+                    {
+                        ix = panelX + 20;
+                        y += 26;
+                    }
+                    if (UIButton.Draw(new Rect(ix, y, btnW, 22), passive.Name, enabled: !isThisOne, fontSize: 12, accentColor: isThisOne ? new Color(1f, 0.85f, 0.3f) : (Color?)null))
+                        combatManager.SetEquippedPassiveLive(meta, selected.Class, slotIndex, passive.Id);
+                    ix += btnW + 6;
+                }
+                y += 32;
             }
         }
 

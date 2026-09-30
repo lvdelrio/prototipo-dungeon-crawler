@@ -48,7 +48,8 @@ namespace Gameplay
         private static readonly Color MysteryFarColor = new Color(0.55f, 0.62f, 0.7f, 0.09f);
         private static readonly Color StormNearColor = new Color(0.6f, 0.68f, 0.85f, 0.4f);
         private static readonly Color StormFarColor = new Color(0.18f, 0.2f, 0.3f, 0.16f);
-        private static readonly Color LightShaftColor = new Color(1f, 0.93f, 0.72f);
+        // Luz de dia neutra con un leve matiz frio: evita que el bosque se lea amarillo.
+        private static readonly Color LightShaftColor = new Color(0.78f, 0.88f, 1f);
         private static readonly Color LightningColor = new Color(0.75f, 0.85f, 1f);
         private static readonly Color ShootingStarColor = new Color(0.9f, 0.93f, 1f);
 
@@ -69,10 +70,9 @@ namespace Gameplay
         // Rayos de luz de bosque (ver ConfigureLightShaftLayer): pocos, grandes y casi quietos --
         // MISMA condicion de Bioma 1 que las hojas (se togglean juntos en LateUpdate).
         private ParticleSystem _lightShafts;
-        // Sistema dedicado para el rayo: renderMode Stretch (particulas "estiradas" segun su
-        // velocidad, se ven como rayas/lineas) en vez del Billboard redondo de _wisps -- antes el
-        // rayo se armaba con puntitos redondos de _wisps, que no se leian como un relampago de
-        // verdad por mas que se los encadenara en zigzag.
+        // Chispas de impacto de la tormenta. El rayo principal ahora usa una malla ramificada con
+        // shader propio (BossLightningBoltEffect); este sistema Stretch se conserva para las
+        // chispas y no dibuja el cuerpo del rayo.
         private ParticleSystem _lightningStreaks;
         private Light _stormLight;
         private Coroutine _stormRoutine;
@@ -88,6 +88,7 @@ namespace Gameplay
         private Coroutine _shootingStarRoutine;
         private bool _lastInBiome2;
         private bool _lastSuppressForestAmbience;
+        private DayNightCycle _dayNightCycle;
         private const float ShootingStarPeakIntensity = 2.2f;
 
         void Awake()
@@ -254,6 +255,19 @@ namespace Gameplay
             noise.frequency = 0.25f;
             noise.scrollSpeed = 0.2f;
 
+            // Leaves only collide with water surfaces (the project already has a Water layer).
+            // A hit sends its world-space contact point to WaterRippleSurface
+            // and consumes the leaf so it cannot spam ripples while resting on the pool.
+            var collision = ps.collision;
+            collision.enabled = true;
+            collision.type = ParticleSystemCollisionType.World;
+            collision.mode = ParticleSystemCollisionMode.Collision3D;
+            int waterLayer = LayerMask.NameToLayer("Water");
+            collision.collidesWith = waterLayer >= 0 ? 1 << waterLayer : 0;
+            collision.quality = ParticleSystemCollisionQuality.High;
+            collision.sendCollisionMessages = true;
+            collision.lifetimeLoss = 1f;
+
             var rot = ps.rotationOverLifetime;
             rot.enabled = true;
             rot.z = new ParticleSystem.MinMaxCurve(-60f * Mathf.Deg2Rad, 60f * Mathf.Deg2Rad);
@@ -267,10 +281,8 @@ namespace Gameplay
             col.color = gradient;
         }
 
-        // Sistema SOLO para rafagas por Emit() (el rayo y sus chispas): sin emision ambiente propia
-        // (rateOverTime en 0) y en modo Stretch, que dibuja cada particula como una raya orientada
-        // segun SU velocidad -- eso es lo que hace que se vea como un relampago/chispazo en vez de
-        // puntos sueltos.
+        // Sistema solo para rafagas por Emit() (chispas y estelas de estrellas fugaces): sin
+        // emision ambiente propia y en modo Stretch, para dibujar cada particula como una raya.
         private void ConfigureStreakLayer(ParticleSystem ps)
         {
             var main = ps.main;
@@ -336,10 +348,9 @@ namespace Gameplay
                 _far.transform.position = followTarget.position;
                 _near.transform.position = followTarget.position + followTarget.forward * NearForwardOffset;
                 _wisps.transform.position = followTarget.position;
-                // 2 casillas adelante (LeafForwardOffset) Y cerca del techo (wallHeight ~3, ver
-                // DungeonSettings) para que las hojas tengan recorrido de sobra antes de
-                // "tocar piso" (en realidad nunca chocan de verdad, solo se desvanecen por
-                // colorOverLifetime -- ver ConfigureLeafLayer).
+                // 2 casillas adelante (LeafForwardOffset) y cerca del techo para que tengan una
+                // caida larga. Si cruzan una laguna, CollisionModule las detecta y el agua genera
+                // una onda; en el resto del piso siguen la curva de velocidad/color normal.
                 _leaves.transform.position = followTarget.position + followTarget.forward * LeafForwardOffset + Vector3.up * 2.6f;
                 // A media altura de pared (~1.5, wallHeight=3) para que la columna estirada
                 // (startSizeY 2.6-3.4) llegue comoda de casi el techo a casi el piso.
@@ -400,16 +411,14 @@ namespace Gameplay
                 }
             }
 
-            // Hojas y rayos de luz SOLO en el bosque de verdad: ni en el Bioma 2 espacial (cielo
-            // estrellado) NI en el Bioma de Cuevas (roca comun, un piso entero) NI en la zona
-            // aislada del bosque re-skineada como cueva (ver DungeonLevelBuilder.
-            // BuildRockyFloorTile) -- pedido puntual, hojas cayendo adentro de una cueva no pega. A
-            // diferencia de los biomas (fijos por piso entero), la zona aislada es por CELDA, asi
-            // que esto se re-evalua cada frame, no solo cuando cambia de bioma.
+            // Hojas y rayos de luz acompañan las zonas exteriores (bosque y patio), pero no el
+            // Bioma 2 espacial, las cuevas, el interior del castillo ni el cuadrante rocoso del
+            // primer piso del bosque. La zona rocosa es por CELDA, asi que se reevalua cada frame.
             bool inRockCaveBiome = floor != null && floor.Biome == 2;
+            bool inCastleInterior = floor != null && floor.Biome == 4;
             bool inCave = !inSpaceBiome && !inRockCaveBiome && floor != null && floor.InBounds(player.CellX, player.CellY)
                 && floor.Cells[player.CellX, player.CellY].IsIsolatedZone;
-            bool suppressForestAmbience = inSpaceBiome || inRockCaveBiome || inCave;
+            bool suppressForestAmbience = inSpaceBiome || inRockCaveBiome || inCastleInterior || inCave;
             if (suppressForestAmbience != _lastSuppressForestAmbience)
             {
                 _lastSuppressForestAmbience = suppressForestAmbience;
@@ -418,6 +427,13 @@ namespace Gameplay
                 var shaftEmission = _lightShafts.emission;
                 shaftEmission.enabled = !suppressForestAmbience;
             }
+
+            if (_dayNightCycle == null && dungeonManager != null)
+                _dayNightCycle = dungeonManager.GetComponent<DayNightCycle>();
+            bool shouldShowSunbeams = !suppressForestAmbience && (_dayNightCycle == null || _dayNightCycle.NightAmount < 0.55f);
+            var currentShaftEmission = _lightShafts.emission;
+            if (currentShaftEmission.enabled != shouldShowSunbeams)
+                currentShaftEmission.enabled = shouldShowSunbeams;
         }
 
         // Distancia Chebyshev (la que importa en una grilla con movimiento en 8 direcciones/vision)
@@ -493,12 +509,9 @@ namespace Gameplay
             const float riseTime = 0.03f;
             const float fallTime = 0.35f;
 
-            // Varios rayos "aca y alla" (no siempre el mismo punto) ADEMAS del flash de luz y las
-            // chispas: antes esto era solo un Light parpadeando -- se sentia mas a un fogonazo que
-            // a un rayo de verdad. Ahora hay particulas Stretch (rayas, ver ConfigureStreakLayer)
-            // que dibujan trazos de verdad, apareciendo en distintos rincones de la sala.
+            // Varios rayos ramificados en distintos puntos de la sala, mas chispas en sus impactos
+            // y un flash de luz global. El shader se encarga del nucleo, el halo y el parpadeo.
             foreach (var origin in PickBoltOrigins(Random.Range(2, 4))) EmitLightningBolt(origin);
-            EmitSparkBurst(_bossRoomAnchor);
 
             float t = 0f;
             while (t < riseTime)
@@ -507,11 +520,9 @@ namespace Gameplay
                 _stormLight.intensity = Mathf.Lerp(0f, peakIntensity, t / riseTime);
                 yield return null;
             }
-            // Segundo destello mas corto, como el rebote de un trueno real, antes de apagarse del
-            // todo -- con SUS PROPIOS rayos, en otros puntos de la sala.
+            // Segundo destello corto, como el rebote de un trueno, con otros rayos e impactos.
             yield return new WaitForSeconds(0.05f);
             foreach (var origin in PickBoltOrigins(Random.Range(1, 3))) EmitLightningBolt(origin);
-            EmitSparkBurst(_bossRoomAnchor);
             _stormLight.intensity = peakIntensity * 0.7f;
 
             t = 0f;
@@ -533,7 +544,7 @@ namespace Gameplay
             var floor = dungeonManager.CurrentFloor;
             if (floor == null || !floor.HasBossRoom)
             {
-                origins.Add(_bossRoomAnchor);
+                origins.Add(_bossRoomAnchor - Vector3.up * 1.54f);
                 return origins;
             }
 
@@ -541,40 +552,17 @@ namespace Gameplay
             for (int i = 0; i < count; i++)
             {
                 var (cx, cy) = cells[Random.Range(0, cells.Count)];
-                origins.Add(dungeonManager.CellToWorld(cx, cy) + Vector3.up * Random.Range(1.2f, 2.4f));
+                origins.Add(dungeonManager.CellToWorld(cx, cy) + Vector3.up * 0.06f);
             }
             return origins;
         }
 
-        // Trazo en zigzag hecho de RAYAS (particulas Stretch de _lightningStreaks) desde un techo
-        // imaginario hasta el piso, cada segmento orientado segun SU PROPIA direccion (no siempre
-        // derecho hacia abajo) -- asi se lee como un relampago quebrado de verdad, no una fila de
-        // puntos redondos.
+        // Un rayo completo desde el techo hasta el piso. La geometria ramificada la dibuja el
+        // shader aditivo de BossLightningBoltEffect; las particulas quedan para el impacto.
         private void EmitLightningBolt(Vector3 origin)
         {
-            Vector3 top = origin + Vector3.up * 1.6f;
-            Vector3 bottom = origin - Vector3.up * 1.4f;
-
-            var emitParams = new ParticleSystem.EmitParams { startColor = LightningColor };
-
-            const int segments = 9;
-            Vector3 prev = top;
-            for (int i = 1; i <= segments; i++)
-            {
-                float t = i / (float)segments;
-                Vector3 basePos = Vector3.Lerp(top, bottom, t);
-                Vector3 jitter = new Vector3(Random.Range(-1f, 1f), 0f, Random.Range(-1f, 1f)) * (0.4f * (1f - t) + 0.05f);
-                Vector3 next = basePos + jitter;
-
-                Vector3 dir = (next - prev).sqrMagnitude > 0.0001f ? (next - prev).normalized : Vector3.down;
-                emitParams.position = prev;
-                emitParams.velocity = dir * Random.Range(9f, 14f); // el modulo Stretch dibuja la raya en esta direccion
-                emitParams.startLifetime = Random.Range(0.08f, 0.13f);
-                emitParams.startSize = Random.Range(0.05f, 0.09f);
-                _lightningStreaks.Emit(emitParams, 1);
-
-                prev = next;
-            }
+            BossLightningBoltEffect.Spawn(origin, LightningColor);
+            EmitSparkBurst(origin);
         }
 
         // Cada tanto (de vez en cuando, no un ritmo fijo) una estrella fugaz cruza el techo cerca

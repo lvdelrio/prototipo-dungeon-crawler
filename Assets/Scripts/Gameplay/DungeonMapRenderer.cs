@@ -60,15 +60,24 @@ namespace Gameplay
         private static readonly Color FoeCalmColor = Color.white;
         private static readonly Color FoeChaseColor = new Color(0.85f, 0.12f, 0.1f);
 
+        // Fauna ambiental (ratones/mariposas/polillas, ver ForestCritterAmbient/CastleMouseAmbient
+        // .CollectPositions) -- pedido puntual: "que los boids se vean en el mapa de debug". Un
+        // solo color/tamaño para las tres especies: es un chequeo de "estan ahi y se mueven", no
+        // hace falta distinguir cual es cual desde el mapa. Ignora la niebla de guerra a proposito
+        // (ver wildlifePositions en DrawCore) -- es un mapa de DEBUG, el interes es confirmar que el
+        // enjambre existe y se mueve, no respetar lo que el jugador ya piso.
+        private static readonly Color WildlifeColor = new Color(0.55f, 0.95f, 0.35f);
+
         // foe/foeAlwaysVisible: opcionales -- si se pasa un FoeController activo, se dibuja su
         // posicion actual (blanco tranquilo / rojo persiguiendo, ver FoeController.IsChasing).
         // Respeta la niebla de guerra igual que el resto del mapa (solo se ve si la celda donde
         // esta parado ya fue Discovered) SALVO que foeAlwaysVisible sea true (ver
         // DungeonManager.debugFoeAlwaysVisibleOnMap -- pensado para testeo).
         public static void Draw(Vector2 origin, DungeonFloor floor, bool playerMode, int cellPixelSize, float wallPixelThickness,
-            GridPlayerController player, bool showPlayerMarker, FoeController foe = null, bool foeAlwaysVisible = false, bool showGrid = false, bool showAnnotations = false, bool handDrawn = false)
+            GridPlayerController player, bool showPlayerMarker, FoeController foe = null, bool foeAlwaysVisible = false, bool showGrid = false, bool showAnnotations = false, bool handDrawn = false,
+            System.Collections.Generic.IList<Vector3> wildlifePositions = null, float wildlifeCellSize = 1f)
         {
-            DrawCore(DrawRect, origin, floor, playerMode, cellPixelSize, wallPixelThickness, player, showPlayerMarker, foe, foeAlwaysVisible, showGrid, showAnnotations, handDrawn);
+            DrawCore(DrawRect, origin, floor, playerMode, cellPixelSize, wallPixelThickness, player, showPlayerMarker, foe, foeAlwaysVisible, showGrid, showAnnotations, handDrawn, wildlifePositions, wildlifeCellSize);
         }
 
         // Mismo dibujo que Draw, pero volcado a una Texture2D (coordenadas Y abajo-arriba, al
@@ -76,7 +85,8 @@ namespace Gameplay
         // se ve sobre el papel del mapa fisico. Llama Apply() al final; el llamador es responsable
         // de crear la textura del tamaño correcto (floor.Width/Height * cellPixelSize).
         public static void DrawToTexture(Texture2D tex, DungeonFloor floor, bool playerMode, int cellPixelSize, float wallPixelThickness,
-            GridPlayerController player, bool showPlayerMarker, FoeController foe = null, bool foeAlwaysVisible = false, bool showGrid = false, bool showAnnotations = false, bool handDrawn = false)
+            GridPlayerController player, bool showPlayerMarker, FoeController foe = null, bool foeAlwaysVisible = false, bool showGrid = false, bool showAnnotations = false, bool handDrawn = false,
+            System.Collections.Generic.IList<Vector3> wildlifePositions = null, float wildlifeCellSize = 1f)
         {
             if (tex == null) return;
             var clearColor = new Color(0f, 0f, 0f, 0f);
@@ -85,12 +95,13 @@ namespace Gameplay
             tex.SetPixels(clearPixels);
 
             void TexRect(Rect r, Color c) => FillTexRect(tex, r, c);
-            DrawCore(TexRect, Vector2.zero, floor, playerMode, cellPixelSize, wallPixelThickness, player, showPlayerMarker, foe, foeAlwaysVisible, showGrid, showAnnotations, handDrawn);
+            DrawCore(TexRect, Vector2.zero, floor, playerMode, cellPixelSize, wallPixelThickness, player, showPlayerMarker, foe, foeAlwaysVisible, showGrid, showAnnotations, handDrawn, wildlifePositions, wildlifeCellSize);
             tex.Apply();
         }
 
         private static void DrawCore(Action<Rect, Color> drawRect, Vector2 origin, DungeonFloor floor, bool playerMode, int cellPixelSize, float wallPixelThickness,
-            GridPlayerController player, bool showPlayerMarker, FoeController foe, bool foeAlwaysVisible, bool showGrid, bool showAnnotations, bool handDrawn)
+            GridPlayerController player, bool showPlayerMarker, FoeController foe, bool foeAlwaysVisible, bool showGrid, bool showAnnotations, bool handDrawn,
+            System.Collections.Generic.IList<Vector3> wildlifePositions = null, float wildlifeCellSize = 1f)
         {
             if (floor == null) return;
 
@@ -126,7 +137,7 @@ namespace Gameplay
                     }
                     else
                     {
-                        drawRect(cellRect, revealed ? FloorColor(cell, floor.TrapDisabled) : VoidColor);
+                        drawRect(cellRect, revealed ? FloorColor(cell, floor.TrapDisabled, floor.Biome) : VoidColor);
                     }
 
                     // Grilla "cuaderno cuadriculado": TODO el piso arranca cuadriculado, como una
@@ -178,7 +189,16 @@ namespace Gameplay
                         }
                     }
 
-                    if (handDrawn || !revealed) continue; // modo a mano: nunca hay paredes/marcadores reales. Sin explorar: tampoco.
+                    if (handDrawn) continue; // modo a mano: nunca hay paredes/marcadores reales.
+                    if (!revealed)
+                    {
+                        // El acceso al castillo es el objetivo de exploracion del piso 2 del
+                        // bosque: su icono permanece visible como pista, aunque el resto del mapa
+                        // conserve la niebla de guerra.
+                        if (floor.Biome == 0 && floor.Index == 2 && cell.Type == CellType.CastleGate)
+                            DrawCastleGateIcon(drawRect, cellRect, MarkerColor(cell).Value);
+                        continue;
+                    }
 
                     if (cell.HasWall(Direction.North))
                         drawRect(new Rect(px, py, cellPixelSize, wallPixelThickness), VoidColor);
@@ -199,7 +219,9 @@ namespace Gameplay
                         // a cualquier otro marcador -- mismo lenguaje visual que el icono pseudo-3D
                         // del mundo real (ver DungeonLevelBuilder.BuildStairsIcon).
                         bool isStairsMarker = cell.Type == CellType.StairsUp || cell.Type == CellType.StairsDown || cell.Type == CellType.CaveBiomeExit;
+                        bool isCastleDoor = cell.Type == CellType.CastleGate || cell.Type == CellType.CastleMainEntrance || cell.Type == CellType.CastleRearEntrance;
                         if (isStairsMarker) DrawStairsIcon(drawRect, markerRect, markerColor.Value);
+                        else if (isCastleDoor) DrawCastleGateIcon(drawRect, markerRect, markerColor.Value);
                         else drawRect(markerRect, markerColor.Value);
                     }
                 }
@@ -229,6 +251,22 @@ namespace Gameplay
                 }
             }
 
+            if (wildlifePositions != null)
+            {
+                float wm = cellPixelSize * 0.3f;
+                float safeCellSize = wildlifeCellSize > 0.0001f ? wildlifeCellSize : 1f;
+                for (int i = 0; i < wildlifePositions.Count; i++)
+                {
+                    Vector3 worldPos = wildlifePositions[i];
+                    float cx = worldPos.x / safeCellSize;
+                    float cy = worldPos.z / safeCellSize;
+                    if (cx < -0.5f || cy < -0.5f || cx > w - 0.5f || cy > h - 0.5f) continue;
+                    float wpx = origin.x + cx * cellPixelSize + cellPixelSize / 2f;
+                    float wpy = origin.y + (h - 1 - cy) * cellPixelSize + cellPixelSize / 2f;
+                    drawRect(new Rect(wpx - wm / 2f, wpy - wm / 2f, wm, wm), WildlifeColor);
+                }
+            }
+
             if (foe != null && floor.InBounds(foe.X, foe.Y) && (foeAlwaysVisible || floor.Cells[foe.X, foe.Y].Discovered))
             {
                 float fpx = origin.x + foe.X * cellPixelSize + cellPixelSize / 2f;
@@ -253,17 +291,31 @@ namespace Gameplay
         // trapDisabled: true si el disparador de esta sala ya fue destruido (ver
         // DungeonGenerator.TryDestroyTrapDisparador) -- una trampa desactivada se pinta como piso
         // normal, para que el mapa confirme de un vistazo que ese peligro ya no existe.
-        public static Color FloorColor(DungeonCell cell, bool trapDisabled = false)
+        // biome: el tinte cafe de zona aislada (mas abajo) solo tiene sentido en el bioma raiz (0),
+        // donde de verdad resalta contra el resto del piso (pasto/tierra). En un bioma secundario
+        // (1 = espacial, 2 = cuevas) el piso ENTERO ya tiene su propio look parejo en el mundo 3D
+        // (BuildFloorTile/BuildCeilingTile ignoran IsIsolatedZone ahi, ver DungeonLevelBuilder) --
+        // BUG reportado: sin este chequeo, el minimapa seguia marcando un parche cafe "zona
+        // especial" adentro de un piso que ya es, entero, esa misma cueva, lo cual no tiene sentido
+        // (no puede haber una "zona de cuevas" separada dentro del propio Bioma de Cuevas).
+        public static Color FloorColor(DungeonCell cell, bool trapDisabled = false, int biome = 0)
         {
             if (cell.IsBossRoom)
                 return new Color(0.5f, 0.16f, 0.16f);
             if (cell.IsTrapRoom && !trapDisabled)
                 return cell.IsTrapCell ? new Color(0.55f, 0.22f, 0.05f) : new Color(0.4f, 0.28f, 0.12f);
+            // Peligro de sala de autor (ver RoomTemplate '^'): tono naranja distinto del rojo de la
+            // sala de trampas dedicada (arriba), asi el mapa distingue "sala de trampas de verdad"
+            // de "esta sala en particular tiene un peligro fijo" de un vistazo.
+            if (cell.IsPredefinedRoomHazard)
+                return new Color(0.7f, 0.35f, 0.05f);
             if (cell.IsPuzzleTile)
                 return cell.IsPuzzleTileSafe ? new Color(0.35f, 0.45f, 0.5f) : new Color(0.5f, 0.28f, 0.1f);
+            if (biome == 3 || biome == 4)
+                return new Color(0.28f, 0.29f, 0.34f);
             // Gris/marron de roca, no morado -- consistente con el reskin de la zona aislada como
             // cueva (ver DungeonLevelBuilder.BuildRockyFloorTile).
-            return cell.IsIsolatedZone ? new Color(0.32f, 0.28f, 0.24f) : PathColor;
+            return cell.IsIsolatedZone && biome == 0 ? new Color(0.32f, 0.28f, 0.24f) : PathColor;
         }
 
         // Icono de escalera para el mapa de debug (pedido puntual): 3 escalones que suben de
@@ -281,6 +333,17 @@ namespace Gameplay
                 float y = bounds.y + (bounds.height - stepH);
                 drawRect(new Rect(x, y, stepW, stepH), color);
             }
+        }
+
+        private static void DrawCastleGateIcon(Action<Rect, Color> drawRect, Rect bounds, Color color)
+        {
+            float thickness = Mathf.Max(1.5f, bounds.width * 0.17f);
+            float pillarHeight = bounds.height * 0.72f;
+            float sideInset = bounds.width * 0.12f;
+            drawRect(new Rect(bounds.x + sideInset, bounds.y + bounds.height - pillarHeight, thickness, pillarHeight), color);
+            drawRect(new Rect(bounds.xMax - sideInset - thickness, bounds.y + bounds.height - pillarHeight, thickness, pillarHeight), color);
+            drawRect(new Rect(bounds.x + sideInset, bounds.y + bounds.height - thickness, bounds.width - sideInset * 2f, thickness), color);
+            drawRect(new Rect(bounds.x + sideInset * 0.55f, bounds.y + bounds.height * 0.18f, bounds.width - sideInset * 1.1f, thickness), color);
         }
 
         public static Color? MarkerColor(DungeonCell cell)
@@ -308,8 +371,13 @@ namespace Gameplay
                 case CellType.LockedDoor: return new Color(0.55f, 0.1f, 0.1f);
                 case CellType.Lever: return new Color(0.15f, 0.9f, 0.35f);
                 case CellType.Treasure: return new Color(1f, 0.82f, 0.1f);
+                case CellType.Tomb: return cell.EventConsumed ? new Color(0.4f, 0.42f, 0.3f) : new Color(0.62f, 0.7f, 0.4f);
                 case CellType.BiomeGate: return new Color(0.55f, 0.85f, 1f);
                 case CellType.CaveBiomeExit: return new Color(0.65f, 0.3f, 0.95f);
+                case CellType.CastleGate: return new Color(1f, 0.18f, 0.82f);
+                case CellType.CastleMainEntrance: return new Color(1f, 0.68f, 0.18f);
+                case CellType.CastleRearEntrance: return new Color(0.94f, 0.32f, 0.17f);
+                case CellType.HubPortal: return new Color(0.16f, 0.72f, 1f);
                 default: return null;
             }
         }
@@ -345,6 +413,10 @@ namespace Gameplay
             new LegendEntry(new Color(0.15f, 0.9f, 0.35f), "Palanca", "Abre la puerta bloqueada correspondiente."),
             new LegendEntry(new Color(1f, 0.82f, 0.1f), "Cofre", "Tesoro: puntos + una carga de Perforador, siempre hay uno por piso."),
             new LegendEntry(new Color(0.55f, 0.85f, 1f), "Puerta Fría", "Entrada escondida al Bioma 2, en el piso 0. Cualquier pared puede ser esta -- el Perforador la abre igual, con o sin pistas."),
+            new LegendEntry(new Color(1f, 0.18f, 0.82f), "Arco al castillo", "En el piso 2 del bosque, sigue el icono magenta, llega al arco y pulsa Espacio."),
+            new LegendEntry(new Color(1f, 0.68f, 0.18f), "Portón principal", "Entrada norte al torreón desde el patio frontal."),
+            new LegendEntry(new Color(0.94f, 0.32f, 0.17f), "Puerta trasera", "Entrada sur al torreón desde el patio trasero."),
+            new LegendEntry(new Color(0.16f, 0.72f, 1f), "Portal al hub", "Aparece en la sala del jefe del bosque al derrotarlo."),
         };
 
         public static readonly LegendEntry[] FloorLegend =

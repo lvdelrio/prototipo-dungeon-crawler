@@ -43,20 +43,31 @@ public static class DungeonSceneBuilder
         RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
         RenderSettings.ambientLight = new Color(0.5f, 0.5f, 0.55f);
 
-        // Niebla de distancia: limita lo que se puede ver hacia adelante a 3 CUADRANTES (celdas) a
-        // lo sumo -- CAMBIAR ESTOS 2 NUMEROS (start/end, en "cuadrantes") es lo unico que hace
-        // falta para ajustar cuanto se ve. Antes el degrade empezaba recien a partir de la celda 1
-        // y terminaba de cerrar en la 3 (o sea, entre la 1 y la 3 todavia se distinguia bastante
-        // geometria) -- ahora arranca casi de inmediato (0.6) y ya esta 100% negro a partir de la
-        // 2.4, para que la sensacion de "no se que hay mas alla" sea real y no solo nominal.
+        // Niebla de distancia: conserva el misterio, pero deja leer mejor las rutas y alcanza a
+        // mostrar el castillo. El landmark del castillo se construye alto y cerca del porton.
         const float cellSizeForFog = 4f;
-        const float fogStartInCells = 0.6f;
-        const float fogEndInCells = 2.4f;
+        const float fogStartInCells = 1.5f;
+        const float fogEndInCells = 8f;
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.Linear;
         RenderSettings.fogColor = new Color(0.05f, 0.05f, 0.08f);
         RenderSettings.fogStartDistance = cellSizeForFog * fogStartInCells;
         RenderSettings.fogEndDistance = cellSizeForFog * fogEndInCells;
+
+        // Far clip plane amplio para renderizar el hito del castillo sobre los muros del bosque.
+        // La niebla sigue ocultando el resto del terreno a partir de 8 celdas.
+        // 40 celdas de margen (bastante mas alla de donde la niebla ya cerro del
+        // todo) porque StairsBeacon (columna de particulas en cada escalera, ver
+        // Gameplay/StairsBeacon.cs) usa un material que IGNORA la niebla a proposito para verse
+        // "mucho mas alla de donde ya se pierden las paredes" -- un far clip pegado al final de la
+        // niebla (2.4 celdas) le recortaria esa baliza de landmark antes de tiempo.
+        // ClearFlags a SolidColor con el mismo color de la niebla (en vez de Skybox, el default):
+        // sin esto, cualquier hueco que el nuevo far clip deje sin geometria real (o el techo negro
+        // recortado en una sala grande) mostraria el skybox celeste de Unity en vez de fundirse con
+        // la oscuridad de la niebla.
+        cam.farClipPlane = cellSizeForFog * 40f;
+        cam.clearFlags = CameraClearFlags.SolidColor;
+        cam.backgroundColor = RenderSettings.fogColor;
 
         var managerGo = new GameObject("DungeonManager");
         var manager = managerGo.AddComponent<DungeonManager>();
@@ -68,6 +79,22 @@ public static class DungeonSceneBuilder
         builder.biome2CeilingMaterial = GetOrCreateMaterial("Assets/Data/Biome2CeilingMaterial.mat", "Custom/StarrySky");
         builder.biome2FloorMaterial = GetOrCreateMaterial("Assets/Data/Biome2FloorMaterial.mat", "Custom/StarlitFloor");
         builder.stairsAuraMaterial = GetOrCreateMaterial("Assets/Data/StairsAuraMaterial.mat", "Custom/StairsAura");
+        // Pared del bosque real (Custom/ForestWall, ver DungeonLevelBuilder.BuildWall/isForestBiome).
+        builder.forestWallMaterial = GetOrCreateMaterial("Assets/Data/ForestWallMaterial.mat", "Custom/ForestWall");
+        // Capas de parallax con arte real (Custom/ForestLayerCutout, ver ForestParallaxWallFactory)
+        // -- el _MainTex de cada .mat (Assets/Sprites/Forest/ForestLayer_Far.png / _Near.png) se
+        // asigna a mano una vez desde el Inspector, no aca: GetOrCreateMaterial no toca texturas
+        // existentes en un material que ya exista, asi que si alguien ya wireo el _MainTex esto no
+        // lo pisa.
+        builder.forestLayerFarMaterial = GetOrCreateMaterial("Assets/Data/ForestLayerFarMaterial.mat", "Custom/ForestLayerCutout");
+        builder.forestLayerNearMaterial = GetOrCreateMaterial("Assets/Data/ForestLayerNearMaterial.mat", "Custom/ForestLayerCutout");
+        // Base plana y oscura detras de las capas de arte de arriba (Custom/FlatColor) --
+        // COMPARTIDO entre todas las paredes de bosque para no perder static batching.
+        builder.forestBackdropMaterial = GetOrCreateMaterial("Assets/Data/ForestBackdropMaterial.mat", "Custom/FlatColor");
+        // Bloques de "Vacio" (celdas podadas sin conexion util, ver BuildVoidBlock): antes sin
+        // material (caian al gris de respaldo, "no es bosque, no es cueva, no es otro bioma"),
+        // ahora con pinta de agua/laguna chica (Custom/VoidWater, pedido puntual).
+        builder.voidBlockMaterial = GetOrCreateMaterial("Assets/Data/VoidWaterMaterial.mat", "Custom/VoidWater");
 
         var playerGo = new GameObject("Player");
         var playerController = playerGo.AddComponent<GridPlayerController>();

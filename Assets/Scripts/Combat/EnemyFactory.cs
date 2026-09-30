@@ -19,15 +19,26 @@ namespace Combat
         private static int ScaledAttack(int baseAttack, int floorIndex) =>
             (int)Math.Round(baseAttack * (1f + Math.Max(0, floorIndex) * AttackScalePerFloor));
 
+        // Rebalance (pedido puntual): la party ahora es de 6 integrantes, no 4 -- el dano total
+        // por ronda es mucho mas alto que con lo que estaba pensado el bestiario original, y los
+        // encuentros comunes se sentian de un solo golpe. +45% de HP y +30% de aguante en TODO el
+        // bestiario (jefes incluidos), como multiplicadores aparte de ScaledAttack (que ya escala
+        // el ATQ por piso) para poder tocar cada eje por separado -- mas vida Y mas dificil de
+        // aturdir, sin tocar cuanto pega cada uno.
+        private const float HpScaleForSixPartyMembers = 1.45f;
+        private const float PoiseScaleForSixPartyMembers = 1.3f;
+        private static int ScaledHp(int baseHp) => (int)Math.Round(baseHp * HpScaleForSixPartyMembers);
+        private static int ScaledPoise(int basePoise) => (int)Math.Round(basePoise * PoiseScaleForSixPartyMembers);
+
         public static EnemyStats CreateWolf(int suffix, int floorIndex = 0)
         {
             return new EnemyStats
             {
-                Name = $"Lobo Colmillo {suffix}", MaxHP = 40, HP = 40,
+                Name = $"Lobo Colmillo {suffix}", MaxHP = ScaledHp(40), HP = ScaledHp(40),
                 Attack = ScaledAttack(12, floorIndex), Defense = 3, Speed = 6,
                 AttackElement = Element.Strike,
                 Weaknesses = CommonWeaknesses, Resistance = Element.Ice,
-                MaxPoise = 30, Poise = 30,
+                MaxPoise = ScaledPoise(30), Poise = ScaledPoise(30),
             };
         }
 
@@ -38,11 +49,11 @@ namespace Combat
         {
             return new EnemyStats
             {
-                Name = $"Escarabajo Coraza {suffix}", MaxHP = 55, HP = 55,
+                Name = $"Escarabajo Coraza {suffix}", MaxHP = ScaledHp(55), HP = ScaledHp(55),
                 Attack = ScaledAttack(10, floorIndex), Defense = 6, Speed = 3,
                 AttackElement = Element.Strike,
                 Weaknesses = new[] { Element.Strike }, Resistance = Element.Pierce,
-                MaxPoise = 45, Poise = 45,
+                MaxPoise = ScaledPoise(45), Poise = ScaledPoise(45),
             };
         }
 
@@ -53,11 +64,11 @@ namespace Combat
         {
             var slime = new EnemyStats
             {
-                Name = $"Slime {suffix}", MaxHP = 50, HP = 50,
+                Name = $"Slime {suffix}", MaxHP = ScaledHp(50), HP = ScaledHp(50),
                 Attack = ScaledAttack(11, floorIndex), Defense = 2, Speed = 4,
                 AttackElement = Element.Strike,
                 Weaknesses = CommonWeaknesses, Resistance = Element.Strike,
-                MaxPoise = 35, Poise = 35,
+                MaxPoise = ScaledPoise(35), Poise = ScaledPoise(35),
             };
             slime.OnDeathSplit = () => new List<EnemyStats>
             {
@@ -71,11 +82,53 @@ namespace Combat
         {
             return new EnemyStats
             {
-                Name = $"Cria de Slime {suffix}", MaxHP = 18, HP = 18,
+                Name = $"Cria de Slime {suffix}", MaxHP = ScaledHp(18), HP = ScaledHp(18),
                 Attack = ScaledAttack(7, floorIndex), Defense = 1, Speed = 5,
                 AttackElement = Element.Strike,
                 Weaknesses = CommonWeaknesses, Resistance = Element.Strike,
-                MaxPoise = 16, Poise = 16,
+                MaxPoise = ScaledPoise(16), Poise = ScaledPoise(16),
+            };
+        }
+
+        // Gordo Baboso (pedido puntual): mucha Defensa (los golpes normales rebotan), pero el
+        // aguante es MUY fragil (MaxPoise bajo, sin ScaledPoise -- a proposito, romperlo tiene que
+        // sentirse facil) -- una vez roto, BrokenDamageMultiplierOverride castiga mucho mas fuerte
+        // que el generico (ver CombatEngine.ComputeDamageVsEnemy), asi que "romperlo" es la forma
+        // REAL de bajarle la vida, no solo pegar y pegar contra su Defensa alta. Al morir suelta 2
+        // Babosas (OnDeathSplit) que atacan tirando veneno (ver CreateSlug).
+        public static EnemyStats CreateSludge(int suffix, int floorIndex = 0)
+        {
+            var sludge = new EnemyStats
+            {
+                Name = $"Gordo Baboso {suffix}", MaxHP = ScaledHp(70), HP = ScaledHp(70),
+                Attack = ScaledAttack(10, floorIndex), Defense = 9, Speed = 2,
+                AttackElement = Element.Strike,
+                Weaknesses = CommonWeaknesses, Resistance = Element.Pierce,
+                // Aguante fragil A PROPOSITO (no usa ScaledPoise): mitad del de un Slime comun.
+                MaxPoise = 18, Poise = 18,
+                BrokenDamageMultiplierOverride = 2f,
+            };
+            sludge.OnDeathSplit = () => new List<EnemyStats>
+            {
+                CreateSlug($"{suffix}a", floorIndex),
+                CreateSlug($"{suffix}b", floorIndex),
+            };
+            return sludge;
+        }
+
+        // Babosa: cria del Gordo Baboso. Fragil (poca HP/Defensa), pero cada golpe que conecta
+        // tiene OnHitStatusChancePercent de tirar veneno -- chance real, NO garantizada, mismo
+        // criterio que cualquier otro proc del juego (ver CombatEngine.ExecuteEnemyAction).
+        public static EnemyStats CreateSlug(string suffix, int floorIndex = 0)
+        {
+            return new EnemyStats
+            {
+                Name = $"Babosa {suffix}", MaxHP = ScaledHp(20), HP = ScaledHp(20),
+                Attack = ScaledAttack(7, floorIndex), Defense = 1, Speed = 3,
+                AttackElement = Element.Strike,
+                Weaknesses = CommonWeaknesses, Resistance = Element.Strike,
+                MaxPoise = ScaledPoise(14), Poise = ScaledPoise(14),
+                OnHitStatusName = "Veneno", OnHitStatusChancePercent = 20, OnHitStatusDamagePercent = 5, OnHitStatusRounds = 3,
             };
         }
 
@@ -87,15 +140,14 @@ namespace Combat
         {
             return new EnemyStats
             {
-                Name = "Guardian de Piedra", MaxHP = 220, HP = 220,
+                Name = "Guardian de Piedra", MaxHP = ScaledHp(220), HP = ScaledHp(220),
                 Attack = ScaledAttack(19, floorIndex), Defense = 8, Speed = 4,
                 AttackElement = Element.Strike,
                 Weaknesses = CommonWeaknesses, Resistance = Element.Strike,
-                MaxPoise = 90, Poise = 90,
+                MaxPoise = ScaledPoise(90), Poise = ScaledPoise(90),
                 // Combinado con que un golpe de debilidad ya pega el doble de dano de HP, el
-                // multiplicador de aguante de debilidad (1.6x) lo rompia en 1-2 golpes bien
-                // apuntados -- 1.3 lo deja en ~1.23x efectivo, todavia mas rapido que un golpe
-                // comun pero no desproporcionado para un jefe.
+                // multiplicador de aguante de debilidad (1.8x) lo rompia demasiado rapido para un
+                // jefe -- 1.3 lo deja bastante mas lento que un enemigo comun, sin ser imposible.
                 PoiseWeaknessResistance = 1.3f,
             };
         }
@@ -107,43 +159,88 @@ namespace Combat
         {
             return new EnemyStats
             {
-                Name = "Centinela Errante", MaxHP = 130, HP = 130,
+                Name = "Centinela Errante", MaxHP = ScaledHp(130), HP = ScaledHp(130),
                 Attack = ScaledAttack(15, floorIndex), Defense = 6, Speed = 5,
                 AttackElement = Element.Strike,
                 Weaknesses = CommonWeaknesses, Resistance = Element.Strike,
-                MaxPoise = 60, Poise = 60,
+                MaxPoise = ScaledPoise(60), Poise = ScaledPoise(60),
                 PoiseWeaknessResistance = 1.15f,
             };
         }
 
-        // Cuantos enemigos trae un encuentro comun (1 a 3), con 2 siempre mas probable que 3 --
-        // pero a medida que se baja de piso, un encuentro de 3 se vuelve bastante mas comun (y uno
-        // de 1 solo, mas raro), sin que 3 llegue a superar a 2. floorIndex=0 en el primer piso.
+        // Guardian de una boveda de cascada (ver Dungeon/DungeonGenerator.AddWaterfallVault y
+        // Gameplay/DungeonManager.OnPlayerEnterCell): un enemigo fuerte de proposito unico por
+        // piso, a mitad de camino entre un comun y un jefe -- protege el tesoro garantizado de la
+        // boveda. Mismo criterio que CreateFoe (un solo statline fijo, sin reskin por bioma):
+        // aparece igual en cualquier piso con agua de verdad (bosque, cueva intergalactica y Bioma
+        // de Cuevas -- ver AddWaterfallVault para por que no en el patio ni en el castillo).
+        public static EnemyStats CreateWaterfallGuardian(int floorIndex = 0)
+        {
+            return new EnemyStats
+            {
+                Name = "Guardián de la Cascada", MaxHP = ScaledHp(150), HP = ScaledHp(150),
+                Attack = ScaledAttack(17, floorIndex), Defense = 7, Speed = 4,
+                AttackElement = Element.Ice,
+                Weaknesses = CommonWeaknesses, Resistance = Element.Ice,
+                MaxPoise = ScaledPoise(70), Poise = ScaledPoise(70),
+                PoiseWeaknessResistance = 1.2f,
+            };
+        }
+
+        // Cuantos enemigos trae un encuentro comun. Pedido puntual: el piso 0 ("de respiro") sigue
+        // sin pasar de 2 (1 el mas probable), pero de ahi en adelante el tope real es SIEMPRE 6 sin
+        // importar la profundidad (antes escalaba 1 cada 2 pisos) y la distribucion es una campana
+        // de Gauss discreta centrada en 4 -- 4 es el tamano MAS comun, 1 y 6 los mas raros (las 2
+        // colas de la campana), en vez del reparto monotonicamente decreciente desde 1 de antes
+        // (que hacia que un grupo grande fuera casi anecdotico incluso con el tope alto). Un solo
+        // punto de verdad para las 4 zonas que tienen encuentros comunes (bosque/cueva/cueva de
+        // roca/castillo+patio, ver Create*Encounter mas abajo).
+        private const float EncounterSizeMean = 4f;
+        private const float EncounterSizeStdDev = 1.35f;
+
+        private static int RollWeighted(Random rng, float[] weights)
+        {
+            float total = 0f;
+            foreach (var w in weights) total += w;
+
+            float roll = (float)rng.NextDouble() * total;
+            float acc = 0f;
+            for (int i = 0; i < weights.Length; i++)
+            {
+                acc += weights[i];
+                if (roll < acc) return i + 1;
+            }
+            return weights.Length;
+        }
+
         private static int RollEncounterSize(Random rng, int floorIndex)
         {
-            int f = Math.Max(0, floorIndex);
-            float w1 = Math.Max(0.1f, 0.35f - 0.04f * f);
-            float w3 = Math.Min(0.4f, 0.15f + 0.05f * f);
-            float w2 = Math.Max(0.1f, 1f - w1 - w3);
+            if (floorIndex <= 0) return RollWeighted(rng, new[] { 1f, 0.5f }); // piso de respiro: tope 2
 
-            float roll = (float)rng.NextDouble() * (w1 + w2 + w3);
-            if (roll < w1) return 1;
-            if (roll < w1 + w2) return 2;
-            return 3;
+            var weights = new float[6];
+            for (int i = 0; i < weights.Length; i++)
+            {
+                float z = (i + 1 - EncounterSizeMean) / EncounterSizeStdDev;
+                weights[i] = (float)Math.Exp(-0.5 * z * z);
+            }
+            return RollWeighted(rng, weights);
         }
 
         // Grupo aleatorio de enemigos normales (con repeticion) para un encuentro comun; el tamano
-        // y la fuerza de cada uno escalan con floorIndex (ver RollEncounterSize/ScaledAttack).
+        // y la fuerza de cada uno escalan con floorIndex (ver RollEncounterSize/ScaledAttack). El
+        // Gordo Baboso entra en el mismo pool que el resto (1 en 4 en vez de 1 en 3) -- no es un
+        // "mini-jefe" aparte, es un enemigo comun mas, solo que con un enfoque de combate distinto.
         public static List<EnemyStats> CreateRandomEncounter(Random rng, int floorIndex = 0)
         {
             int count = RollEncounterSize(rng, floorIndex);
             var list = new List<EnemyStats>();
             for (int i = 0; i < count; i++)
             {
-                int roll = rng.Next(3);
+                int roll = rng.Next(4);
                 if (roll == 0) list.Add(CreateWolf(i + 1, floorIndex));
                 else if (roll == 1) list.Add(CreateBeetle(i + 1, floorIndex));
-                else list.Add(CreateSlime(i + 1, floorIndex));
+                else if (roll == 2) list.Add(CreateSlime(i + 1, floorIndex));
+                else list.Add(CreateSludge(i + 1, floorIndex));
             }
             return list;
         }
@@ -162,11 +259,11 @@ namespace Combat
         {
             return new EnemyStats
             {
-                Name = $"Larva Estelar {suffix}", MaxHP = 42, HP = 42,
+                Name = $"Larva Estelar {suffix}", MaxHP = ScaledHp(42), HP = ScaledHp(42),
                 Attack = ScaledAttack(13, floorIndex), Defense = 2, Speed = 7,
                 AttackElement = Element.Pierce,
                 Weaknesses = CaveWeaknesses, Resistance = Element.Ice,
-                MaxPoise = 28, Poise = 28,
+                MaxPoise = ScaledPoise(28), Poise = ScaledPoise(28),
             };
         }
 
@@ -174,11 +271,11 @@ namespace Combat
         {
             return new EnemyStats
             {
-                Name = $"Medusa del Vacío {suffix}", MaxHP = 48, HP = 48,
+                Name = $"Medusa del Vacío {suffix}", MaxHP = ScaledHp(48), HP = ScaledHp(48),
                 Attack = ScaledAttack(12, floorIndex), Defense = 3, Speed = 5,
                 AttackElement = Element.Strike,
                 Weaknesses = CaveWeaknesses, Resistance = Element.Fire,
-                MaxPoise = 32, Poise = 32,
+                MaxPoise = ScaledPoise(32), Poise = ScaledPoise(32),
             };
         }
 
@@ -188,11 +285,11 @@ namespace Combat
         {
             return new EnemyStats
             {
-                Name = $"Cangrejo de Cuarzo {suffix}", MaxHP = 60, HP = 60,
+                Name = $"Cangrejo de Cuarzo {suffix}", MaxHP = ScaledHp(60), HP = ScaledHp(60),
                 Attack = ScaledAttack(11, floorIndex), Defense = 7, Speed = 3,
                 AttackElement = Element.Strike,
                 Weaknesses = new[] { Element.Strike }, Resistance = Element.Volt,
-                MaxPoise = 48, Poise = 48,
+                MaxPoise = ScaledPoise(48), Poise = ScaledPoise(48),
             };
         }
 
@@ -200,11 +297,11 @@ namespace Combat
         {
             return new EnemyStats
             {
-                Name = $"Acechador de las Simas {suffix}", MaxHP = 58, HP = 58,
+                Name = $"Acechador de las Simas {suffix}", MaxHP = ScaledHp(58), HP = ScaledHp(58),
                 Attack = ScaledAttack(15, floorIndex), Defense = 4, Speed = 6,
                 AttackElement = Element.Pierce,
                 Weaknesses = CaveWeaknesses, Resistance = Element.Ice,
-                MaxPoise = 40, Poise = 40,
+                MaxPoise = ScaledPoise(40), Poise = ScaledPoise(40),
             };
         }
 
@@ -216,11 +313,11 @@ namespace Combat
         {
             return new EnemyStats
             {
-                Name = "Kadulu, el Hambriento del Vacío", MaxHP = 260, HP = 260,
+                Name = "Kadulu, el Hambriento del Vacío", MaxHP = ScaledHp(260), HP = ScaledHp(260),
                 Attack = ScaledAttack(21, floorIndex), Defense = 9, Speed = 5,
                 AttackElement = Element.Pierce,
                 Weaknesses = new[] { Element.Volt }, Resistance = Element.Ice,
-                MaxPoise = 100, Poise = 100,
+                MaxPoise = ScaledPoise(100), Poise = ScaledPoise(100),
                 PoiseWeaknessResistance = 1.3f,
             };
         }
@@ -240,80 +337,81 @@ namespace Combat
             return list;
         }
 
-        // ---------- Bioma de Cuevas ----------
+        // ---------- Bioma de Cuevas: nido de goblins ----------
         // Tercera zona, alcanzable por la escalera al fondo de la zona aislada de CUALQUIER piso
         // del bioma raiz (ver Dungeon/DungeonGenerator.PlaceCaveBiomeExit y Gameplay/
-        // DungeonManager.EnterCaveBiomeExit): una cueva de roca comun, sin nada sobrenatural de por
-        // medio -- la debilidad dominante es Hielo+Contundente (sangre fria o de piedra, un golpe
-        // seco o el frio calan mejor que el filo o el rayo), salvo la excepcion deliberada de
-        // CreateRockGolem (mismo patron pedagogico que CommonWeaknesses/CaveWeaknesses arriba). Las
-        // 3 zonas cubren entre las 3 los 6 elementos sin pisarse: Bosque Fuego+Corte, Bioma 2
-        // Rayo+Perforante, Cuevas Hielo+Contundente.
+        // DungeonManager.EnterCaveBiomeExit): pedido puntual, catacumbas tomadas por una horda de
+        // goblins (inspiracion Warhammer/orcos) en vez de fauna generica de cueva -- la debilidad
+        // dominante sigue siendo Hielo+Contundente (huesos y cuero curtido, un golpe seco o el frio
+        // calan mejor que el filo o el rayo), salvo la excepcion deliberada de CreateCryptOrc
+        // (mismo patron pedagogico que CommonWeaknesses/CaveWeaknesses arriba). Las 3 zonas cubren
+        // entre las 3 los 6 elementos sin pisarse: Bosque Fuego+Corte, Bioma 2 Rayo+Perforante,
+        // Cuevas Hielo+Contundente.
         private static readonly Element[] RockCaveWeaknesses = { Element.Ice, Element.Strike };
 
-        public static EnemyStats CreateCaveBat(int suffix, int floorIndex = 0)
+        public static EnemyStats CreateGoblinScout(int suffix, int floorIndex = 0)
         {
             return new EnemyStats
             {
-                Name = $"Murciélago Cavernario {suffix}", MaxHP = 38, HP = 38,
+                Name = $"Goblin Explorador {suffix}", MaxHP = ScaledHp(38), HP = ScaledHp(38),
                 Attack = ScaledAttack(13, floorIndex), Defense = 2, Speed = 8,
                 AttackElement = Element.Slash,
                 Weaknesses = RockCaveWeaknesses, Resistance = Element.Volt,
-                MaxPoise = 26, Poise = 26,
+                MaxPoise = ScaledPoise(26), Poise = ScaledPoise(26),
             };
         }
 
-        public static EnemyStats CreateCaveSpider(int suffix, int floorIndex = 0)
+        public static EnemyStats CreateGoblinSpearman(int suffix, int floorIndex = 0)
         {
             return new EnemyStats
             {
-                Name = $"Araña de las Grietas {suffix}", MaxHP = 46, HP = 46,
+                Name = $"Goblin Lancero {suffix}", MaxHP = ScaledHp(46), HP = ScaledHp(46),
                 Attack = ScaledAttack(12, floorIndex), Defense = 3, Speed = 6,
                 AttackElement = Element.Pierce,
                 Weaknesses = RockCaveWeaknesses, Resistance = Element.Fire,
-                MaxPoise = 30, Poise = 30,
+                MaxPoise = ScaledPoise(30), Poise = ScaledPoise(30),
             };
         }
 
-        // Excepcion deliberada (mismo rol que CreateBeetle/CreateQuartzCrab): la piedra que lo
-        // forma no le teme ni al frio ni a un golpe contundente (total, ya ES piedra), pero
-        // perforarlo justo en una grieta lo raja.
-        public static EnemyStats CreateRockGolem(int suffix, int floorIndex = 0)
+        // Excepcion deliberada (mismo rol que CreateBeetle/CreateQuartzCrab): el orco bruto de la
+        // cripta ni el frio ni un golpe contundente lo frenan (esta curtido a los dos), pero una
+        // lanza bien clavada en una juntura de su armadura oxidada lo raja.
+        public static EnemyStats CreateCryptOrc(int suffix, int floorIndex = 0)
         {
             return new EnemyStats
             {
-                Name = $"Gólem de Roca {suffix}", MaxHP = 65, HP = 65,
+                Name = $"Orco de la Cripta {suffix}", MaxHP = ScaledHp(65), HP = ScaledHp(65),
                 Attack = ScaledAttack(11, floorIndex), Defense = 8, Speed = 2,
                 AttackElement = Element.Strike,
                 Weaknesses = new[] { Element.Pierce }, Resistance = Element.Ice,
-                MaxPoise = 55, Poise = 55,
+                MaxPoise = ScaledPoise(55), Poise = ScaledPoise(55),
             };
         }
 
-        public static EnemyStats CreateBlindMole(int suffix, int floorIndex = 0)
+        public static EnemyStats CreateGoblinDigger(int suffix, int floorIndex = 0)
         {
             return new EnemyStats
             {
-                Name = $"Topo Ciego {suffix}", MaxHP = 50, HP = 50,
+                Name = $"Goblin Cavador {suffix}", MaxHP = ScaledHp(50), HP = ScaledHp(50),
                 Attack = ScaledAttack(14, floorIndex), Defense = 4, Speed = 5,
                 AttackElement = Element.Strike,
                 Weaknesses = RockCaveWeaknesses, Resistance = Element.Pierce,
-                MaxPoise = 34, Poise = 34,
+                MaxPoise = ScaledPoise(34), Poise = ScaledPoise(34),
             };
         }
 
         // Gorlok sigue el mismo patron que CreateBoss/CreateKadulu (confirma la debilidad
         // dominante de SU zona -- Hielo -- en vez de una sorpresa nueva) con HP/ataque en la misma
-        // escala que los otros 2 jefes.
+        // escala que los otros 2 jefes. Titulo cambiado a jefe de horda goblin, mismo nombre propio.
         public static EnemyStats CreateCaveBoss(int floorIndex = 0)
         {
             return new EnemyStats
             {
-                Name = "Gorlok, Corazón de la Montaña", MaxHP = 240, HP = 240,
+                Name = "Gorlok, Jefe de la Horda", MaxHP = ScaledHp(240), HP = ScaledHp(240),
                 Attack = ScaledAttack(20, floorIndex), Defense = 9, Speed = 3,
                 AttackElement = Element.Strike,
                 Weaknesses = new[] { Element.Ice }, Resistance = Element.Strike,
-                MaxPoise = 95, Poise = 95,
+                MaxPoise = ScaledPoise(95), Poise = ScaledPoise(95),
                 PoiseWeaknessResistance = 1.3f,
             };
         }
@@ -325,10 +423,86 @@ namespace Combat
             for (int i = 0; i < count; i++)
             {
                 int roll = rng.Next(4);
-                if (roll == 0) list.Add(CreateCaveBat(i + 1, floorIndex));
-                else if (roll == 1) list.Add(CreateCaveSpider(i + 1, floorIndex));
-                else if (roll == 2) list.Add(CreateRockGolem(i + 1, floorIndex));
-                else list.Add(CreateBlindMole(i + 1, floorIndex));
+                if (roll == 0) list.Add(CreateGoblinScout(i + 1, floorIndex));
+                else if (roll == 1) list.Add(CreateGoblinSpearman(i + 1, floorIndex));
+                else if (roll == 2) list.Add(CreateCryptOrc(i + 1, floorIndex));
+                else list.Add(CreateGoblinDigger(i + 1, floorIndex));
+            }
+            return list;
+        }
+
+        public static EnemyStats CreateCastleSentinel(int suffix, int floorIndex = 0)
+        {
+            return new EnemyStats
+            {
+                Name = $"Centinela de Ónice {suffix}", MaxHP = ScaledHp(78), HP = ScaledHp(78),
+                Attack = ScaledAttack(15, floorIndex), Defense = 8, Speed = 3,
+                AttackElement = Element.Strike,
+                Weaknesses = new[] { Element.Fire, Element.Strike }, Resistance = Element.Pierce,
+                MaxPoise = ScaledPoise(56), Poise = ScaledPoise(56),
+            };
+        }
+
+        public static EnemyStats CreateCastleWraith(int suffix, int floorIndex = 0)
+        {
+            return new EnemyStats
+            {
+                Name = $"Espectro del Salón {suffix}", MaxHP = ScaledHp(52), HP = ScaledHp(52),
+                Attack = ScaledAttack(18, floorIndex), Defense = 3, Speed = 7,
+                AttackElement = Element.Ice,
+                Weaknesses = new[] { Element.Fire, Element.Slash }, Resistance = Element.Ice,
+                MaxPoise = ScaledPoise(36), Poise = ScaledPoise(36),
+            };
+        }
+
+        public static EnemyStats CreateCastleBoss(int floorIndex = 0)
+        {
+            return new EnemyStats
+            {
+                Name = "Castellano de la Corona Umbría", MaxHP = ScaledHp(285), HP = ScaledHp(285),
+                Attack = ScaledAttack(22, floorIndex), Defense = 10, Speed = 5,
+                AttackElement = Element.Slash,
+                Weaknesses = new[] { Element.Fire, Element.Strike }, Resistance = Element.Ice,
+                MaxPoise = ScaledPoise(110), Poise = ScaledPoise(110), PoiseWeaknessResistance = 1.35f,
+            };
+        }
+
+        public static EnemyStats CreatePatioBoss(int floorIndex = 0)
+        {
+            return new EnemyStats
+            {
+                Name = "Guardián del Patio Marchito", MaxHP = ScaledHp(205), HP = ScaledHp(205),
+                Attack = ScaledAttack(19, floorIndex), Defense = 8, Speed = 6,
+                AttackElement = Element.Pierce,
+                Weaknesses = new[] { Element.Fire, Element.Strike }, Resistance = Element.Pierce,
+                MaxPoise = ScaledPoise(82), Poise = ScaledPoise(82),
+            };
+        }
+
+        public static EnemyStats CreateCastleCryptBoss(int floorIndex = 0)
+        {
+            return new EnemyStats
+            {
+                Name = "Custodio Sepultado", MaxHP = ScaledHp(325), HP = ScaledHp(325),
+                Attack = ScaledAttack(25, floorIndex), Defense = 13, Speed = 4,
+                AttackElement = Element.Ice,
+                Weaknesses = new[] { Element.Fire, Element.Strike }, Resistance = Element.Ice,
+                MaxPoise = ScaledPoise(138), Poise = ScaledPoise(138), PoiseWeaknessResistance = 1.5f,
+            };
+        }
+
+        public static List<EnemyStats> CreateCastleEncounter(Random rng, int floorIndex = 0)
+        {
+            // Antes SIEMPRE 1 o 2 (rng.Next(1,3)), sin importar el piso ni la nueva regla de grupo
+            // de RollEncounterSize -- por eso el castillo se sentia con encuentros casi siempre de
+            // un solo enemigo. Ahora comparte la misma campana de Gauss (tope 6, pico en 4) que el
+            // resto de las zonas.
+            int count = RollEncounterSize(rng, floorIndex);
+            var list = new List<EnemyStats>();
+            for (int i = 0; i < count; i++)
+            {
+                if (rng.Next(2) == 0) list.Add(CreateCastleSentinel(i + 1, floorIndex));
+                else list.Add(CreateCastleWraith(i + 1, floorIndex));
             }
             return list;
         }
