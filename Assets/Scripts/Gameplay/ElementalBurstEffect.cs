@@ -10,13 +10,17 @@ namespace Gameplay
     // CUALQUIER golpe -- basico o de habilidad -- para que se note el elemento siempre.
     public class ElementalBurstEffect : MonoBehaviour
     {
-        private const float Duration = 0.35f;
+        private const float BaseDuration = 0.35f;
         private static readonly int ColorId = Shader.PropertyToID("_Color");
         private static readonly int ProgressId = Shader.PropertyToID("_Progress");
 
-        public static void Spawn(Material template, Vector3 worldPosition, Color color, Quaternion facing)
+        // intensity: ver ImpactBurstEffect.Spawn -- mismo criterio (1 = basico, hasta ~2.5+ para
+        // habilidades fuertes / el Ataque en Conjunto), agranda el anillo y lo hace durar un poco mas.
+        public static void Spawn(Material template, Vector3 worldPosition, Color color, Quaternion facing, float intensity = 1f)
         {
             if (template == null) return;
+
+            float t = Mathf.InverseLerp(1f, 2.5f, Mathf.Max(1f, intensity));
 
             var go = GameObject.CreatePrimitive(PrimitiveType.Quad);
             go.name = "ElementalBurstEffect";
@@ -25,7 +29,7 @@ namespace Gameplay
 
             go.transform.position = worldPosition;
             go.transform.rotation = facing;
-            float scale = Random.Range(1.6f, 2.1f);
+            float scale = Random.Range(1.6f, 2.1f) * Mathf.Lerp(1f, 1.5f, t);
             go.transform.localScale = new Vector3(scale, scale, 1f);
 
             var renderer = go.GetComponent<Renderer>();
@@ -37,16 +41,17 @@ namespace Gameplay
             renderer.SetPropertyBlock(props);
 
             var effect = go.AddComponent<ElementalBurstEffect>();
-            effect.StartCoroutine(effect.Animate(renderer, props));
+            float duration = Mathf.Lerp(BaseDuration, BaseDuration * 1.3f, t);
+            effect.StartCoroutine(effect.Animate(renderer, props, duration));
         }
 
-        private IEnumerator Animate(Renderer renderer, MaterialPropertyBlock props)
+        private IEnumerator Animate(Renderer renderer, MaterialPropertyBlock props, float duration)
         {
             float t = 0f;
-            while (t < Duration)
+            while (t < duration)
             {
                 t += Time.deltaTime;
-                props.SetFloat(ProgressId, Mathf.Clamp01(t / Duration));
+                props.SetFloat(ProgressId, Mathf.Clamp01(t / duration));
                 renderer.SetPropertyBlock(props);
                 yield return null;
             }

@@ -16,6 +16,7 @@ namespace Gameplay
         private Renderer _renderer;
         private MaterialPropertyBlock _props;
         private Coroutine _activeRoutine;
+        private Coroutine _moveRoutine;
 
         private static readonly int ColorId = Shader.PropertyToID("_Color");
         private static readonly int DissolveAmountId = Shader.PropertyToID("_DissolveAmount");
@@ -31,6 +32,13 @@ namespace Gameplay
         public Vector3 TopAnchor => _renderer != null
             ? new Vector3(transform.position.x, _renderer.bounds.max.y + 0.25f, transform.position.z)
             : transform.position + Vector3.up;
+
+        // Medio-tamaño (mundo, por eje) del modelo, para poder adelantar un efecto hacia la camara
+        // hasta la superficie del modelo en vez de dejarlo enterrado en su centro -- ver
+        // BattleStageController.EffectAnchor, que lo usa para que los golpes/chispas se vean AL
+        // FRENTE del enemigo (la mitad cercana a camara tapa cualquier cosa que quede justo en el
+        // centro, que es lo que se veia como "atras" del enemigo).
+        public Vector3 Extents => _renderer != null ? _renderer.bounds.extents : Vector3.one * 0.8f;
 
         public void Initialize(EnemyStats stats, Renderer renderer, Color baseColor)
         {
@@ -140,6 +148,33 @@ namespace Gameplay
             SetDissolve(1f);
             _activeRoutine = null;
             onComplete?.Invoke();
+        }
+
+        // "Avanza" a este enemigo a un nuevo parante (ver
+        // BattleStageController.PromoteBackRowEnemies): cuando muere alguien del frente y deja
+        // lugar libre, el primero que siga vivo atras se desliza hacia adelante en vez de quedarse
+        // chico y lejos en el fondo. Corrutina propia (no _activeRoutine): solo mueve la posicion,
+        // nunca compite con el pulso de golpe/disolucion que anima el shader.
+        public void MoveTo(Vector3 targetPosition)
+        {
+            if (_moveRoutine != null) StopCoroutine(_moveRoutine);
+            _moveRoutine = StartCoroutine(MoveRoutine(targetPosition));
+        }
+
+        private IEnumerator MoveRoutine(Vector3 targetPosition)
+        {
+            const float duration = 0.45f;
+            Vector3 start = transform.position;
+            float t = 0f;
+            while (t < duration)
+            {
+                t += Time.deltaTime;
+                float eased = 1f - Mathf.Pow(1f - Mathf.Clamp01(t / duration), 3f);
+                transform.position = Vector3.Lerp(start, targetPosition, eased);
+                yield return null;
+            }
+            transform.position = targetPosition;
+            _moveRoutine = null;
         }
     }
 }
